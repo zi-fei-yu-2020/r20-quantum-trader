@@ -43,6 +43,10 @@ COPY --chown=r20:r20 . ./
 COPY --from=frontend-builder --chown=r20:r20 /app/frontend/dist ./frontend/dist
 COPY --chown=r20:r20 docker/entrypoint.sh /usr/local/bin/r20-entrypoint
 
+# Git may check shell scripts out with CRLF on Windows. Normalize the runtime
+# entrypoint so its shebang always resolves to /bin/sh inside Linux containers.
+RUN sed -i 's/\r$//' /usr/local/bin/r20-entrypoint
+
 RUN mkdir -p /app/config /app/data /app/logs /app/backups /home/r20/.okx /home/r20/.bypy /home/r20/.npm-global \
     && touch /app/config/.env \
     && chown -R r20:r20 /app/config /app/data /app/logs /app/backups /home/r20 \
