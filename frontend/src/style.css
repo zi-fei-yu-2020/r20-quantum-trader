@@ -1,27 +1,182 @@
 @import "tailwindcss";
 
-:root {
-  --bg-main: #080B10;
-  --bg-card: #0D121B;
-  --bg-card-hover: #121824;
-  --border-line: #1A2232;
-  --text-dim: #707E94;
-  --accent-blue: #3B82F6;
-  --accent-green: #10B981;
-  --accent-red: #EF4444;
-  --accent-amber: #F59E0B;
-  --accent-purple: #8B5CF6;
+:root,
+[data-theme="dark"] {
+  color-scheme: dark;
+  --r20-bg-main: #080B10;
+  --r20-bg-shell: #0A0D14;
+  --r20-bg-card: #0D121B;
+  --r20-bg-card-hover: #121824;
+  --r20-bg-inset: #090F18;
+  --r20-bg-control: #111C2A;
+  --r20-border: #1A2232;
+  --r20-border-strong: #33445B;
+  --r20-control-hover: #1D3050;
+  --r20-text: #F3F4F6;
+  --r20-text-secondary: #B8C4D4;
+  --r20-text-muted: #707E94;
+  --r20-text-subtle: #556677;
+  --r20-text-inverse: #FFFFFF;
+  --r20-focus: #60A5FA;
+  --r20-selection: #2563EB;
+}
+
+[data-theme="light"] {
+  color-scheme: light;
+  --r20-bg-main: #F4F7FB;
+  --r20-bg-shell: #E9EEF5;
+  --r20-bg-card: #FFFFFF;
+  --r20-bg-card-hover: #F7FAFF;
+  --r20-bg-inset: #EEF3F8;
+  --r20-bg-control: #E5ECF5;
+  --r20-border: #D5DEE9;
+  --r20-border-strong: #B6C4D5;
+  --r20-control-hover: #D9E6F7;
+  --r20-text: #172033;
+  --r20-text-secondary: #314058;
+  --r20-text-muted: #617086;
+  --r20-text-subtle: #78879A;
+  --r20-text-inverse: #FFFFFF;
+  --r20-focus: #2563EB;
+  --r20-selection: #93C5FD;
+}
+
+html {
+  background: var(--r20-bg-main);
 }
 
 body {
-  background-color: var(--bg-main);
-  color: #F3F4F6;
+  background-color: var(--r20-bg-main);
+  color: var(--r20-text);
   font-family: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
   margin: 0;
   padding: 0;
   min-height: 100vh;
   -webkit-font-smoothing: antialiased;
+  transition: background-color 180ms ease, color 180ms ease;
 }
+
+::selection {
+  background: var(--r20-selection);
+  color: var(--r20-text-inverse);
+}
+
+button,
+input,
+select,
+textarea {
+  font: inherit;
+}
+
+button:focus-visible,
+a:focus-visible,
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible {
+  outline: 2px solid var(--r20-focus);
+  outline-offset: 2px;
+}
+
+.r20-theme-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  min-height: 2rem;
+  padding: 0.35rem 0.55rem;
+  border: 1px solid var(--r20-border);
+  border-radius: 0.55rem;
+  background: var(--r20-bg-card);
+  color: var(--r20-text-muted);
+  font-family: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.7rem;
+  line-height: 1;
+  cursor: pointer;
+  transition: color 160ms ease, background-color 160ms ease, border-color 160ms ease, transform 160ms ease;
+}
+
+.r20-theme-toggle:hover {
+  color: var(--r20-text);
+  background: var(--r20-control-hover);
+  border-color: var(--r20-border-strong);
+}
+
+.r20-theme-toggle:active {
+  transform: translateY(1px);
+}
+
+/* Compatibility bridge for the current Tailwind arbitrary colors.
+   New UI should use semantic R20 tokens directly; this lets the existing
+   dashboard and admin pages switch themes without a 900-line template churn. */
+[data-theme="light"] [class~="bg-[#080B10]"] { background-color: var(--r20-bg-main) !important; }
+[data-theme="light"] [class~="bg-[#080B10]/95"] { background-color: color-mix(in srgb, var(--r20-bg-main) 95%, transparent) !important; }
+[data-theme="light"] [class~="bg-[#0A0D14]"] { background-color: var(--r20-bg-shell) !important; }
+[data-theme="light"] [class~="bg-[#0A0D14]/95"] { background-color: color-mix(in srgb, var(--r20-bg-shell) 95%, transparent) !important; }
+[data-theme="light"] [class~="bg-[#0A0D14]/80"] { background-color: color-mix(in srgb, var(--r20-bg-shell) 80%, transparent) !important; }
+[data-theme="light"] [class~="bg-[#0D121B]"] { background-color: var(--r20-bg-card) !important; }
+[data-theme="light"] [class~="bg-[#0D121B]/50"] { background-color: color-mix(in srgb, var(--r20-bg-card) 50%, transparent) !important; }
+[data-theme="light"] [class~="bg-[#090f18]"] { background-color: var(--r20-bg-inset) !important; }
+[data-theme="light"] [class~="bg-[#111c2a]"] { background-color: var(--r20-bg-control) !important; }
+[data-theme="light"] [class~="bg-[#0E1422]"],
+[data-theme="light"] [class~="bg-[#0E121B]"],
+[data-theme="light"] [class~="bg-[#0E121B]/95"],
+[data-theme="light"] [class~="bg-[#0B0F17]"],
+[data-theme="light"] [class~="bg-[#0E131F]"],
+[data-theme="light"] [class~="bg-[#141B26]"],
+[data-theme="light"] [class~="bg-[#141B28]"],
+[data-theme="light"] [class~="bg-[#0d1420]"] { background-color: var(--r20-bg-card) !important; }
+[data-theme="light"] [class~="bg-[#0A0F18]"],
+[data-theme="light"] [class~="bg-[#151D2C]"] { background-color: var(--r20-bg-inset) !important; }
+[data-theme="light"] [class~="bg-[#4d1924]"] { background-color: #FDECEF !important; }
+[data-theme="light"] [class~="hover:bg-[#5d2230]"]:hover,
+[data-theme="light"] [class~="hover:bg-[#4d1924]"]:hover { background-color: #F9DDE3 !important; }
+[data-theme="light"] [class~="hover:bg-[#121824]/50"]:hover,
+[data-theme="light"] [class~="hover:bg-[#121824]/40"]:hover { background-color: color-mix(in srgb, var(--r20-bg-card-hover) 50%, transparent) !important; }
+[data-theme="light"] [class~="hover:bg-[#1d3050]"]:hover { background-color: var(--r20-control-hover) !important; }
+[data-theme="light"] [class~="border-[#1A2232]"],
+[data-theme="light"] [class~="divide-[#1A2232]/50"] > :not([hidden]) ~ :not([hidden]) { border-color: var(--r20-border) !important; }
+[data-theme="light"] [class~="border-[#1A2232]/60"] { border-color: color-mix(in srgb, var(--r20-border) 60%, transparent) !important; }
+[data-theme="light"] [class~="border-[#1A2232]/80"] { border-color: color-mix(in srgb, var(--r20-border) 80%, transparent) !important; }
+[data-theme="light"] [class~="border-[#33445b]"],
+[data-theme="light"] [class~="border-[#2D3748]"],
+[data-theme="light"] [class~="border-[#192333]"],
+[data-theme="light"] [class~="border-[#273246]"] { border-color: var(--r20-border-strong) !important; }
+[data-theme="light"] [class~="border-[#161D2B]"] { border-color: var(--r20-border) !important; }
+[data-theme="light"] [class~="border-[#873044]"] { border-color: #F2A8B7 !important; }
+[data-theme="light"] [class~="text-[#707E94]"] { color: var(--r20-text-muted) !important; }
+[data-theme="light"] [class~="text-[#b8c4d4]"] { color: var(--r20-text-secondary) !important; }
+[data-theme="light"] [class~="text-[#F3F4F6]"] { color: var(--r20-text) !important; }
+[data-theme="light"] [class~="text-[#556677]"] { color: var(--r20-text-subtle) !important; }
+[data-theme="light"] [class~="text-[#8997AA]"],
+[data-theme="light"] [class~="text-[#8997aa]"],
+[data-theme="light"] [class~="text-[#9DB0C6]"],
+[data-theme="light"] [class~="text-[#9db0c6]"],
+[data-theme="light"] [class~="text-[#8fa5c1]"] { color: var(--r20-text-secondary) !important; }
+[data-theme="light"] [class~="text-[#6f7d91]"] { color: var(--r20-text-muted) !important; }
+[data-theme="light"] [class~="text-[#ffdce1]"] { color: #9F1239 !important; }
+[data-theme="light"] [class~="text-[#EAECEF]"] { color: var(--r20-text) !important; }
+[data-theme="light"] [class~="to-[#0D121B]"] { --tw-gradient-to: var(--r20-bg-card) !important; }
+[data-theme="light"] [class~="from-[#111a29]"] { --tw-gradient-from: var(--r20-bg-control) !important; }
+[data-theme="light"] [class~="from-[#23304A]"] { --tw-gradient-from: #D9E6F7 !important; }
+[data-theme="light"] [class~="to-[#1C2436]"] { --tw-gradient-to: #C9D9EC !important; }
+
+/* Neutral Tailwind text utilities used by prose and data panels. */
+[data-theme="light"] .text-white { color: var(--r20-text) !important; }
+[data-theme="light"] .text-zinc-300,
+[data-theme="light"] .text-zinc-200 { color: var(--r20-text-secondary) !important; }
+[data-theme="light"] .text-zinc-400 { color: var(--r20-text-muted) !important; }
+[data-theme="light"] [class*="bg-blue-"].text-white,
+[data-theme="light"] [class*="bg-emerald-"].text-white,
+[data-theme="light"] [class*="bg-rose-"].text-white { color: var(--r20-text-inverse) !important; }
+.r20-on-accent,
+[data-theme="light"] .r20-on-accent { color: var(--r20-text-inverse) !important; }
+
+/* Status colors need stronger contrast on light cards. */
+[data-theme="light"] .text-blue-400 { color: #2563EB !important; }
+[data-theme="light"] .text-emerald-400 { color: #047857 !important; }
+[data-theme="light"] .text-rose-400 { color: #BE123C !important; }
+[data-theme="light"] .text-amber-400 { color: #B45309 !important; }
+[data-theme="light"] .text-purple-400 { color: #7E22CE !important; }
+[data-theme="light"] .text-cyan-400 { color: #0E7490 !important; }
 
 /* Custom scrollbars */
 ::-webkit-scrollbar {
@@ -29,12 +184,23 @@ body {
   height: 6px;
 }
 ::-webkit-scrollbar-track {
-  background: #0A0D14;
+  background: var(--r20-bg-inset);
 }
 ::-webkit-scrollbar-thumb {
-  background: #1A2232;
+  background: var(--r20-border-strong);
   border-radius: 3px;
 }
 ::-webkit-scrollbar-thumb:hover {
-  background: #2D3748;
+  background: var(--r20-text-muted);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+    transition-duration: 0.01ms !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+  }
 }

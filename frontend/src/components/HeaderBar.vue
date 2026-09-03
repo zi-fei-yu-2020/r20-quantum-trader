@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { useDashboardStore } from '../stores/dashboard'
+import ThemeToggle from './ThemeToggle.vue'
 import {
   LayoutGrid,
   Cpu,
@@ -32,7 +33,7 @@ const tabs = [
       <!-- Left: Brand & Network -->
       <div class="flex items-center space-x-2.5 shrink-0">
         <div class="w-7 h-7 sm:w-8 sm:h-8 rounded-lg bg-gradient-to-tr from-blue-600 via-indigo-600 to-cyan-400 flex items-center justify-center shadow-lg shadow-blue-500/20 ring-1 ring-white/20">
-          <span class="text-white font-black text-sm tracking-wider">R</span>
+          <span class="r20-on-accent text-white font-black text-sm tracking-wider">R</span>
         </div>
         <div>
           <div class="flex items-center space-x-2">
@@ -81,6 +82,8 @@ const tabs = [
             ({{ benchmarkNetPnl >= 0 ? '+' : '' }}{{ benchmarkNetPnl.toFixed(2) }}U)
           </span>
         </div>
+
+        <ThemeToggle />
 
         <a
           href="/admin"

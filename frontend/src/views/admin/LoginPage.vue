@@ -2,6 +2,7 @@
 import { ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { useAuthStore } from '../../stores/auth'
+import ThemeToggle from '../../components/ThemeToggle.vue'
 import { LogIn, AlertCircle } from 'lucide-vue-next'
 
 const auth = useAuthStore()
@@ -21,12 +22,15 @@ async function handleLogin() {
 </script>
 
 <template>
-  <div class="min-h-screen bg-[#080B10] flex items-center justify-center px-4">
+  <div class="min-h-screen bg-[#080B10] flex items-center justify-center px-4 relative">
+    <div class="absolute right-4 top-4">
+      <ThemeToggle />
+    </div>
     <div class="w-full max-w-[410px]">
       <!-- Brand -->
       <div class="flex items-center space-x-2.5 mb-6 justify-center">
         <div class="w-10 h-10 rounded-xl bg-gradient-to-tr from-blue-600 via-indigo-600 to-cyan-400 flex items-center justify-center shadow-lg shadow-blue-500/20 ring-1 ring-white/20">
-          <span class="text-white font-black text-lg tracking-wider">R</span>
+          <span class="r20-on-accent text-white font-black text-lg tracking-wider">R</span>
         </div>
         <div>
           <div class="text-sm font-bold text-white tracking-wide">R20 CONTROL</div>
@@ -62,7 +66,7 @@ async function handleLogin() {
         <button
           @click="handleLogin"
           :disabled="loading"
-          class="w-full flex items-center justify-center space-x-2 bg-gradient-to-b from-[#1d4680] to-[#173a6a] hover:from-[#235390] hover:to-[#1a4070] text-white font-bold text-sm py-2.5 rounded-lg border border-[#35649f] transition-all cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+          class="r20-on-accent w-full flex items-center justify-center space-x-2 bg-gradient-to-b from-[#1d4680] to-[#173a6a] hover:from-[#235390] hover:to-[#1a4070] text-white font-bold text-sm py-2.5 rounded-lg border border-[#35649f] transition-all cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
         >
           <LogIn v-if="!loading" class="w-4 h-4" />
           <RefreshCw v-else class="w-4 h-4 animate-spin" />

@@ -2,6 +2,7 @@
 import { computed } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { useAuthStore } from '../stores/auth'
+import ThemeToggle from '../components/ThemeToggle.vue'
 import {
   LayoutGrid,
   ShieldAlert,
@@ -88,7 +89,7 @@ const currentLabel = computed<string>(() => {
       <!-- Brand -->
       <div class="px-4 py-2.5 md:py-4 border-b border-[#1A2232] hidden md:flex items-center space-x-2.5">
         <div class="w-8 h-8 rounded-lg bg-gradient-to-tr from-blue-600 via-indigo-600 to-cyan-400 flex items-center justify-center shadow-lg shadow-blue-500/20 ring-1 ring-white/20">
-          <span class="text-white font-black text-base tracking-wider">R</span>
+          <span class="r20-on-accent text-white font-black text-base tracking-wider">R</span>
         </div>
         <div>
           <div class="text-sm font-bold text-white tracking-wide">R20 CONTROL</div>
@@ -146,6 +147,7 @@ const currentLabel = computed<string>(() => {
               <div class="text-[10px] text-[#707E94]">{{ auth.user?.role || '超级管理员' }}</div>
             </div>
           </div>
+          <ThemeToggle />
           <a href="/" target="_blank" class="flex items-center space-x-1 px-2.5 sm:px-3 py-1.5 rounded-lg bg-[#0D121B] hover:bg-[#141B26] border border-[#1A2232] text-xs font-mono text-[#707E94] hover:text-white transition-colors">
             <LayoutGrid class="w-3.5 h-3.5" />
             <span>大屏</span>
