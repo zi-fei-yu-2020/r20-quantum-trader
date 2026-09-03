@@ -27,7 +27,7 @@ function getActionLabel(action?: string) {
 </script>
 
 <template>
-  <div class="space-y-3">
+  <div class="r20-instrument-matrix space-y-3">
     <!-- Macro Summary Strip -->
     <div class="bg-[#0D121B] border border-[#1A2232] rounded-xl p-3.5 flex items-start space-x-3">
       <div class="p-2 rounded-lg bg-blue-500/10 border border-blue-500/20 text-blue-400 shrink-0">

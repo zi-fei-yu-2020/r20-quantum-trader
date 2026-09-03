@@ -23,9 +23,9 @@ const todayTrades = computed(() => (today.value.win_trades || 0) + (today.value.
 </script>
 
 <template>
-  <div class="grid grid-cols-2 md:grid-cols-4 gap-3 sm:gap-4">
+  <div class="r20-metric-ribbon grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
     <!-- Card 1: 官方账户总权益 -->
-    <div class="bg-gradient-to-b from-[#111a29] to-[#0D121B] border border-[#1A2232] rounded-xl p-4 flex flex-col justify-between shadow-lg">
+    <div class="r20-metric-card bg-gradient-to-b from-[#111a29] to-[#0D121B] border border-[#1A2232] rounded-xl p-4 flex flex-col justify-between shadow-lg">
       <div class="flex items-center justify-between text-[#707E94] text-xs font-mono mb-2">
         <div class="flex items-center space-x-1.5">
           <Wallet class="w-4 h-4 text-blue-400" />
@@ -45,7 +45,7 @@ const todayTrades = computed(() => (today.value.win_trades || 0) + (today.value.
     </div>
 
     <!-- Card 2: 基准净盈亏水线 (vs 初始 4061.04) -->
-    <div class="bg-gradient-to-b from-[#111a29] to-[#0D121B] border border-[#1A2232] rounded-xl p-4 flex flex-col justify-between shadow-lg">
+    <div class="r20-metric-card bg-gradient-to-b from-[#111a29] to-[#0D121B] border border-[#1A2232] rounded-xl p-4 flex flex-col justify-between shadow-lg">
       <div class="flex items-center justify-between text-[#707E94] text-xs font-mono mb-2">
         <div class="flex items-center space-x-1.5">
           <TrendingUp class="w-4 h-4 text-emerald-400" />
@@ -69,7 +69,7 @@ const todayTrades = computed(() => (today.value.win_trades || 0) + (today.value.
     </div>
 
     <!-- Card 3: 今日净盈亏与战报 (UTC+8) -->
-    <div class="bg-gradient-to-b from-[#111a29] to-[#0D121B] border border-[#1A2232] rounded-xl p-4 flex flex-col justify-between shadow-lg">
+    <div class="r20-metric-card bg-gradient-to-b from-[#111a29] to-[#0D121B] border border-[#1A2232] rounded-xl p-4 flex flex-col justify-between shadow-lg">
       <div class="flex items-center justify-between text-[#707E94] text-xs font-mono mb-2">
         <div class="flex items-center space-x-1.5">
           <Calendar class="w-4 h-4 text-purple-400" />
@@ -95,7 +95,7 @@ const todayTrades = computed(() => (today.value.win_trades || 0) + (today.value.
     </div>
 
     <!-- Card 4: 机构级执行风控防御 -->
-    <div class="bg-gradient-to-b from-[#111a29] to-[#0D121B] border border-[#1A2232] rounded-xl p-4 flex flex-col justify-between shadow-lg">
+    <div class="r20-metric-card bg-gradient-to-b from-[#111a29] to-[#0D121B] border border-[#1A2232] rounded-xl p-4 flex flex-col justify-between shadow-lg">
       <div class="flex items-center justify-between text-[#707E94] text-xs font-mono mb-2">
         <div class="flex items-center space-x-1.5">
           <ShieldCheck class="w-4 h-4 text-emerald-400" />

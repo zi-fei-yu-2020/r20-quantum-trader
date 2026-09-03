@@ -22,14 +22,14 @@ async function handleLogin() {
 </script>
 
 <template>
-  <div class="min-h-screen bg-[#080B10] flex items-center justify-center px-4 relative">
+  <div class="r20-app-shell min-h-screen bg-[#080B10] flex items-center justify-center px-4 relative">
     <div class="absolute right-4 top-4">
       <ThemeToggle />
     </div>
     <div class="w-full max-w-[410px]">
       <!-- Brand -->
       <div class="flex items-center space-x-2.5 mb-6 justify-center">
-        <div class="w-10 h-10 rounded-xl bg-gradient-to-tr from-blue-600 via-indigo-600 to-cyan-400 flex items-center justify-center shadow-lg shadow-blue-500/20 ring-1 ring-white/20">
+        <div class="w-10 h-10 rounded-xl bg-[#4F7DFF] flex items-center justify-center ring-1 ring-white/15">
           <span class="r20-on-accent text-white font-black text-lg tracking-wider">R</span>
         </div>
         <div>

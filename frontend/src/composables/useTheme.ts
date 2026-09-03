@@ -15,7 +15,7 @@ function updateThemeColor(next: Theme) {
   if (typeof document === 'undefined') return
   const meta = document.querySelector<HTMLMetaElement>('meta[name="theme-color"]')
   if (meta) {
-    meta.content = next === 'light' ? '#F4F7FB' : '#080B10'
+    meta.content = next === 'light' ? '#F5F7FA' : '#091117'
   }
 }
 

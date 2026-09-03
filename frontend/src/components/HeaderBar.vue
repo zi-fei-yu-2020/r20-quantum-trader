@@ -29,17 +29,18 @@ const tabs = [
 </script>
 
 <template>
-  <header class="fixed top-0 left-0 right-0 z-40 bg-[#0A0D14]/95 backdrop-blur-md border-b border-[#1A2232] px-3 sm:px-4 py-1.5">
+  <header class="r20-terminal-header fixed top-0 left-0 right-0 z-40 bg-[#0A0D14]/95 backdrop-blur-md border-b border-[#1A2232] px-3 sm:px-4 py-1.5">
     <div class="max-w-[2160px] mx-auto flex items-center justify-between gap-2 sm:gap-4">
       <!-- Left: Brand & Network -->
       <div class="flex items-center space-x-2.5 shrink-0">
-        <div class="w-7 h-7 sm:w-8 sm:h-8 rounded-lg bg-gradient-to-tr from-blue-600 via-indigo-600 to-cyan-400 flex items-center justify-center shadow-lg shadow-blue-500/20 ring-1 ring-white/20">
+        <div class="w-7 h-7 sm:w-8 sm:h-8 rounded-lg bg-[#4F7DFF] flex items-center justify-center ring-1 ring-white/15">
           <span class="r20-on-accent text-white font-black text-sm tracking-wider">R</span>
         </div>
         <div>
           <div class="flex items-center space-x-2">
             <h1 class="font-extrabold text-xs sm:text-sm tracking-wide text-white font-sans">
-              R20 QUANTUM TRADER
+              <span class="sm:hidden">R20</span>
+              <span class="hidden sm:inline">R20 QUANTUM TRADER</span>
             </h1>
             <button
               @click="store.showAboutModal = true"

@@ -6,7 +6,7 @@ const store = useDashboardStore()
 </script>
 
 <template>
-  <div class="bg-[#0D121B] border border-[#1A2232] rounded-xl p-4">
+  <div class="r20-data-panel bg-[#0D121B] border border-[#1A2232] rounded-xl p-4">
     <div class="flex items-center justify-between mb-3">
       <div class="flex items-center space-x-2">
         <Layers class="w-4 h-4 text-blue-400" />

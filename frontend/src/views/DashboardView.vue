@@ -26,7 +26,7 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <div class="min-h-screen bg-[#080B10] text-[#F3F4F6] flex flex-col selection:bg-blue-500 selection:text-white">
+  <div class="r20-app-shell r20-dashboard-shell min-h-screen bg-[#080B10] text-[#F3F4F6] flex flex-col selection:bg-blue-500 selection:text-white">
     <!-- Top Nav Ribbon with 5 Tabs (fixed: never scrolls away) -->
     <HeaderBar />
 
@@ -34,7 +34,7 @@ onUnmounted(() => {
     <div class="h-[58px] shrink-0"></div>
 
     <!-- Dynamic Main Content Based on Active Tab -->
-    <main class="flex-1 max-w-[2160px] w-full mx-auto px-3 sm:px-6 2xl:px-8 pb-24 sm:pb-6 space-y-4">
+    <main class="r20-dashboard-main flex-1 max-w-[2160px] w-full mx-auto px-3 sm:px-6 2xl:px-8 pb-24 sm:pb-6 space-y-4">
       <!-- TAB 1: 实盘矩阵 (TRADING) — home: HUD cards + positions + maker orders + 6-asset matrix -->
       <div v-show="store.activeTab === 'trading'" class="space-y-4">
         <!-- 1. Top HUD 4-Card Ribbon (Equity, Benchmark PnL, Today PnL, Cloud OCO) -->
@@ -71,7 +71,7 @@ onUnmounted(() => {
     </main>
 
     <!-- Global Cyber Footer -->
-    <footer class="border-t border-[#1A2232] bg-[#0A0D14] py-3 text-center text-xs font-mono text-[#707E94]">
+    <footer class="r20-dashboard-footer border-t border-[#1A2232] bg-[#0A0D14] py-3 text-center text-xs font-mono text-[#707E94]">
       <div class="flex items-center justify-center space-x-2">
         <button
           @click="store.showAboutModal = true"
@@ -95,7 +95,7 @@ onUnmounted(() => {
     </footer>
 
     <!-- 🪟 Mobile Bottom Navigation Bar (md:hidden) -->
-    <nav class="md:hidden fixed inset-x-0 bottom-0 z-50 bg-[#080B10]/95 backdrop-blur-xl border-t border-[#1A2232] px-2 py-1.5">
+    <nav class="r20-mobile-nav md:hidden fixed inset-x-0 bottom-0 z-50 bg-[#080B10]/95 backdrop-blur-xl border-t border-[#1A2232] px-2 py-1.5">
       <div class="max-w-md mx-auto flex items-center justify-around font-mono">
         <button
           @click="store.activeTab = 'trading'"

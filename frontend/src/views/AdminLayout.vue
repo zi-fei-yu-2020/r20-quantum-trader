@@ -40,6 +40,7 @@ const navGroups = [
     label: '策略配置',
     items: [
       { id: 'promptlib', label: '提示词策略', icon: FileText },
+      { id: 'council', label: '模型委员会', icon: Users },
       { id: 'llm', label: '模型连接', icon: Cpu },
       { id: 'agents', label: '运行单元', icon: Package },
     ],
@@ -87,12 +88,12 @@ const showAboutModal = ref(false)
 </script>
 
 <template>
-  <div class="min-h-screen bg-[#080B10] text-[#F3F4F6] flex flex-col md:flex-row">
+  <div class="r20-app-shell r20-admin-shell min-h-screen bg-[#080B10] text-[#F3F4F6] flex flex-col md:flex-row">
     <!-- Sidebar (desktop) / horizontal nav (mobile) -->
-    <aside class="w-full md:w-[210px] md:shrink-0 border-b md:border-b-0 md:border-r border-[#1A2232] bg-[#0A0D14] md:flex md:flex-col md:h-screen md:sticky md:top-0">
+    <aside class="r20-admin-sidebar w-full md:w-[210px] md:shrink-0 border-b md:border-b-0 md:border-r border-[#1A2232] bg-[#0A0D14] md:flex md:flex-col md:h-screen md:sticky md:top-0">
       <!-- Brand -->
       <div class="px-4 py-2.5 md:py-4 border-b border-[#1A2232] hidden md:flex items-center space-x-2.5">
-        <div class="w-8 h-8 rounded-lg bg-gradient-to-tr from-blue-600 via-indigo-600 to-cyan-400 flex items-center justify-center shadow-lg shadow-blue-500/20 ring-1 ring-white/20">
+        <div class="w-8 h-8 rounded-lg bg-[#4F7DFF] flex items-center justify-center ring-1 ring-white/15">
           <span class="r20-on-accent text-white font-black text-base tracking-wider">R</span>
         </div>
         <div>
@@ -142,7 +143,7 @@ const showAboutModal = ref(false)
     <!-- Main -->
     <div class="flex-1 flex flex-col min-w-0">
       <!-- Topbar -->
-      <header class="min-h-14 border-b border-[#1A2232] bg-[#0A0D14]/80 backdrop-blur-md flex flex-wrap items-center justify-between gap-x-3 gap-y-1.5 px-3 sm:px-5 py-2 md:py-0 shrink-0 sticky top-0 z-30">
+      <header class="r20-admin-topbar min-h-14 border-b border-[#1A2232] bg-[#0A0D14]/80 backdrop-blur-md flex flex-wrap items-center justify-between gap-x-3 gap-y-1.5 px-3 sm:px-5 py-2 md:py-0 shrink-0 sticky top-0 z-30">
         <div>
           <div class="text-sm font-bold text-white">{{ currentLabel }}</div>
           <div class="text-[11px] text-[#707E94] font-mono">R20 Quantum Trader 控制面</div>
@@ -170,7 +171,7 @@ const showAboutModal = ref(false)
       </header>
 
       <!-- Content -->
-      <main class="flex-1 p-3 sm:p-5 overflow-x-hidden">
+      <main class="r20-admin-content flex-1 p-3 sm:p-5 overflow-x-hidden">
         <router-view />
       </main>
     </div>

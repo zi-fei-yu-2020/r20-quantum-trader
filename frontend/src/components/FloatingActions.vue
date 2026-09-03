@@ -27,7 +27,7 @@ function copyPrompt() {
 
 <template>
   <!-- ⚡ Global Floating Actions (bottom-right: refresh + realtime prompt) -->
-  <div class="fixed bottom-20 right-4 sm:bottom-6 sm:right-6 z-40 flex flex-col items-end space-y-2.5">
+  <div class="r20-floating-actions fixed bottom-20 right-4 sm:bottom-6 sm:right-6 z-40 flex flex-col items-end space-y-2.5">
     <!-- Floating Refresh (pure circular icon button) -->
     <button
       @click="manualRefresh"
@@ -46,8 +46,8 @@ function copyPrompt() {
       <div class="w-5 h-5 rounded-full bg-blue-500/20 text-blue-400 flex items-center justify-center font-bold">
         <Terminal class="w-3 h-3" />
       </div>
-      <span class="text-xs font-mono font-bold tracking-wide">实时提示词</span>
-      <span class="w-2 h-2 rounded-full bg-[#0ECB81] animate-pulse"></span>
+      <span class="hidden sm:inline text-xs font-mono font-bold tracking-wide">实时提示词</span>
+      <span class="hidden sm:block w-2 h-2 rounded-full bg-[#0ECB81] animate-pulse"></span>
     </button>
   </div>
 

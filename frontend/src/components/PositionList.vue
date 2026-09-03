@@ -25,7 +25,7 @@ const allProtected = computed(() =>
 </script>
 
 <template>
-  <div class="bg-[#0D121B] border border-[#1A2232] rounded-xl p-4">
+  <div class="r20-data-panel bg-[#0D121B] border border-[#1A2232] rounded-xl p-4">
     <div class="flex items-center justify-between mb-3">
       <div class="flex items-center space-x-2">
         <div class="w-2 h-2 rounded-full bg-emerald-400"></div>
