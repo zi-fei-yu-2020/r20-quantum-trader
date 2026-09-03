@@ -454,12 +454,26 @@ def git(command: list[str]) -> str:
         result = subprocess.run(["git", *command], cwd=ROOT, text=True, capture_output=True, timeout=30)
     except subprocess.TimeoutExpired as exc:
         raise RuntimeError(f"git command timed out after {exc.timeout}s") from exc
+    except OSError as exc:
+        raise RuntimeError(f"git is unavailable: {exc}") from exc
     if result.returncode:
         raise RuntimeError(result.stderr.strip() or result.stdout.strip() or "git command failed")
     return result.stdout.strip()
 
 
 def update_status() -> dict[str, Any]:
+    if os.getenv("R20_DEPLOYMENT_MODE", "").strip().lower() == "docker":
+        return {
+            "deployment": "docker",
+            "managed_externally": True,
+            "branch": os.getenv("R20_BUILD_BRANCH", "image"),
+            "local": os.getenv("R20_BUILD_COMMIT", "image"),
+            "remote": "",
+            "behind": 0,
+            "ahead": 0,
+            "dirty": False,
+            "update_note": "Docker deployment is managed by the host: docker compose build --pull && docker compose up -d.",
+        }
     try:
         local = git(["rev-parse", "--short", "HEAD"])
         branch = git(["branch", "--show-current"])
@@ -1057,6 +1071,7 @@ def admin_about(x_r20_admin_token: str | None = Header(default=None)) -> dict[st
     require_admin_header(x_r20_admin_token)
     import platform
     store = GatewayStore(GATEWAY_DB_PATH)
+    application_update = update_status()
     return {
         "product": {"name": "R20 Quantum Trader", "version": "6.2.1", "control_plane": "R20 Gateway Runtime", "gateway_version": GATEWAY_VERSION},
         "runtime": {"python": platform.python_version(), "platform": platform.platform(), "backend_pid": os.getpid(), "gateway": gateway_status(x_r20_admin_token)},
@@ -1065,8 +1080,12 @@ def admin_about(x_r20_admin_token: str | None = Header(default=None)) -> dict[st
             {"name": "Gateway Event Runtime", "version": GATEWAY_VERSION},
             {"name": "SQLite", "version": __import__("sqlite3").sqlite_version},
         ],
-        "repository": {"url": "https://github.com/555cute/r20-quantum-trader", "branch": git(["branch", "--show-current"]), "commit": git(["rev-parse", "--short", "HEAD"])},
-        "update": update_status(),
+        "repository": {
+            "url": "https://github.com/555cute/r20-quantum-trader",
+            "branch": application_update.get("branch", ""),
+            "commit": application_update.get("local", ""),
+        },
+        "update": application_update,
         "security": {"authentication": "PBKDF2-SHA256 + server-side sessions", "session_hours": 12, "plugin_policy": "builtin-only", "prompt_transport": "python-direct"},
     }
 
@@ -1084,6 +1103,11 @@ def update_application(payload: UpdateRequest, x_r20_admin_token: str | None = H
     require_admin_header(x_r20_admin_token)
     if payload.confirmation.strip().upper() != "UPDATE R20":
         raise HTTPException(status_code=400, detail="确认短语必须精确为：UPDATE R20")
+    if os.getenv("R20_DEPLOYMENT_MODE", "").strip().lower() == "docker":
+        raise HTTPException(
+            status_code=409,
+            detail="Docker deployment updates are managed by the host; run docker compose build --pull && docker compose up -d.",
+        )
     status_before = update_status()
     if status_before.get("error"):
         raise HTTPException(status_code=502, detail=status_before["error"])

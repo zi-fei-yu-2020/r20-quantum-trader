@@ -33,6 +33,28 @@ Choose one credential model:
 
 Never copy or publish another installation's `~/.okx/`; it contains machine-local authorization state. Both services must use the same `User`, `HOME`, and a `PATH` containing the `okx` binary. The supplied systemd units use the dedicated `r20` user and `/home/r20`; adjust both units together if your deployment user differs.
 
+## Docker Compose
+
+Docker 部署请使用根目录的 `Dockerfile` 和 `compose.yaml`：
+
+```sh
+cp env.example .env
+chmod 600 .env
+docker compose -f compose.yaml build
+docker compose -f compose.yaml up -d
+```
+
+Docker 模式使用一个 `app` 容器。FastAPI 生命周期会启动 Gateway Supervisor，Gateway Worker 同时拥有交易、因子、新闻、通知和备份调度能力。不要再启动 `r20_backend.scheduler` 或 `deploy/r20-scheduler.service`。
+
+Docker 的更新方式是宿主机拉取代码后重新构建镜像：
+
+```sh
+git pull --ff-only origin dev
+docker compose build --pull
+docker compose up -d
+```
+
+详细的端口、持久化、备份、反向代理和排查说明见 [`docs/DOCKER.md`](docs/DOCKER.md)。
 ## Run Locally
 
 Terminal 1:

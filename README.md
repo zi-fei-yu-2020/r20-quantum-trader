@@ -89,6 +89,18 @@ source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
+### Docker Compose 部署
+
+如果希望使用 Docker 部署，请先阅读 [Docker 部署指南](docs/DOCKER.md)，然后执行：
+
+```bash
+cp env.example .env
+chmod 600 .env
+docker compose -f compose.yaml build
+docker compose -f compose.yaml up -d
+```
+
+Docker 方案使用单个应用容器：FastAPI 会负责启动 Gateway Supervisor 和 Gateway Worker；不要额外启动旧版 `r20_backend.scheduler`，以免重复调度。运行数据、日志、备份、加密配置和可选的 OKX OAuth 状态都保存在 Docker named volumes 中。
 ### 3. 环境变量配置
 
 ```bash

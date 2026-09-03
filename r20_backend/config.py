@@ -6,6 +6,17 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 
 
+def environment_file() -> Path:
+    """Return the writable runtime configuration file.
+
+    Native installs keep using ``ROOT/.env``. Container deployments can set
+    ``R20_ENV_FILE`` to a path on a persistent volume so atomic admin updates
+    survive image replacement.
+    """
+    configured = os.getenv("R20_ENV_FILE", "").strip()
+    return Path(configured).expanduser() if configured else ROOT / ".env"
+
+
 def load_encrypted_secrets() -> None:
     try:
         from r20_gateway.secrets import inject_into_environment
@@ -25,7 +36,7 @@ def load_dotenv(path: Path) -> None:
         os.environ[key.strip()] = value.strip().strip('"').strip("'")
 
 
-load_dotenv(ROOT / ".env")
+load_dotenv(environment_file())
 load_encrypted_secrets()
 
 
@@ -53,7 +64,7 @@ class Settings:
 
 
 def refresh_settings() -> Settings:
-    load_dotenv(ROOT / ".env")
+    load_dotenv(environment_file())
     load_encrypted_secrets()
     settings.host = os.getenv("DASHBOARD_HOST", "0.0.0.0")
     settings.port = int(os.getenv("DASHBOARD_PORT", "8080"))
