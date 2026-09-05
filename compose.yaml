@@ -1,0 +1,56 @@
+name: r20-quantum-trader
+
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        NODE_IMAGE: "${R20_NODE_IMAGE:-node:22-alpine}"
+        PYTHON_IMAGE: "${R20_PYTHON_IMAGE:-python:3.12-alpine}"
+        OKX_CLI_SPEC: "${R20_OKX_CLI_SPEC:-@okx_ai/okx-trade-cli@^1.4.4}"
+    image: "${R20_IMAGE:-r20-quantum-trader:local}"
+    restart: unless-stopped
+    init: true
+    env_file:
+      - ./.env
+    environment:
+      TZ: "${TZ:-Asia/Shanghai}"
+      PYTHONUNBUFFERED: "1"
+      PYTHONPATH: /app
+      R20_ENV_FILE: /app/config/.env
+      R20_DEPLOYMENT_MODE: docker
+      R20_BUILD_BRANCH: "${R20_BUILD_BRANCH:-dev}"
+      R20_BUILD_COMMIT: "${R20_BUILD_COMMIT:-local}"
+    ports:
+      - "${R20_HTTP_PORT:-8080}:8080"
+    volumes:
+      - r20_config:/app/config
+      - r20_data:/app/data
+      - r20_logs:/app/logs
+      - r20_backups:/app/backups
+      - r20_okx:/home/r20/.okx
+      - r20_bypy:/home/r20/.bypy
+      - r20_npm:/home/r20/.npm-global
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/health', timeout=3).read()
+      interval: 30s
+      timeout: 5s
+      start_period: 20s
+      retries: 3
+    stop_grace_period: 30s
+    security_opt:
+      - no-new-privileges:true
+
+volumes:
+  r20_config:
+  r20_data:
+  r20_logs:
+  r20_backups:
+  r20_okx:
+  r20_bypy:
+  r20_npm:

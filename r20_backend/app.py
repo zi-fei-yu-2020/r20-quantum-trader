@@ -580,6 +580,18 @@ def git(command: list[str]) -> str:
 
 
 def update_status() -> dict[str, Any]:
+    if os.getenv("R20_DEPLOYMENT_MODE", "").strip().lower() == "docker":
+        return {
+            "deployment": "docker",
+            "managed_externally": True,
+            "branch": os.getenv("R20_BUILD_BRANCH", "image"),
+            "local": os.getenv("R20_BUILD_COMMIT", "image"),
+            "remote": "",
+            "behind": 0,
+            "ahead": 0,
+            "dirty": False,
+            "update_note": "Docker deployment is managed by the host: docker compose build --pull && docker compose up -d.",
+        }
     try:
         local = git(["rev-parse", "--short", "HEAD"])
         branch = git(["branch", "--show-current"])
@@ -1508,6 +1520,11 @@ def update_application(payload: UpdateRequest, x_r20_admin_token: str | None = H
     require_admin_header(x_r20_admin_token)
     if payload.confirmation.strip().upper() != "UPDATE R20":
         raise HTTPException(status_code=400, detail="确认短语必须精确为：UPDATE R20")
+    if os.getenv("R20_DEPLOYMENT_MODE", "").strip().lower() == "docker":
+        raise HTTPException(
+            status_code=409,
+            detail="Docker deployment updates are managed by the host; run docker compose build --pull && docker compose up -d.",
+        )
     status_before = update_status()
     if status_before.get("error"):
         raise HTTPException(status_code=502, detail=status_before["error"])

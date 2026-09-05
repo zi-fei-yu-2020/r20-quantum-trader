@@ -4,9 +4,9 @@ import os
 import tempfile
 from pathlib import Path
 from typing import Mapping
-from .config import ROOT, refresh_settings
+from .config import ROOT, environment_file, refresh_settings
 
-ENV_FILE = ROOT / ".env"
+ENV_FILE = environment_file()
 MANAGED_KEYS = {
     "OKX_BASE_URL",
     "R20_OKX_ENV",

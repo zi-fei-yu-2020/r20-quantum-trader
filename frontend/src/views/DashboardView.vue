@@ -194,15 +194,6 @@ function setLayout(mode: 'dual' | 'stacked') {
         </button>
         <span>•</span>
         <span>VUE 3 + VITE + TAILWIND CSS</span>
-        <span>•</span>
-        <a
-          href="https://github.com/555cute/r20-quantum-trader"
-          target="_blank"
-          rel="noopener noreferrer"
-          class="hover:text-[var(--color-brand)] transition-colors"
-        >
-          GitHub
-        </a>
       </div>
     </footer>
 

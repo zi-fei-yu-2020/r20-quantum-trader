@@ -120,9 +120,9 @@ class PromptModuleTests(unittest.TestCase):
 
     def test_stable_preset_balances_participation_without_weakening_p0(self):
         preset=prompts.PRESETS["stable"]
-        self.assertIn("不得把“稳健”解释为长期空仓",preset["trading_system"])
+        self.assertIn("全维度波段强化",preset["trading_system"])
         self.assertIn("P0 硬约束保持不变",preset["trading_system"])
-        self.assertIn("普通回抽优先作为限价入场定位",preset["trading_user"])
+        self.assertIn("概率论最高权重决策",preset["trading_user"])
 
     def test_trading_decision_contract_cannot_be_replaced_by_editor_summary(self):
         base="【推演与决策任务】:\n必须输出严格 JSON，包含 position_management 与 decisions"

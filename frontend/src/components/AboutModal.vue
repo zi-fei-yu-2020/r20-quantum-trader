@@ -116,35 +116,6 @@ async function copyToClipboard(text: string, targetName: string) {
             </div>
           </a>
 
-          <!-- GitHub Repo Link -->
-          <a
-            href="https://github.com/555cute/r20-quantum-trader"
-            target="_blank"
-            rel="noopener noreferrer"
-            class="p-3 rounded-xl border flex items-center justify-between transition-all group cursor-pointer"
-            style="background-color: var(--bg-card-subtle); border-color: var(--border-subtle);"
-          >
-            <div class="flex items-center space-x-2.5 min-w-0">
-              <div
-                class="w-6 h-6 rounded-lg border flex items-center justify-center shrink-0"
-                style="background-color: var(--bg-card); border-color: var(--border-subtle); color: var(--text-main);"
-              >
-                <Layers class="w-3.5 h-3.5" />
-              </div>
-              <div class="truncate">
-                <span class="font-bold block truncate" style="color: var(--text-main);">
-                  GitHub 官方开源主仓
-                </span>
-                <span class="text-[10px] truncate block" style="color: var(--text-faint);">
-                  555cute/r20-quantum-trader (MIT License)
-                </span>
-              </div>
-            </div>
-            <div class="flex items-center space-x-1 shrink-0 font-medium" style="color: var(--color-brand);">
-              <span class="text-[11px]">访问仓库</span>
-              <ExternalLink class="w-3 h-3" />
-            </div>
-          </a>
         </div>
 
         <!-- Quick Commands -->

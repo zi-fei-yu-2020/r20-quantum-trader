@@ -131,16 +131,6 @@ onUnmounted(() => {
           <span>控制台</span>
         </button>
 
-        <!-- GitHub link -->
-        <a
-          href="https://github.com/555cute/r20-quantum-trader"
-          target="_blank"
-          class="flex items-center space-x-1 px-2 sm:px-3 py-1 rounded-lg text-xs font-mono font-bold transition-all shadow-xs"
-          style="background-color: var(--text-main); color: var(--bg-card);"
-        >
-          <ExternalLink class="w-3.5 h-3.5" />
-          <span class="hidden sm:inline">GitHub</span>
-        </a>
       </div>
     </header>
 
@@ -190,19 +180,6 @@ onUnmounted(() => {
           </button>
         </nav>
 
-        <div
-          class="mt-6 p-3.5 rounded-xl border text-xs font-mono space-y-2 shadow-xs"
-          style="background-color: var(--bg-card); border-color: var(--border-subtle);"
-        >
-          <div class="text-[10px] uppercase font-bold" style="color: var(--text-faint);">社区交流与极客讨论</div>
-          <div class="font-bold flex items-center justify-between" style="color: var(--text-main);">
-            <span>QQ 官方群</span>
-            <span class="font-mono text-xs px-1.5 py-0.2 rounded border" style="background-color: var(--color-brand-bg); color: var(--color-brand); border-color: var(--color-brand-border);">655973677</span>
-          </div>
-          <p class="text-[10px] leading-relaxed" style="color: var(--text-muted);">
-            欢迎量化极客、提示词工程师、深度求索 R1 用户共同交流探索。
-          </p>
-        </div>
       </aside>
 
       <!-- Right Content Area -->
@@ -297,10 +274,10 @@ onUnmounted(() => {
               <span class="font-bold" style="color: var(--color-brand);">点击图片放大</span>
             </div>
             <img
-              src="https://raw.githubusercontent.com/555cute/r20-quantum-trader/main/docs/images/dashboard_trading.png"
+              src="/images/dashboard_trading.png"
               alt="双翼量化工作台全景"
               class="w-full rounded-xl cursor-zoom-in group-hover:opacity-95 transition-opacity"
-              @click="zoomImage = 'https://raw.githubusercontent.com/555cute/r20-quantum-trader/main/docs/images/dashboard_trading.png'"
+              @click="zoomImage = '/images/dashboard_trading.png'"
             />
           </div>
         </section>
@@ -341,10 +318,10 @@ onUnmounted(() => {
               <span class="font-bold" style="color: var(--color-brand);">点击图片放大</span>
             </div>
             <img
-              src="https://raw.githubusercontent.com/555cute/r20-quantum-trader/main/docs/images/admin_council.png"
+              src="/images/admin_council.png"
               alt="多模型委员会控制台"
               class="w-full rounded-xl cursor-zoom-in group-hover:opacity-95 transition-opacity"
-              @click="zoomImage = 'https://raw.githubusercontent.com/555cute/r20-quantum-trader/main/docs/images/admin_council.png'"
+              @click="zoomImage = '/images/admin_council.png'"
             />
           </div>
         </section>
@@ -407,10 +384,10 @@ onUnmounted(() => {
               <span class="font-bold" style="color: var(--color-brand);">点击图片放大</span>
             </div>
             <img
-              src="https://raw.githubusercontent.com/555cute/r20-quantum-trader/main/docs/images/admin_prompt_studio.png"
+              src="/images/admin_prompt_studio.png"
               alt="提示词策略工作室"
               class="w-full rounded-xl cursor-zoom-in group-hover:opacity-95 transition-opacity"
-              @click="zoomImage = 'https://raw.githubusercontent.com/555cute/r20-quantum-trader/main/docs/images/admin_prompt_studio.png'"
+              @click="zoomImage = '/images/admin_prompt_studio.png'"
             />
           </div>
         </section>
@@ -467,10 +444,10 @@ onUnmounted(() => {
               <span class="font-bold" style="color: var(--color-brand);">点击图片放大</span>
             </div>
             <img
-              src="https://raw.githubusercontent.com/555cute/r20-quantum-trader/main/docs/images/admin_interceptors.png"
+              src="/images/admin_interceptors.png"
               alt="物理拦截插件中心"
               class="w-full rounded-xl cursor-zoom-in group-hover:opacity-95 transition-opacity"
-              @click="zoomImage = 'https://raw.githubusercontent.com/555cute/r20-quantum-trader/main/docs/images/admin_interceptors.png'"
+              @click="zoomImage = '/images/admin_interceptors.png'"
             />
           </div>
         </section>
@@ -503,10 +480,10 @@ onUnmounted(() => {
               <span class="font-bold" style="color: var(--color-brand);">点击图片放大</span>
             </div>
             <img
-              src="https://raw.githubusercontent.com/555cute/r20-quantum-trader/main/docs/images/admin_llm.png"
+              src="/images/admin_llm.png"
               alt="模型连接控制台"
               class="w-full rounded-xl cursor-zoom-in group-hover:opacity-95 transition-opacity"
-              @click="zoomImage = 'https://raw.githubusercontent.com/555cute/r20-quantum-trader/main/docs/images/admin_llm.png'"
+              @click="zoomImage = '/images/admin_llm.png'"
             />
           </div>
         </section>
@@ -535,10 +512,10 @@ onUnmounted(() => {
               <span class="font-bold" style="color: var(--color-brand);">点击图片放大</span>
             </div>
             <img
-              src="https://raw.githubusercontent.com/555cute/r20-quantum-trader/main/docs/images/admin_evolution.png"
+              src="/images/admin_evolution.png"
               alt="自进化配置与实战心法面板"
               class="w-full rounded-xl cursor-zoom-in group-hover:opacity-95 transition-opacity"
-              @click="zoomImage = 'https://raw.githubusercontent.com/555cute/r20-quantum-trader/main/docs/images/admin_evolution.png'"
+              @click="zoomImage = '/images/admin_evolution.png'"
             />
           </div>
         </section>
@@ -558,7 +535,7 @@ onUnmounted(() => {
             <div class="flex items-center justify-between" style="color: var(--text-muted);">
               <span>极速启动命令序列:</span>
               <button
-                @click="copyText('git clone https://github.com/555cute/r20-quantum-trader.git\ncd r20-quantum-trader\npip install -r requirements.txt\n./scripts/start_standalone.sh', 'deploy_cmd')"
+                @click="copyText('git clone [your-repository-url].git\ncd r20-quantum-trader\npip install -r requirements.txt\n./scripts/start_standalone.sh', 'deploy_cmd')"
                 class="flex items-center space-x-1 cursor-pointer hover:underline"
                 style="color: var(--color-brand);"
               >
@@ -566,7 +543,7 @@ onUnmounted(() => {
                 <span>{{ copiedTag === 'deploy_cmd' ? '已复制命令' : '复制命令' }}</span>
               </button>
             </div>
-            <pre class="p-3 rounded-lg overflow-x-auto leading-relaxed border" style="background-color: var(--bg-card-subtle); border-color: var(--border-subtle); color: var(--color-up);">git clone https://github.com/555cute/r20-quantum-trader.git
+            <pre class="p-3 rounded-lg overflow-x-auto leading-relaxed border" style="background-color: var(--bg-card-subtle); border-color: var(--border-subtle); color: var(--color-up);">git clone [your-repository-url].git
 cd r20-quantum-trader
 pip install -r requirements.txt
 ./scripts/start_standalone.sh</pre>

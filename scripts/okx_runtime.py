@@ -12,7 +12,8 @@ ALLOWED_ENVIRONMENTS = {"demo", "live"}
 
 def _load_dotenv() -> dict[str, str]:
     values: dict[str, str] = {}
-    path = ROOT / ".env"
+    configured = os.getenv("R20_ENV_FILE", "").strip()
+    path = Path(configured).expanduser() if configured else ROOT / ".env"
     if path.exists():
         for line in path.read_text(encoding="utf-8").splitlines():
             line = line.strip()
