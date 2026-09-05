@@ -391,9 +391,13 @@ def persist_dashboard_cache(data):
 
 
 CACHE_DATA = load_persisted_dashboard_cache()
-LAST_CACHE_TIME = 0
+try:
+    LAST_CACHE_TIME = os.path.getmtime(DASHBOARD_CACHE_FILE) if CACHE_DATA else 0
+except OSError:
+    LAST_CACHE_TIME = 0
 CACHE_LOCK = None
-SYNC_EXECUTOR = ThreadPoolExecutor(max_workers=6, thread_name_prefix="dashboard_sync")
+CACHE_UPDATE_LOCK = threading.Lock()
+SYNC_EXECUTOR = ThreadPoolExecutor(max_workers=1, thread_name_prefix="dashboard_sync")
 _BG_WORKER_THREAD = None
 _BG_WORKER_RUNNING = False
 
@@ -432,7 +436,34 @@ def get_cache_lock():
         CACHE_LOCK = asyncio.Lock()
     return CACHE_LOCK
 
+def _refresh_owned_cache():
+    try:
+        _update_cache_cycle()
+    finally:
+        CACHE_UPDATE_LOCK.release()
+
+
 def update_cache_cycle():
+    """Only one cache producer may call upstream APIs at a time."""
+    if not CACHE_UPDATE_LOCK.acquire(blocking=False):
+        return False
+    _refresh_owned_cache()
+    return True
+
+
+def request_cache_refresh():
+    """Queue work without making an HTTP reader wait for exchange requests."""
+    if os.getenv("R20_TESTING") == "1" or not CACHE_UPDATE_LOCK.acquire(blocking=False):
+        return False
+    try:
+        threading.Thread(target=_refresh_owned_cache, name="dashboard_refresh", daemon=True).start()
+    except Exception:
+        CACHE_UPDATE_LOCK.release()
+        raise
+    return True
+
+
+def _update_cache_cycle():
     global CACHE_DATA, LAST_CACHE_TIME
     tz_beijing = datetime.timezone(datetime.timedelta(hours=8))
     now_bj = datetime.datetime.now(tz_beijing)
@@ -1368,30 +1399,45 @@ async def public_tab_spa_routes(request: Request):
 
 # --- Realtime Public Polling APIs (with Cloudflare Edge Micro-Caching) ---
 
+def monitoring_snapshot():
+    from scripts.okx_runtime import selected_environment
+    environment = selected_environment()
+    cached = CACHE_DATA
+    age = max(0, time.time() - LAST_CACHE_TIME)
+    matches = bool(cached and cached.get("account_source_id") == environment.identity)
+    if not matches or age > 5:
+        request_cache_refresh()
+    if not matches:
+        return {
+            "timestamp": "", "okx_environment": environment.mode,
+            "initializing": True,
+            "data_health": {"status": "OFFLINE", "partial": True, "errors": [], "refreshing": True},
+            "account": {}, "positions_summary": {"items": [], "total": 0},
+            "pending_orders": [], "factors": [], "trades": [], "logs": [],
+        }
+    # Copy only envelopes; never mutate the cached snapshot while serving it.
+    data = dict(cached)
+    health = dict(cached.get("data_health") or {})
+    health["cache_age_seconds"] = round(age, 1)
+    health["refreshing"] = CACHE_UPDATE_LOCK.locked()
+    if age > 15:
+        health.update({"status": "STALE", "partial": True})
+    data["data_health"] = health
+    return data
+
+
 @app.get("/api/all")
 async def get_all_data():
-    global CACHE_DATA, LAST_CACHE_TIME
-    # Return pre-warmed in-memory snapshot immediately (<1ms)
-    if not CACHE_DATA or time.time() - LAST_CACHE_TIME > 5.0:
-        data = await refresh_cache_if_needed(1.5)
-    else:
-        data = CACHE_DATA
-    # Realtime data: strictly never cache in browser (max-age=0), micro-cache at edge for 2s with fast revalidation
     return JSONResponse(
-        data,
+        monitoring_snapshot(),
         headers={"Cache-Control": "public, max-age=0, s-maxage=2, stale-while-revalidate=5"},
     )
 
 
 @app.get("/api/overview")
 async def get_overview():
-    global CACHE_DATA, LAST_CACHE_TIME
-    if not CACHE_DATA or time.time() - LAST_CACHE_TIME > 12.0:
-        data = await refresh_cache_if_needed(2.5)
-    else:
-        data = CACHE_DATA
     return JSONResponse(
-        data,
+        monitoring_snapshot(),
         headers={"Cache-Control": "public, max-age=1, s-maxage=3, stale-while-revalidate=5"},
     )
 

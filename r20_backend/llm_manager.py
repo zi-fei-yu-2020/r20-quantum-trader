@@ -13,6 +13,7 @@ import tempfile
 import time
 import urllib.request
 import urllib.error
+from .llm_transport import LLMRequestError, request_json
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -1091,45 +1092,11 @@ def execute_llm_request(
         reasoning_type=target_rtype,
     )
 
-    t0 = time.perf_counter()
-    req = urllib.request.Request(
-        endpoint,
-        data=json.dumps(payload).encode("utf-8"),
-        headers=headers,
-    )
-
-    try:
-        resp_handle = urllib.request.urlopen(req, timeout=timeout)
-    except urllib.error.HTTPError as exc:
-        err_b = ""
-        try:
-            err_b = exc.read().decode("utf-8", errors="replace")
-        except Exception:
-            pass
-
-        # Adaptive fallback retry on rejected parameter
-        if exc.code == 400 and any(kw in err_b.lower() for kw in ["reasoning_effort", "temperature", "response_format", "invalid parameter"]):
-            fallback_payload = {
-                "model": target_model,
-                "messages": messages,
-            }
-            fb_req = urllib.request.Request(
-                endpoint,
-                data=json.dumps(fallback_payload).encode("utf-8"),
-                headers=headers,
-            )
-            resp_handle = urllib.request.urlopen(fb_req, timeout=timeout)
-        else:
-            raise
-
-    with resp_handle as resp:
-        latency_ms = int((time.perf_counter() - t0) * 1000)
-        body_bytes = resp.read()
-        res_json = json.loads(body_bytes.decode("utf-8", errors="replace"))
+    res_json, _, latency_ms, attempts = request_json(endpoint, headers, payload, timeout)
 
     content = ""
     reasoning_content = ""
-    usage = res_json.get("usage", {})
+    usage = res_json.get("usage") or {}
 
     # Protocol 1: Claude Messages Response
     if target_format == "claude_messages":
@@ -1158,10 +1125,12 @@ def execute_llm_request(
 
     # Protocol 3: OpenAI Chat Completions Response
     else:
-        msg = res_json.get("choices", [{}])[0].get("message", {})
-        content = str(msg.get("content", "")).strip()
+        msg = (res_json.get("choices") or [{}])[0].get("message") or {}
+        content = str(msg.get("content") or "").strip()
         reasoning_content = str(msg.get("reasoning_content") or "").strip()
 
+    if not content:
+        raise LLMRequestError(200, attempts, "empty_model_output")
     return content, reasoning_content, usage, latency_ms
 
 
@@ -1202,141 +1171,67 @@ def test_llm_connection(
     )
 
     t0 = time.perf_counter()
-    req = urllib.request.Request(
-        endpoint,
-        data=json.dumps(payload).encode("utf-8"),
-        headers=headers,
-    )
-
     try:
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
-            latency_ms = int((time.perf_counter() - t0) * 1000)
-            status_code = resp.getcode()
-            body_bytes = resp.read()
-            res_json = json.loads(body_bytes.decode("utf-8", errors="replace"))
+        res_json, status_code, latency_ms, attempts = request_json(endpoint, headers, payload, timeout)
 
-            content = ""
-            reasoning_content = ""
-            usage = res_json.get("usage", {})
+        content = ""
+        reasoning_content = ""
+        usage = res_json.get("usage") or {}
 
-            if api_format == "claude_messages":
-                content = "".join(c.get("text", "") for c in res_json.get("content", []) if c.get("type") == "text")
-                reasoning_content = "\n".join(c.get("thinking", "") for c in res_json.get("content", []) if c.get("type") == "thinking")
-            elif api_format == "openai_responses":
-                content = str(res_json.get("output_text") or "")
-                for item in res_json.get("output", []):
-                    if item.get("type") == "reasoning":
-                        reasoning_content += str(item.get("content") or item.get("summary") or "")
-            else:
-                msg = res_json.get("choices", [{}])[0].get("message", {})
-                content = str(msg.get("content", ""))
-                reasoning_content = str(msg.get("reasoning_content") or "")
+        if api_format == "claude_messages":
+            content = "".join(c.get("text", "") for c in res_json.get("content", []) if c.get("type") == "text")
+            reasoning_content = "\n".join(c.get("thinking", "") for c in res_json.get("content", []) if c.get("type") == "thinking")
+        elif api_format == "openai_responses":
+            content = str(res_json.get("output_text") or "")
+            for item in res_json.get("output", []):
+                if item.get("type") == "reasoning":
+                    reasoning_content += str(item.get("content") or item.get("summary") or "")
+        else:
+            msg = (res_json.get("choices") or [{}])[0].get("message") or {}
+            content = str(msg.get("content") or "")
+            reasoning_content = str(msg.get("reasoning_content") or "")
 
-            content = content.strip()
-            reasoning_tokens = (
-                usage.get("completion_tokens_details", {}).get("reasoning_tokens")
-                or usage.get("output_tokens_details", {}).get("reasoning_tokens")
-                or usage.get("reasoning_tokens")
-                or (len(reasoning_content.split()) if reasoning_content else None)
-            )
+        content = content.strip()
+        if not content:
+            raise LLMRequestError(status_code, attempts, "empty_model_output")
+        reasoning_tokens = (
+            usage.get("completion_tokens_details", {}).get("reasoning_tokens")
+            or usage.get("output_tokens_details", {}).get("reasoning_tokens")
+            or usage.get("reasoning_tokens")
+            or (len(reasoning_content.split()) if reasoning_content else None)
+        )
 
-            format_label = next((f["name"] for f in SUPPORTED_API_FORMATS if f["id"] == api_format), api_format)
-
-            return {
-                "ok": True,
-                "status_code": status_code,
-                "latency_ms": latency_ms,
-                "model": model,
-                "api_format": api_format,
-                "api_format_name": format_label,
-                "endpoint": endpoint,
-                "response_preview": content[:120] if content else "(响应成功，返回空正文)",
-                "reasoning_detected": bool(reasoning_content),
-                "reasoning_tokens": reasoning_tokens,
-                "total_tokens": usage.get("total_tokens") or (usage.get("input_tokens", 0) + usage.get("output_tokens", 0)),
-                "payload_sent": {k: v for k, v in payload.items() if k not in ("messages", "input")},
-                "compatibility_note": f"协议 {api_format} 连接与解析成功" + (" · 已捕获链式推演输出" if reasoning_content else ""),
-            }
-
-    except urllib.error.HTTPError as exc:
-        latency_ms = int((time.perf_counter() - t0) * 1000)
-        status_code = exc.code
-        err_body = ""
-        try:
-            err_body = exc.read().decode("utf-8", errors="replace")
-        except Exception:
-            pass
-
-        # Adaptive fallback retry
-        is_param_conflict = any(kw in err_body.lower() for kw in [
-            "reasoning_effort", "temperature", "unrecognized request argument", "unknown parameter", "invalid parameter"
-        ])
-        if is_param_conflict and api_format == "openai_chat":
-            try:
-                fb_payload = {"model": model, "messages": test_messages}
-                fb_req = urllib.request.Request(endpoint, data=json.dumps(fb_payload).encode("utf-8"), headers=headers)
-                t1 = time.perf_counter()
-                with urllib.request.urlopen(fb_req, timeout=timeout) as fb_resp:
-                    fb_latency = int((time.perf_counter() - t1) * 1000)
-                    fb_body = fb_resp.read().decode("utf-8", errors="replace")
-                    fb_json = json.loads(fb_body)
-                    fb_msg = fb_json.get("choices", [{}])[0].get("message", {})
-                    return {
-                        "ok": True,
-                        "status_code": 200,
-                        "latency_ms": fb_latency,
-                        "model": model,
-                        "api_format": api_format,
-                        "endpoint": endpoint,
-                        "response_preview": str(fb_msg.get("content", ""))[:120] or "OK",
-                        "warning": f"上游服务拒绝了参数 ({err_body[:80]}…)，系统已自适应去除冲突参数并测试成功",
-                        "compatibility_note": "模型不支持自定义 reasoning_effort 或 temperature 参数；实际调用将自动去除",
-                    }
-            except Exception:
-                pass
-
-        rec = "请核对配置"
-        if status_code == 401:
-            rec = "API Key 认证失败，请检查密钥是否正确或是否已过期"
-        elif status_code == 404:
-            rec = f"端点未找到 (404)，请检查 API 格式协议是否选对（如 Anthropic 需选 Claude Messages，OpenAI 选 Chat 或 Responses），以及 Base URL 路径是否正确"
-        elif status_code == 429:
-            rec = "请求频次超限或账户配额/余额不足 (429 Rate Limit)"
-        elif status_code in (500, 502, 503):
-            rec = "上游大模型服务暂时不可用或内部服务故障"
+        format_label = next((f["name"] for f in SUPPORTED_API_FORMATS if f["id"] == api_format), api_format)
 
         return {
-            "ok": False,
+            "ok": True,
+            "attempts": attempts,
             "status_code": status_code,
             "latency_ms": latency_ms,
             "model": model,
             "api_format": api_format,
+            "api_format_name": format_label,
             "endpoint": endpoint,
-            "error": f"HTTP {status_code}: {err_body[:240]}",
-            "recommendation": rec,
+            "response_preview": content[:120] if content else "(响应成功，返回空正文)",
+            "reasoning_detected": bool(reasoning_content),
+            "reasoning_tokens": reasoning_tokens,
+            "total_tokens": usage.get("total_tokens") or (usage.get("input_tokens", 0) + usage.get("output_tokens", 0)),
+            "payload_sent": {k: v for k, v in payload.items() if k not in ("messages", "input", "system")},
+            "compatibility_note": f"协议 {api_format} 连接与解析成功" + (" · 已捕获链式推演输出" if reasoning_content else ""),
         }
 
-    except urllib.error.URLError as exc:
-        latency_ms = int((time.perf_counter() - t0) * 1000)
+    except LLMRequestError as exc:
         return {
-            "ok": False,
-            "status_code": 0,
-            "latency_ms": latency_ms,
-            "model": model,
-            "api_format": api_format,
-            "endpoint": endpoint,
-            "error": f"网络连接失败: {exc.reason}",
-            "recommendation": "无法连接到该 Base URL，请检查网络通畅度、DNS 解析或代理网关配置",
+            "ok": False, "status_code": exc.status_code,
+            "attempts": exc.attempts, "error_category": exc.category,
+            "latency_ms": int((time.perf_counter() - t0) * 1000),
+            "model": model, "api_format": api_format, "endpoint": endpoint,
+            "error": str(exc),
         }
     except Exception as exc:
-        latency_ms = int((time.perf_counter() - t0) * 1000)
         return {
-            "ok": False,
-            "status_code": 0,
-            "latency_ms": latency_ms,
-            "model": model,
-            "api_format": api_format,
-            "endpoint": endpoint,
-            "error": f"测试执行异常: {str(exc)}",
-            "recommendation": "发生未预期的连接错误，请检查输入配置格式",
+            "ok": False, "status_code": 0,
+            "latency_ms": int((time.perf_counter() - t0) * 1000),
+            "model": model, "api_format": api_format, "endpoint": endpoint,
+            "error": "Model response validation failed: " + type(exc).__name__,
         }

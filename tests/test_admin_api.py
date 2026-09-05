@@ -37,6 +37,33 @@ class AdminApiTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200, response.text)
         return {"X-R20-Session": response.json()["session_token"]}
 
+    def test_docker_about_uses_build_metadata_without_git(self):
+        headers = self.login("admin", "InitialAdmin123456")
+        with patch.dict("os.environ", {"R20_DEPLOYMENT_MODE": "docker", "R20_BUILD_BRANCH": "dev", "R20_BUILD_COMMIT": "test-image-commit"}), patch.object(app_module, "git", side_effect=AssertionError("Docker image has no Git checkout")) as git:
+            response = self.client.get("/api/v1/admin/about", headers=headers)
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["repository"]["branch"], "dev")
+        self.assertEqual(response.json()["repository"]["commit"], "test-image-commit")
+        git.assert_not_called()
+
+    def test_about_does_not_fetch_remote_repository(self):
+        with patch.dict("os.environ", {"R20_DEPLOYMENT_MODE": ""}):
+            result = app_module.update_status(fetch_remote=False)
+        self.assertEqual(result["branch"], "dev")
+        self.assertFalse(any(call.args[0][0] == "fetch" for call in app_module.git.call_args_list))
+
+    def test_connection_diagnostic_cache_invalidates_on_credential_change(self):
+        from types import SimpleNamespace
+        headers = self.login("admin", "InitialAdmin123456")
+        settings = SimpleNamespace(okx_environment="demo", okx_api_key="test-key", okx_secret_key="secret-one", okx_passphrase="pass", okx_demo_configured=True, okx_live_configured=False)
+        with patch.object(app_module, "refresh_settings"), patch.object(app_module, "settings", settings), patch.object(app_module, "_OKX_RUNTIME_CACHE", {"payload": None, "at": 0, "mode": "demo"}), patch.object(app_module, "diagnose_okx_runtime", return_value={"selected_mode": "demo", "ready": True}) as diagnose:
+            for _ in range(2):
+                self.assertEqual(self.client.get("/api/v1/admin/okx/runtime", headers=headers).status_code, 200)
+            self.assertEqual(diagnose.call_count, 1)
+            settings.okx_secret_key = "secret-two"
+            self.assertEqual(self.client.get("/api/v1/admin/okx/runtime", headers=headers).status_code, 200)
+            self.assertEqual(diagnose.call_count, 2)
+
     def test_login_session_and_logout(self):
         headers = self.login("admin", "InitialAdmin123456")
         self.assertEqual(self.client.get("/api/v1/admin/auth/me", headers=headers).status_code, 200)

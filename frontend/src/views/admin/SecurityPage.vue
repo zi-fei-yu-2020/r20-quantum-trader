@@ -19,6 +19,7 @@ const auth = useAuthStore()
 const config = ref<any>(null)
 const runtime = ref<any>(null)
 const loading = ref(true)
+const runtimeLoading = ref(false)
 const bannerMsg = useFeedback()
 
 // ---- OAuth ----
@@ -67,19 +68,35 @@ const sourceLabel: Record<string, string> = {
   none: '未就绪',
 }
 
+let runtimeGeneration = 0
+async function loadRuntime(refresh = false) {
+  const generation = ++runtimeGeneration
+  runtimeLoading.value = true
+  runtime.value = null
+  try {
+    const rt = await api(`/api/v1/admin/okx/runtime${refresh ? '?refresh=1' : ''}`)
+    if (generation !== runtimeGeneration) return
+    applyRuntime(rt)
+    oauthSite.value = rt?.oauth?.site || 'global'
+  } catch (e: any) {
+    if (generation === runtimeGeneration) bannerMsg.value = { text: `连接诊断失败：${e.message}`, type: 'err' }
+  } finally {
+    if (generation === runtimeGeneration) runtimeLoading.value = false
+  }
+}
+
 async function loadAll() {
   loading.value = true
+  // Network/CLI diagnostics must not block the editable account settings.
+  void loadRuntime()
   try {
-    const [cfg, rt] = await Promise.all([
+    const [cfg, inst] = await Promise.all([
       api('/api/v1/admin/config'),
-      api('/api/v1/admin/okx/runtime'),
+      api('/api/v1/admin/instruments'),
     ])
     config.value = cfg
-    applyRuntime(rt)
     newCapital.value = String(cfg.editable?.initial_capital ?? '')
     manualClose.value = !!cfg.editable?.manual_close_enabled
-    oauthSite.value = rt?.oauth?.site || 'global'
-    const inst = await api('/api/v1/admin/instruments')
     instruments.value = inst.instruments || []
     instLimits.value = inst.limits || instLimits.value
   } catch (e: any) {
@@ -94,13 +111,7 @@ function applyRuntime(rt: any) {
 }
 
 async function rediagnose() {
-  bannerMsg.value = { text: '正在检查 OKX CLI、OAuth 与私有读取…', type: 'warn' }
-  try {
-    applyRuntime(await api('/api/v1/admin/okx/runtime?refresh=1'))
-    bannerMsg.value = null
-  } catch (e: any) {
-    bannerMsg.value = { text: `诊断失败：${e.message}`, type: 'err' }
-  }
+  await loadRuntime(true)
 }
 
 async function startOauth() {
@@ -432,6 +443,10 @@ const { prompt } = useDialogs()
           </span>
         </div>
 
+        <p v-if="runtimeLoading" class="text-sm flex items-center gap-2" style="color: var(--text-muted)" role="status">
+          <RefreshCw class="size-4 animate-spin" aria-hidden="true" />
+          正在后台检查 OKX 连接，其他设置已可使用…
+        </p>
         <div v-if="runtime" class="grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_360px] gap-4">
           <!-- runtime detail -->
           <div>

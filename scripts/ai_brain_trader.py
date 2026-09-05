@@ -40,6 +40,12 @@ AI_MEMORY_FILE = os.path.join(DATA_DIR, "ai_trading_memory.json")
 PROMPT_OVERRIDE_FILE = os.path.join(DATA_DIR, "system_prompt_override.txt")
 AI_BRAIN_LOCK_FILE = os.path.join(DATA_DIR, ".ai_brain_cycle.lock")
 DECISION_MAX_AGE_SECONDS = 300
+LAST_INFERENCE_ERROR = ""
+
+
+def get_last_inference_error() -> str:
+    """A safe reason for this process's most recent inference attempt."""
+    return LAST_INFERENCE_ERROR
 
 from instrument_pool import load_instruments
 from prompt_library import active_profile, append_layer, apply_module_layout
@@ -67,12 +73,15 @@ def single_brain_cycle(func):
     def wrapped(*args, **kwargs):
         # Read-only prompt views are cross-platform; execution still requires the real POSIX lock.
         import fcntl
+        global LAST_INFERENCE_ERROR
+        LAST_INFERENCE_ERROR = ""
         os.makedirs(DATA_DIR, exist_ok=True)
         lock_handle = open(AI_BRAIN_LOCK_FILE, "a+", encoding="utf-8")
         try:
             fcntl.flock(lock_handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError:
             lock_handle.close()
+            LAST_INFERENCE_ERROR = "已有推理周期运行，本轮未取得执行锁"
             print("[AI Brain Batch] Skip: another inference cycle is still running")
             return None
         try:
@@ -1149,6 +1158,12 @@ def execute_batch_ai_brain_cycle(pos_summary: str = "当前总持仓 0/6", activ
         return standard_cache
 
     except Exception as e:
+        global LAST_INFERENCE_ERROR
+        code = getattr(e, "status_code", None) or getattr(e, "code", None)
+        attempts = getattr(e, "attempts", None)
+        LAST_INFERENCE_ERROR = f"模型接口 HTTP {code}" if code else type(e).__name__
+        if attempts:
+            LAST_INFERENCE_ERROR += f"，已尝试 {attempts} 次"
         telemetry.finish("failed", error=e)
         print(f"[AI Brain Batch] Error in batch inference: {e}")
         return None

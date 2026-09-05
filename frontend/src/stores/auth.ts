@@ -43,15 +43,18 @@ export const useAuthStore = defineStore('auth', () => {
 
   async function validateSession(): Promise<boolean> {
     if (!token.value) return false
+    const checkedToken = token.value
     try {
       const resp = await fetch('/api/v1/admin/auth/me', {
-        headers: { 'X-R20-Session': token.value },
+        headers: { 'X-R20-Session': checkedToken },
       })
+      if (token.value !== checkedToken) return false
       if (!resp.ok) {
-        logout()
+        if (resp.status === 401 || resp.status === 403) logout(false)
         return false
       }
       const data = await resp.json()
+      if (token.value !== checkedToken) return false
       if (data.user) {
         user.value = { username: data.user.username, role: data.user.role }
         localStorage.setItem(SESSION_USER_KEY, JSON.stringify(user.value))
@@ -63,6 +66,8 @@ export const useAuthStore = defineStore('auth', () => {
   }
 
   function restoreSession() {
+    // Router and App initialization can both call this during the first render.
+    if (token.value) return
     const savedToken = localStorage.getItem(SESSION_TOKEN_KEY)
     const savedUser = localStorage.getItem(SESSION_USER_KEY)
     if (savedToken && savedUser) {
@@ -76,10 +81,10 @@ export const useAuthStore = defineStore('auth', () => {
     }
   }
 
-  function logout() {
-    // Best-effort server-side logout (don't block)
-    if (token.value) {
-      fetch('/api/v1/admin/logout', {
+  function logout(revoke = true) {
+    // Do not send another request when the server already rejected the session.
+    if (revoke && token.value) {
+      fetch('/api/v1/admin/auth/logout', {
         method: 'POST',
         headers: { 'X-R20-Session': token.value },
       }).catch(() => {})

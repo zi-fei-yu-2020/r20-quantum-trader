@@ -1,5 +1,6 @@
 import { defineStore } from 'pinia'
 import { dashboardIsStale } from '../utils/dashboardHealth'
+import { createSingleFlight } from '../utils/singleFlight'
 import { ref, computed } from 'vue'
 import type { DashboardResponse, InstrumentFactor, PositionItem, PendingOrderItem } from '../types/dashboard'
 
@@ -72,14 +73,18 @@ export const useDashboardStore = defineStore('dashboard', () => {
   const isStale = computed(() => dashboardIsStale(data.value))
 
   // Actions
+  const sharedFetch = createSingleFlight<void>()
   async function fetchDashboard(silent = false) {
-    if (!silent) {
-      isRefreshing.value = true
-    }
+    if (!silent) isRefreshing.value = true
+    try { await sharedFetch('monitoring', refreshDashboard) }
+    finally { if (!silent) isRefreshing.value = false }
+  }
+
+  async function refreshDashboard() {
     try {
       const resp = await fetch(`/api/all?_t=${Date.now()}`, {
         headers: {
-          'Accept-Encoding': 'gzip, deflate, br',
+          'Accept': 'application/json',
         },
       })
       if (!resp.ok) {
@@ -96,23 +101,24 @@ export const useDashboardStore = defineStore('dashboard', () => {
       isConnected.value = false
     } finally {
       loading.value = false
-      if (!silent) {
-        setTimeout(() => {
-          isRefreshing.value = false
-        }, 300)
-      }
     }
+  }
+
+  function onVisible() {
+    if (document.visibilityState === 'visible') void fetchDashboard(true)
   }
 
   function startPolling(intervalMs = 3000) {
     stopPolling()
     fetchDashboard(false)
+    document.addEventListener('visibilitychange', onVisible)
     pollingTimer.value = setInterval(() => {
-      fetchDashboard(true)
+      if (document.visibilityState === 'visible') void fetchDashboard(true)
     }, intervalMs)
   }
 
   function stopPolling() {
+    document.removeEventListener('visibilitychange', onVisible)
     if (pollingTimer.value) {
       clearInterval(pollingTimer.value)
       pollingTimer.value = null

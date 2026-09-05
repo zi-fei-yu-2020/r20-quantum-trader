@@ -77,20 +77,9 @@ const dataHealthOverall = computed(() => {
 async function loadRuntime() {
   loading.value = true
   try {
-    const [rt, cfg] = await Promise.all([
-      api('/api/v1/admin/runtime').catch((e) => {
-        toast.error(e.message)
-        return null
-      }),
-      api('/api/v1/admin/config').catch((e) => {
-        toast.error(e.message)
-        return null
-      }),
-    ])
+    // Runtime already includes the configuration summary used on this page.
+    const rt = await api('/api/v1/admin/runtime')
     if (rt) {
-      if (cfg?.configuration) {
-        rt.configuration = { ...cfg.configuration, ...(rt?.configuration || {}) }
-      }
       runtime.value = rt
     }
   } catch (e: any) {

@@ -49,12 +49,13 @@ try:
     sys.path.append(os.path.join(WORKSPACE_DIR, "scripts"))
     from db_manager import record_trade_sqlite
     from qq_notifier import notify_trade_open, notify_trade_close
-    from ai_brain_trader import execute_batch_ai_brain_cycle, get_latest_ai_decision
+    from ai_brain_trader import execute_batch_ai_brain_cycle, get_latest_ai_decision, get_last_inference_error
 except Exception:
     record_trade_sqlite = None
     notify_trade_open = None
     notify_trade_close = None
     execute_batch_ai_brain_cycle = None
+    get_last_inference_error = lambda: "统一推理模块未加载"
     get_latest_ai_decision = None
 
 from instrument_pool import load_instruments
@@ -1687,7 +1688,8 @@ def execute_portfolio():
                     execute_ai_position_management(refreshed_pos_dict, trackers, timestamp_full, executed_actions)
                     save_trackers(trackers)
             else:
-                executed_actions.append("本轮AI推理失败或并发跳过，禁止复用旧持仓指令")
+                reason = get_last_inference_error() or "未取得有效新鲜AI决策"
+                executed_actions.append(f"本轮AI未就绪：{reason}；禁止复用旧持仓指令")
         except Exception as e:
             print(f"[AI Brain Batch Scan Warning] {e}")
 
@@ -2013,7 +2015,7 @@ def execute_portfolio():
     except Exception as e:
         print(f"[Ledger Sync Warning] {e}")
 
-    log_entry = f"[{timestamp_full}] ⚡ R20 Quantum Trader v7.2.1 巡检完成 | 持仓 {active_pos_count}/{MAX_CONCURRENT_POSITIONS} (多{long_count}/空{short_count}) | 动作: {', '.join(executed_actions) if executed_actions else '无开平仓操作'}\n"
+    log_entry = f"[{timestamp_full}] ⚡ R20 Quantum Trader v7.3.0 巡检完成 | 持仓 {active_pos_count}/{MAX_CONCURRENT_POSITIONS} (多{long_count}/空{short_count}) | 动作: {', '.join(executed_actions) if executed_actions else '无开平仓操作'}\n"
     with open(LOG_FILE, "a", encoding="utf-8") as f:
         f.write(log_entry)
     print(log_entry.strip())

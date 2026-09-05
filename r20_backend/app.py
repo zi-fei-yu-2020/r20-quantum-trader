@@ -581,7 +581,7 @@ def git(command: list[str]) -> str:
     return result.stdout.strip()
 
 
-def update_status() -> dict[str, Any]:
+def update_status(*, fetch_remote: bool = True) -> dict[str, Any]:
     if os.getenv("R20_DEPLOYMENT_MODE", "").strip().lower() == "docker":
         return {
             "deployment": "docker",
@@ -601,7 +601,8 @@ def update_status() -> dict[str, Any]:
         remote = ""
         behind = ahead = 0
         try:
-            git(["fetch", "--quiet", "origin", branch])
+            if fetch_remote:
+                git(["fetch", "--quiet", "origin", branch])
             remote = git(["rev-parse", "--short", f"origin/{branch}"])
             ahead, behind = [int(item) for item in git(["rev-list", "--left-right", "--count", f"HEAD...origin/{branch}"]).split()]
         except RuntimeError:
@@ -921,12 +922,13 @@ def admin_okx_runtime(x_r20_session: str | None = Header(default=None, alias="X-
     require_admin_header(x_r20_session=x_r20_session)
     configured = settings.okx_demo_configured if settings.okx_environment == "demo" else settings.okx_live_configured
     now = time.time()
+    identity = hashlib.sha256("\0".join((settings.okx_environment, settings.okx_api_key, settings.okx_secret_key, settings.okx_passphrase)).encode()).hexdigest()
     # Each CLI probe spawns 4-6 subprocesses (~1.5s). Serve a 15s cache so page
     # navigation feels instant; the UI's "重新诊断" passes refresh=1 to bypass.
-    if not refresh and _OKX_RUNTIME_CACHE["payload"] and _OKX_RUNTIME_CACHE["mode"] == settings.okx_environment and now - _OKX_RUNTIME_CACHE["at"] < 15:
+    if not refresh and _OKX_RUNTIME_CACHE["payload"] and _OKX_RUNTIME_CACHE.get("identity") == identity and now - _OKX_RUNTIME_CACHE["at"] < 15:
         return dict(_OKX_RUNTIME_CACHE["payload"])
     payload = diagnose_okx_runtime(settings.okx_environment, configured)
-    _OKX_RUNTIME_CACHE.update({"at": now, "mode": settings.okx_environment, "payload": copy.deepcopy(payload)})
+    _OKX_RUNTIME_CACHE.update({"at": time.time(), "mode": settings.okx_environment, "identity": identity, "payload": copy.deepcopy(payload)})
     return payload
 
 
@@ -1508,7 +1510,7 @@ def delete_admin_instrument(inst_id: str, payload: InstrumentDeleteRequest, x_r2
 def admin_about(x_r20_admin_token: str | None = Header(default=None)) -> dict[str, Any]:
     require_admin_header(x_r20_admin_token)
     import platform
-    store = GatewayStore(GATEWAY_DB_PATH)
+    version = update_status(fetch_remote=False)
     return {
         "product": {"name": "R20 Quantum Trader", "version": "7.3.0", "control_plane": "R20 Gateway Runtime", "gateway_version": GATEWAY_VERSION},
         "runtime": {"python": platform.python_version(), "platform": platform.platform(), "backend_pid": os.getpid(), "gateway": gateway_status(x_r20_admin_token)},
@@ -1517,8 +1519,8 @@ def admin_about(x_r20_admin_token: str | None = Header(default=None)) -> dict[st
             {"name": "Gateway Event Runtime", "version": GATEWAY_VERSION},
             {"name": "SQLite", "version": __import__("sqlite3").sqlite_version},
         ],
-        "repository": {"url": "https://github.com/555cute/r20-quantum-trader", "branch": git(["branch", "--show-current"]), "commit": git(["rev-parse", "--short", "HEAD"])},
-        "update": update_status(),
+        "repository": {"url": "https://github.com/555cute/r20-quantum-trader", "branch": version.get("branch", "unknown"), "commit": version.get("local", "unknown")},
+        "update": version,
         "security": {"authentication": "PBKDF2-SHA256 + server-side sessions", "session_hours": 12, "plugin_policy": "builtin-only", "prompt_transport": "python-direct"},
     }
 
