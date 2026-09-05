@@ -1,7 +1,10 @@
 <script setup lang="ts">
+import AppCard from './ui/AppCard.vue'
+import EmptyState from './ui/EmptyState.vue'
+
 import { ref } from 'vue'
 import { useDashboardStore } from '../stores/dashboard'
-import { TrendingUp, TrendingDown, ArrowUpRight, Compass, Cpu, Activity } from 'lucide-vue-next'
+import { TrendingUp, TrendingDown, ArrowUpRight, Compass, Activity } from 'lucide-vue-next'
 import FactorDetailModal from './FactorDetailModal.vue'
 
 const store = useDashboardStore()
@@ -45,67 +48,109 @@ function getActionLabel(action?: string) {
 <template>
   <div class="space-y-3">
     <!-- Macro Summary Telemetry Strip -->
-    <div
+    <AppCard
       class="rounded-xl border p-3 sm:p-3.5 flex items-start space-x-2.5 transition-colors shadow-xs"
-      style="background-color: var(--bg-card); border-color: var(--border-subtle);"
+      style="background-color: var(--bg-card); border-color: var(--border-subtle)"
     >
       <div
         class="w-6 h-6 rounded-md flex items-center justify-center border shrink-0 mt-0.5"
-        style="background-color: var(--color-brand-bg); border-color: var(--color-brand-border); color: var(--color-brand);"
+        style="
+          background-color: var(--color-brand-bg);
+          border-color: var(--color-brand-border);
+          color: var(--color-brand);
+        "
       >
         <Compass class="w-3.5 h-3.5" />
       </div>
       <div class="flex-1 min-w-0">
         <div class="flex items-center justify-between">
-          <span class="text-[11px] font-bold font-mono uppercase tracking-wider" style="color: var(--color-brand);">
+          <span
+            class="text-[11px] font-bold font-mono uppercase tracking-wider"
+            style="color: var(--color-brand)"
+          >
             宏观多周期推演基调
           </span>
-          <span class="text-[10px] font-mono" style="color: var(--text-faint);">
+          <span class="text-[10px] font-mono" style="color: var(--text-faint)">
             {{ store.data?.timestamp ? String(store.data.timestamp).slice(11, 19) : '' }}
           </span>
         </div>
-        <p class="text-[11px] font-sans mt-0.5 leading-relaxed line-clamp-2" style="color: var(--text-muted);" :title="store.macroAssessment">
+        <p
+          class="text-[11px] font-sans mt-0.5 leading-relaxed line-clamp-2"
+          style="color: var(--text-muted)"
+          :title="store.macroAssessment"
+        >
           {{ store.macroAssessment }}
         </p>
       </div>
-    </div>
+    </AppCard>
 
     <!-- Section Title -->
     <div class="flex items-center justify-between px-1">
       <div class="flex items-center space-x-2">
-        <Activity class="w-3.5 h-3.5" style="color: var(--color-brand);" />
-        <h2 class="text-xs font-mono font-black uppercase tracking-wider" style="color: var(--text-main);">
-          {{ store.factors.length ? `${store.factors.length} 标的因果动力学与微结构雷达` : '动态资产池因果动力学与微结构雷达' }}
+        <Activity class="w-3.5 h-3.5" style="color: var(--color-brand)" />
+        <h2
+          class="text-xs font-mono font-black uppercase tracking-wider"
+          style="color: var(--text-main)"
+        >
+          {{
+            store.factors.length
+              ? `${store.factors.length} 标的因果动力学与微结构雷达`
+              : '动态资产池因果动力学与微结构雷达'
+          }}
         </h2>
       </div>
-      <span class="text-[10px] font-mono" style="color: var(--text-faint);">
+      <span class="text-[10px] font-mono" style="color: var(--text-faint)">
         点击卡片下钻微积分推演
       </span>
     </div>
 
+    <AppCard v-if="!store.factors.length"
+      ><EmptyState
+        title="暂无市场信号"
+        description="行情采集与策略决策就绪后，标的卡片会在这里自动更新。"
+    /></AppCard>
+
     <!-- 6-Asset Quantitative Ticker Cards Grid (adaptive 1 col on mobile, 2 cols on tablet, 3 cols on desktop, 6 cols on ultra-wide) -->
-    <div class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-2.5">
-      <div
+    <div v-else class="factor-grid grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4">
+      <AppCard
         v-for="item in store.factors"
         :key="item.instId"
         @click="openDetail(item)"
+        role="button"
+        tabindex="0"
+        :aria-label="`查看 ${item.name} 的市场信号`"
+        @keydown.enter="openDetail(item)"
+        @keydown.space.prevent="openDetail(item)"
         class="rounded-xl border p-3.5 transition-all duration-150 flex flex-col justify-between cursor-pointer group shadow-xs"
-        style="background-color: var(--bg-card); border-color: var(--border-subtle);"
+        style="background-color: var(--bg-card); border-color: var(--border-subtle)"
         :class="'hover:border-[var(--border-medium)] hover:bg-[var(--bg-card-hover)]'"
       >
         <!-- Top: Header Info -->
         <div>
-          <div class="flex items-center justify-between pb-2 border-b" style="border-color: var(--border-subtle);">
+          <div
+            class="flex items-center justify-between pb-2 border-b"
+            style="border-color: var(--border-subtle)"
+          >
             <div class="flex items-center space-x-1.5">
-              <span class="font-mono font-black text-sm tracking-wide" style="color: var(--text-main);">
+              <span
+                class="font-mono font-black text-sm tracking-wide"
+                style="color: var(--text-main)"
+              >
                 {{ item.name }}
               </span>
-              <span class="text-[9px] font-mono px-1 py-0.2 rounded border" style="background-color: var(--bg-badge); border-color: var(--border-subtle); color: var(--text-faint);">
+              <span
+                class="text-[9px] font-mono px-1 py-0.2 rounded border"
+                style="
+                  background-color: var(--bg-badge);
+                  border-color: var(--border-subtle);
+                  color: var(--text-faint);
+                "
+              >
                 SWAP
               </span>
             </div>
             <div class="text-right font-mono">
-              <div class="text-xs font-black num-tabular" style="color: var(--text-main);">
+              <div class="text-xs font-black num-tabular" style="color: var(--text-main)">
                 ${{ item.price }}
               </div>
               <div
@@ -122,46 +167,64 @@ function getActionLabel(action?: string) {
           <!-- Calculus Telemetry Grid -->
           <div
             class="grid grid-cols-4 gap-1 my-2 py-1.5 px-2 rounded-lg border text-[10px] font-mono"
-            style="background-color: var(--bg-card-subtle); border-color: var(--border-subtle);"
+            style="background-color: var(--bg-card-subtle); border-color: var(--border-subtle)"
           >
             <div>
-              <div class="text-[8px] uppercase" style="color: var(--text-faint);">速度 v</div>
+              <div class="text-[8px] uppercase" style="color: var(--text-faint)">速度 v</div>
               <div
                 class="font-bold num-tabular truncate"
-                :style="{ color: (item.calculus?.velocity_1h ?? 0) >= 0 ? 'var(--color-up)' : 'var(--color-down)' }"
+                :style="{
+                  color:
+                    (item.calculus?.velocity_1h ?? 0) >= 0
+                      ? 'var(--color-up)'
+                      : 'var(--color-down)',
+                }"
               >
                 {{ item.calculus?.velocity_1h ?? '--' }}
               </div>
             </div>
             <div>
-              <div class="text-[8px] uppercase" style="color: var(--text-faint);">加速 a</div>
-              <div class="font-bold num-tabular truncate" style="color: var(--text-main);">
+              <div class="text-[8px] uppercase" style="color: var(--text-faint)">加速 a</div>
+              <div class="font-bold num-tabular truncate" style="color: var(--text-main)">
                 {{ item.calculus?.accel_1h ?? '--' }}
               </div>
             </div>
             <div>
-              <div class="text-[8px] uppercase" style="color: var(--text-faint);">冲击 j</div>
-              <div class="font-bold num-tabular truncate" style="color: var(--text-muted);">
+              <div class="text-[8px] uppercase" style="color: var(--text-faint)">冲击 j</div>
+              <div class="font-bold num-tabular truncate" style="color: var(--text-muted)">
                 {{ item.calculus?.jerk_1h ?? '--' }}
               </div>
             </div>
             <div>
-              <div class="text-[8px] uppercase" style="color: var(--text-faint);">ADX</div>
-              <div class="font-bold num-tabular truncate" style="color: var(--color-brand);">
+              <div class="text-[8px] uppercase" style="color: var(--text-faint)">ADX</div>
+              <div class="font-bold num-tabular truncate" style="color: var(--color-brand)">
                 {{ item.adx_1h ?? '--' }}
               </div>
             </div>
           </div>
 
           <!-- Microstructure Flow -->
-          <div class="flex items-center justify-between text-[10px] font-mono mb-2 px-0.5" style="color: var(--text-muted);">
-            <span>聪明钱: <strong class="num-tabular" style="color: var(--text-main);">{{ item.smart_money?.weighted_long_pct ?? 50 }}%多</strong></span>
-            <span>净流: <strong class="num-tabular" style="color: var(--text-main);">{{ item.smart_money?.net_flow_usdt ?? '0 U' }}</strong></span>
+          <div
+            class="flex items-center justify-between text-[10px] font-mono mb-2 px-0.5"
+            style="color: var(--text-muted)"
+          >
+            <span
+              >聪明钱:
+              <strong class="num-tabular" style="color: var(--text-main)"
+                >{{ item.smart_money?.weighted_long_pct ?? 50 }}%多</strong
+              ></span
+            >
+            <span
+              >净流:
+              <strong class="num-tabular" style="color: var(--text-main)">{{
+                item.smart_money?.net_flow_usdt ?? '0 U'
+              }}</strong></span
+            >
           </div>
         </div>
 
         <!-- Bottom: Decision Status & Drawer Trigger -->
-        <div class="pt-2 border-t" style="border-color: var(--border-subtle);">
+        <div class="pt-2 border-t" style="border-color: var(--border-subtle)">
           <div class="flex items-center justify-between">
             <span
               class="px-2 py-0.5 rounded text-[10px] font-bold font-mono border"
@@ -169,14 +232,21 @@ function getActionLabel(action?: string) {
             >
               {{ getActionLabel(item.decision?.action || item.action) }}
             </span>
-            <div class="flex items-center space-x-1 text-xs font-mono font-bold" style="color: var(--text-muted);">
-              <span class="text-[10px]" style="color: var(--text-faint);">置信:</span>
-              <span class="num-tabular" style="color: var(--text-main);">{{ item.decision?.confidence || item.confidence || 0 }}%</span>
-              <ArrowUpRight class="w-3.5 h-3.5 opacity-60 group-hover:opacity-100 transition-opacity" />
+            <div
+              class="flex items-center space-x-1 text-xs font-mono font-bold"
+              style="color: var(--text-muted)"
+            >
+              <span class="text-[10px]" style="color: var(--text-faint)">置信:</span>
+              <span class="num-tabular" style="color: var(--text-main)"
+                >{{ item.decision?.confidence || item.confidence || 0 }}%</span
+              >
+              <ArrowUpRight
+                class="w-3.5 h-3.5 opacity-60 group-hover:opacity-100 transition-opacity"
+              />
             </div>
           </div>
         </div>
-      </div>
+      </AppCard>
     </div>
 
     <!-- Factor Detail Modal (Drawer) -->

@@ -279,6 +279,100 @@ class LLMMultiProviderTests(unittest.TestCase):
         self.assertEqual(del_m.status_code, 200)
         self.assertTrue(del_m.json()["deleted"])
 
+    def add_provider_model(self, provider_id, model_id="shared-model"):
+        llm_manager.upsert_provider({
+            "id": provider_id, "name": provider_id, "enabled": True,
+            "base_url": f"https://{provider_id}.example/v1", "api_key": f"test-{provider_id}",
+        })
+        llm_manager.upsert_model(provider_id, {"id": model_id})
+
+    def test_same_model_different_providers_keeps_identity(self):
+        self.add_provider_model("alpha")
+        self.add_provider_model("beta")
+        cfg = llm_manager.load_llm_config()
+        self.assertEqual(len([m for m in cfg["models"] if m["id"] == "shared-model"]), 2)
+        with self.assertRaises(ValueError):
+            llm_manager.activate_provider_model("", "shared-model")
+        llm_manager.activate_provider_model("alpha", "shared-model")
+        runtime = llm_manager.get_active_llm_runtime()
+        self.assertEqual(runtime["provider_id"], "alpha")
+        self.assertEqual(runtime["api_key"], "test-alpha")
+        cfg = llm_manager.load_llm_config()
+        self.assertEqual(cfg["active_provider_id"], "alpha")
+        self.assertEqual([m["provider_id"] for m in cfg["models"] if m["is_active"]], ["alpha"])
+        self.assertTrue(llm_manager.delete_model("beta", "shared-model"))
+        self.assertEqual(llm_manager.get_active_llm_runtime()["provider_id"], "alpha")
+
+    def test_provider_rotation_updates_runtime_not_stale_flat_copy(self):
+        self.add_provider_model("alpha")
+        llm_manager.activate_provider_model("alpha", "shared-model")
+        llm_manager.upsert_provider({
+            "id": "alpha", "name": "alpha", "enabled": True,
+            "base_url": "https://rotated.example/v1", "api_key": "test-rotated",
+        })
+        runtime = llm_manager.get_active_llm_runtime()
+        self.assertEqual(runtime["base_url"], "https://rotated.example/v1")
+        self.assertEqual(runtime["api_key"], "test-rotated")
+
+    def test_activation_stores_key_encrypted_only(self):
+        self.add_provider_model("alpha")
+        with patch("r20_backend.settings_store.remove_env") as remove:
+            llm_manager.activate_provider_model("alpha", "shared-model")
+        self.mock_save_secrets.assert_called_with({"LLM_API_KEY": "test-alpha"})
+        remove.assert_called_once_with({"LLM_API_KEY"})
+        self.assertNotIn("LLM_API_KEY", self.mock_update_env.call_args.args[0])
+
+    def test_failed_secret_save_does_not_activate_model(self):
+        self.add_provider_model("alpha")
+        before = llm_manager.load_llm_config()["active_model_id"]
+        with patch("r20_gateway.secrets.save_secrets", side_effect=OSError("store unavailable")):
+            with self.assertRaises(OSError):
+                llm_manager.activate_provider_model("alpha", "shared-model")
+        self.assertEqual(llm_manager.load_llm_config()["active_model_id"], before)
+
+    def test_conflicting_provider_route_and_payload_is_rejected(self):
+        self.add_provider_model("alpha")
+        with self.assertRaises(ValueError):
+            llm_manager.upsert_model("alpha", {"id": "conflict", "provider_id": "beta"})
+
+    def test_missing_model_key_does_not_borrow_environment_secret(self):
+        llm_manager.upsert_provider({"id": "keyless", "name": "Keyless", "base_url": "https://keyless.example/v1"})
+        llm_manager.upsert_model("keyless", {"id": "keyless-model"})
+        llm_manager.activate_provider_model("keyless", "keyless-model")
+        with patch.dict("os.environ", {"LLM_API_KEY": "another-provider-key"}):
+            self.assertEqual(llm_manager.get_active_llm_runtime()["api_key"], "")
+
+    def test_builtin_disabled_state_survives_reload(self):
+        llm_manager.toggle_provider("openai", False)
+        provider = next(p for p in llm_manager.load_llm_config()["providers"] if p["id"] == "openai")
+        self.assertFalse(provider["enabled"])
+
+    def test_cannot_delete_or_clear_active_provider(self):
+        self.add_provider_model("alpha")
+        llm_manager.activate_provider_model("alpha", "shared-model")
+        headers = self.login()
+        for suffix in ("", "/models"):
+            response = self.client.delete("/api/v1/admin/llm/providers/alpha" + suffix, headers=headers)
+            self.assertEqual(response.status_code, 400)
+
+    def test_api_model_payload_and_test_preserve_provider(self):
+        self.add_provider_model("alpha")
+        self.add_provider_model("beta")
+        headers = self.login()
+        response = self.client.post("/api/v1/admin/llm/models", headers=headers, json={
+            "id": "payload-model", "provider_id": "beta",
+        })
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["provider_id"], "beta")
+        with patch.object(app_module, "test_llm_connection", return_value={"ok": True}) as probe:
+            response = self.client.post("/api/v1/admin/llm/test", headers=headers, json={
+                "model": "shared-model", "provider_id": "alpha", "reasoning_effort": "high",
+            })
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(probe.call_args.kwargs["api_key"], "test-alpha")
+        self.assertEqual(probe.call_args.kwargs["base_url"], "https://alpha.example/v1")
+        self.assertEqual(probe.call_args.kwargs["reasoning_effort"], "high")
+
     def test_fetch_remote_models_and_providers_crud(self):
         headers = self.login()
 

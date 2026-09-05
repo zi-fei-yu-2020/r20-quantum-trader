@@ -13,13 +13,13 @@
 # Runtime state; Compose provides persistent volumes for these paths
 data/*
 !data/.gitkeep
-!data/prompt_library.json
 logs
 backups
 
 # Frontend dependencies and generated output
 frontend/node_modules
 frontend/dist
+frontend/.ui-artifacts
 
 # Python and OS caches
 __pycache__

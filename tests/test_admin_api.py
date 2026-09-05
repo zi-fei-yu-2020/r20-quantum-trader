@@ -3,6 +3,7 @@ from __future__ import annotations
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from fastapi.testclient import TestClient
 import r20_backend.app as app_module
@@ -11,6 +12,16 @@ from r20_backend.admin_auth import AdminAuthStore
 
 class AdminApiTests(unittest.TestCase):
     def setUp(self):
+        # These tests exercise API/RBAC, not host probes or Git fetch.
+        platform_patch = patch("platform.platform", return_value="Linux-test")
+        platform_patch.start()
+        self.addCleanup(platform_patch.stop)
+        git_patch = patch.object(app_module, "git", side_effect=lambda command:
+            "0\t0" if command[0] == "rev-list" else
+            "dev" if command[0] == "branch" else
+            "" if command[0] in {"fetch", "status"} else "test-commit")
+        git_patch.start()
+        self.addCleanup(git_patch.stop)
         self.temp = tempfile.TemporaryDirectory()
         self.original = app_module.admin_auth
         app_module.admin_auth = AdminAuthStore(Path(self.temp.name) / "admin.db")
@@ -105,10 +116,11 @@ class AdminApiTests(unittest.TestCase):
     def test_config_exposes_initial_capital_without_secret(self):
         root=self.login("admin","InitialAdmin123456")
         from unittest.mock import patch
-        with patch.object(app_module,"load_account_baseline",return_value={"initial_capital":4061.04,"reset_time":"2026-08-31 06:57:38"}):
+        with patch.object(app_module,"load_account_baseline",return_value={"initial_capital":4061.04,"reset_time":"2026-08-31 06:57:38","baseline_configured":True}):
             response=self.client.get("/api/v1/admin/config",headers=root)
         self.assertEqual(response.status_code,200,response.text)
         self.assertEqual(response.json()["editable"]["initial_capital"],4061.04)
+        self.assertTrue(response.json()["editable"]["baseline_configured"])
         self.assertEqual(response.json()["editable"]["initial_capital_reset_time"],"2026-08-31 06:57:38")
 
     def test_okx_oauth_device_flow_endpoints_are_session_protected(self):

@@ -3,135 +3,116 @@ import { ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { useAuthStore } from '../../stores/auth'
 import { useTheme } from '../../composables/useTheme'
-import { LogIn, AlertCircle, RefreshCw, Sun, Moon, ArrowLeft } from 'lucide-vue-next'
-
+import {
+  Activity,
+  ArrowLeft,
+  ArrowRight,
+  Eye,
+  EyeOff,
+  LockKeyhole,
+  Moon,
+  Sun,
+  ShieldCheck,
+} from 'lucide-vue-next'
+import AppButton from '../../components/ui/AppButton.vue'
+import AppField from '../../components/ui/AppField.vue'
 const auth = useAuthStore()
 const router = useRouter()
 const { theme, toggleTheme } = useTheme()
-
 const username = ref('admin')
 const password = ref('')
+const showPassword = ref(false)
 const loading = ref(false)
-
 async function handleLogin() {
+  if (loading.value) return
   loading.value = true
-  const ok = await auth.login(username.value, password.value)
-  loading.value = false
-  if (ok) {
-    router.push('/admin/overview')
+  try {
+    if (await auth.login(username.value.trim(), password.value)) {
+      password.value = ''
+      await router.push('/admin/overview')
+    }
+  } finally {
+    loading.value = false
   }
 }
 </script>
-
 <template>
-  <div
-    class="min-h-screen flex flex-col justify-between p-4 sm:p-6 transition-colors selection:bg-blue-500/30"
-    style="background-color: var(--bg-app); color: var(--text-main);"
-  >
-    <!-- Top Bar: Back to Terminal & Theme Toggle -->
-    <div class="max-w-md w-full mx-auto flex items-center justify-between">
-      <a
-        href="/"
-        class="flex items-center space-x-1.5 px-3 py-1.5 rounded-lg border text-xs font-mono transition-colors shadow-xs"
-        style="background-color: var(--bg-card); border-color: var(--border-subtle); color: var(--text-muted);"
-      >
-        <ArrowLeft class="w-3.5 h-3.5" />
-        <span>返回实盘终端</span>
-      </a>
-
-      <button
+  <div class="login-page">
+    <header class="login-topbar">
+      <RouterLink to="/" class="terminal-brand"
+        ><span class="brand-mark"><Activity class="size-5" /></span
+        ><span>R20 Quantum</span></RouterLink
+      ><button
+        class="ui-icon-button"
+        :aria-label="theme === 'dark' ? '切换浅色主题' : '切换深色主题'"
         @click="toggleTheme"
-        class="flex items-center justify-center w-8 h-8 rounded-lg border transition-all cursor-pointer shadow-xs"
-        style="background-color: var(--bg-card); border-color: var(--border-subtle); color: var(--text-main);"
-        :title="theme === 'dark' ? '切换为亮色模式' : '切换为暗色模式'"
       >
-        <Sun v-if="theme === 'dark'" class="w-4 h-4 text-amber-400 hover:rotate-45 transition-transform" />
-        <Moon v-else class="w-4 h-4 text-slate-700 hover:-rotate-12 transition-transform" />
+        <Sun v-if="theme === 'dark'" class="size-5" /><Moon v-else class="size-5" />
       </button>
-    </div>
-
-    <!-- Center: Login Card -->
-    <div class="w-full max-w-md mx-auto my-auto py-8">
-      <!-- Brand Header -->
-      <div class="flex flex-col items-center mb-6 text-center">
-        <div
-          class="w-12 h-12 rounded-xl flex items-center justify-center font-mono font-black text-xl border shadow-xs mb-3"
-          style="background-color: var(--bg-card); border-color: var(--border-medium); color: var(--text-main);"
-        >
-          R
-        </div>
-        <div class="text-base font-black font-mono tracking-wide" style="color: var(--text-main);">
-          R20 QUANTUM CONTROL
-        </div>
-        <div class="text-xs font-mono mt-0.5" style="color: var(--text-muted);">
-          管理员身份鉴权与安全审计
-        </div>
-      </div>
-
-      <!-- Main Login Panel -->
-      <div
-        class="rounded-xl border p-6 sm:p-7 shadow-xs transition-colors"
-        style="background-color: var(--bg-card); border-color: var(--border-subtle);"
-      >
-        <div
-          v-if="auth.error"
-          class="mb-4 p-3 rounded-lg border text-xs font-mono flex items-start gap-2"
-          style="background-color: var(--color-down-bg); border-color: var(--color-down-border); color: var(--color-down);"
-        >
-          <AlertCircle class="w-4 h-4 shrink-0 mt-0.5" />
-          <span>{{ auth.error }}</span>
-        </div>
-
-        <div class="space-y-4">
+    </header>
+    <main class="login-layout">
+      <section class="login-intro">
+        <span class="ui-badge ui-badge--brand">量化策略工作空间</span>
+        <h1>让每一次决策，<br />都有据可循。</h1>
+        <p>连接模型、管理策略、观察风险。<br />在一个清晰的工作空间里，掌握系统的每一步。</p>
+        <div class="login-feature">
+          <ShieldCheck class="size-5" />
           <div>
-            <label class="block text-xs font-mono font-bold mb-1.5" style="color: var(--text-muted);">
-              管理员账号
-            </label>
-            <input
+            <strong>权限与操作隔离</strong><span>关键操作保留密码验证、确认短语和审计记录。</span>
+          </div>
+        </div>
+        <div class="login-feature">
+          <Activity class="size-5" />
+          <div>
+            <strong>从信号到执行</strong><span>集中查看模型决策、任务状态和账户信息。</span>
+          </div>
+        </div>
+      </section>
+      <section class="login-card">
+        <div class="login-card__icon"><LockKeyhole class="size-6" aria-hidden="true" /></div>
+        <h2>登录控制台</h2>
+        <p class="text-[var(--text-muted)] mt-2 mb-7">使用管理员账户访问你的工作空间。</p>
+        <form @submit.prevent="handleLogin" class="space-y-5">
+          <AppField label="管理员账号" for="login-username"
+            ><input
+              id="login-username"
               v-model="username"
-              type="text"
+              name="username"
               autocomplete="username"
-              class="w-full rounded-lg px-3.5 py-2.5 text-xs font-mono outline-none border transition-colors"
-              style="background-color: var(--bg-input); border-color: var(--border-subtle); color: var(--text-main);"
-            />
-          </div>
-
-          <div>
-            <label class="block text-xs font-mono font-bold mb-1.5" style="color: var(--text-muted);">
-              密码
-            </label>
-            <input
-              v-model="password"
-              type="password"
-              autocomplete="current-password"
-              placeholder="输入管理员密码"
-              class="w-full rounded-lg px-3.5 py-2.5 text-xs font-mono outline-none border transition-colors"
-              style="background-color: var(--bg-input); border-color: var(--border-subtle); color: var(--text-main);"
-              @keyup.enter="handleLogin"
-            />
-          </div>
-
-          <button
-            @click="handleLogin"
-            :disabled="loading"
-            class="btn-primary-text w-full flex items-center justify-center space-x-2 font-mono font-bold text-xs py-2.5 rounded-lg border transition-all cursor-pointer shadow-xs disabled:opacity-50 disabled:cursor-not-allowed mt-2 hover:bg-blue-600"
-            style="background-color: #2563EB; border-color: #2563EB; color: #FFFFFF !important;"
-          >
-            <LogIn v-if="!loading" class="w-3.5 h-3.5" style="color: #FFFFFF;" />
-            <RefreshCw v-else class="w-3.5 h-3.5 animate-spin" style="color: #FFFFFF;" />
-            <span style="color: #FFFFFF;">{{ loading ? '鉴权登录中...' : '登录管理控制面' }}</span>
-          </button>
-        </div>
-
-        <p class="mt-4 text-[10px] font-mono leading-relaxed" style="color: var(--text-faint);">
-          默认账号为 admin；连续失败 5 次会自动临时锁定 15 分钟。所有登录动作与 IP 将持久化记录于操作审计日志中。
+              required
+              autofocus
+              :disabled="loading" /></AppField
+          ><AppField label="密码" for="login-password" :error="auth.error"
+            ><div class="input-with-action">
+              <input
+                id="login-password"
+                v-model="password"
+                name="password"
+                :type="showPassword ? 'text' : 'password'"
+                autocomplete="current-password"
+                required
+                :disabled="loading"
+                :aria-invalid="!!auth.error"
+                :aria-describedby="auth.error ? 'login-password-error' : undefined"
+                placeholder="输入管理员密码"
+              /><button
+                type="button"
+                class="ui-icon-button"
+                :aria-label="showPassword ? '隐藏密码' : '显示密码'"
+                @click="showPassword = !showPassword"
+              >
+                <EyeOff v-if="showPassword" class="size-[18px]" /><Eye v-else class="size-[18px]" />
+              </button></div></AppField
+          ><AppButton type="submit" variant="primary" :loading="loading" class="w-full"
+            >{{ loading ? '正在登录' : '登录工作空间' }}<ArrowRight v-if="!loading" class="size-4"
+          /></AppButton>
+        </form>
+        <p class="login-security-note">
+          <ShieldCheck class="size-4 shrink-0" />连续登录失败会触发临时锁定，请确认账号及密码。
         </p>
-      </div>
-    </div>
-
-    <!-- Bottom Footer -->
-    <div class="max-w-md w-full mx-auto text-center text-[11px] font-mono" style="color: var(--text-faint);">
-      R20 QUANTUM TRADER · ENTERPRISE CONTROL PLANE
-    </div>
+        <RouterLink to="/" class="login-back"><ArrowLeft class="size-4" />返回监控终端</RouterLink>
+      </section>
+    </main>
+    <footer class="login-footer">R20 Quantum Trader <span>·</span> 安全访问 · 操作可追溯</footer>
   </div>
 </template>

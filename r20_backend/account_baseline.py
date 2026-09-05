@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import math
 import os
 import tempfile
 from datetime import datetime, timedelta, timezone
@@ -22,7 +23,7 @@ def _number(value: Any, default: float) -> float:
         number = float(value)
     except (TypeError, ValueError):
         return default
-    return number if number > 0 else default
+    return number if math.isfinite(number) and number > 0 else default
 
 
 def load_account_baseline() -> dict[str, Any]:
@@ -39,6 +40,7 @@ def load_account_baseline() -> dict[str, Any]:
     return {
         **data,
         "initial_capital": round(capital, 2),
+        "baseline_configured": _number(data.get("initial_capital"), 0) > 0 or _number(os.getenv("INITIAL_CAPITAL"), 0) > 0,
         "reset_time": str(data.get("reset_time") or "1970-01-01 00:00:00"),
     }
 
@@ -51,6 +53,7 @@ def update_initial_capital(initial_capital: float) -> dict[str, Any]:
     updated = {
         **previous,
         "initial_capital": capital,
+        "baseline_configured": True,
         "capital_updated_at": datetime.now(BJ_TZ).strftime("%Y-%m-%d %H:%M:%S"),
     }
     BASELINE_FILE.parent.mkdir(parents=True, exist_ok=True)

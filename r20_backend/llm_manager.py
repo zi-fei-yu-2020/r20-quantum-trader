@@ -201,7 +201,6 @@ def init_llm_config() -> Dict[str, Any]:
                     p_obj["api_key"] = cur_key
                 if not p_obj.get("base_url"):
                     p_obj["base_url"] = cur_url
-                p_obj["enabled"] = True
             merged_providers.append(p_obj)
         else:
             p_obj = copy.deepcopy(dp)
@@ -228,7 +227,7 @@ def init_llm_config() -> Dict[str, Any]:
     active_m_id = data.get("active_model_id") or cur_model or "gemini-3.8-flash-high"
     active_effort = data.get("active_reasoning_effort") or cur_effort or "high"
 
-    models_map: Dict[str, Dict[str, Any]] = {}
+    models_map: Dict[Tuple[str, str], Dict[str, Any]] = {}
     for p in merged_providers:
         p_id = p.get("id", "")
         p_name = p.get("name", p_id)
@@ -239,7 +238,7 @@ def init_llm_config() -> Dict[str, Any]:
             mid = m.get("id", "")
             if not mid:
                 continue
-            models_map[mid] = {
+            models_map[(p_id, mid)] = {
                 "id": mid,
                 "name": m.get("name", mid),
                 "provider_id": p_id,
@@ -254,21 +253,23 @@ def init_llm_config() -> Dict[str, Any]:
                 "description": m.get("description", ""),
             }
 
-    # Preserve any custom models that were added by user or tests
+    # Provider-local definitions are authoritative; the flat array is only a
+    # compatibility view. Never let its cached credentials override a rotation.
     for m in data.get("models", []):
         mid = m.get("id")
-        if mid:
-            if mid in models_map:
-                models_map[mid].update(m)
-            else:
-                models_map[mid] = m
+        identity = (m.get("provider_id", "custom"), mid)
+        if mid and identity not in models_map:
+            models_map[identity] = m
 
     flat_models = list(models_map.values())
-    if not any(m["id"] == active_m_id for m in flat_models) and flat_models:
-        active_m_id = flat_models[0]["id"]
+    active_pid = data.get("active_provider_id", "")
+    candidates = [m for m in flat_models if m["id"] == active_m_id]
+    if not active_pid and candidates:
+        active_pid = candidates[0].get("provider_id", "custom")
 
     config = {
-        "version": "3.1",
+        "version": "3.2",
+        "active_provider_id": active_pid,
         "active_model_id": active_m_id,
         "active_reasoning_effort": active_effort,
         "providers": merged_providers,
@@ -298,7 +299,7 @@ def load_llm_config(mask_keys: bool = True) -> Dict[str, Any]:
         "supported_api_formats": SUPPORTED_API_FORMATS,
         "providers": [],
         "models": [],
-        "active_provider_id": "openai",
+        "active_provider_id": config.get("active_provider_id", ""),
     }
 
     for p in providers_list:
@@ -316,7 +317,7 @@ def load_llm_config(mask_keys: bool = True) -> Dict[str, Any]:
                 "reasoning_effort": m.get("reasoning_effort") or "high",
                 "context_length": m.get("context_length"),
                 "description": m.get("description", ""),
-                "is_active": m_id == active_mid,
+                "is_active": m_id == active_mid and pid == config.get("active_provider_id"),
             })
 
         p_copy = {
@@ -361,7 +362,7 @@ def load_llm_config(mask_keys: bool = True) -> Dict[str, Any]:
             "context_length": m.get("context_length"),
             "description": m.get("description", ""),
             "has_key": has_key,
-            "is_active": m["id"] == active_mid,
+            "is_active": m["id"] == active_mid and m_pid == config.get("active_provider_id"),
         }
         if mask_keys:
             m_copy["api_key_masked"] = mask_secret(m_key) if m_key else (mask_secret(p_entry.get("api_key", "")) if p_entry and p_entry.get("api_key") else "")
@@ -373,6 +374,16 @@ def load_llm_config(mask_keys: bool = True) -> Dict[str, Any]:
 
 
 
+def select_model(config: Dict[str, Any], model_id: str, provider_id: str = "") -> Optional[Dict[str, Any]]:
+    """Resolve an identity without silently borrowing another provider's key."""
+    candidates = [m for m in config.get("models", []) if m["id"] == model_id]
+    if provider_id:
+        candidates = [m for m in candidates if m.get("provider_id", "custom") == provider_id]
+    if len(candidates) > 1:
+        raise ValueError("多个供应商包含同名模型，请明确选择供应商")
+    return candidates[0] if candidates else None
+
+
 def get_active_llm_runtime() -> Dict[str, Any]:
     """Retrieve active LLM credentials and configuration for runtime execution."""
     from .config import settings
@@ -380,7 +391,7 @@ def get_active_llm_runtime() -> Dict[str, Any]:
     active_mid = config.get("active_model_id", "")
     active_effort = config.get("active_reasoning_effort", "high")
 
-    target_model = next((m for m in config.get("models", []) if m["id"] == active_mid), None)
+    target_model = select_model(config, active_mid, config.get("active_provider_id", ""))
 
     base_url = target_model.get("base_url") if target_model else getattr(settings, "llm_base_url", "")
     api_key = target_model.get("api_key") if target_model else getattr(settings, "llm_api_key", "")
@@ -392,7 +403,7 @@ def get_active_llm_runtime() -> Dict[str, Any]:
         prov = next(
             (
                 p for p in config.get("providers", [])
-                if p.get("id") == provider_id or (t_base and p.get("base_url", "").rstrip("/") == t_base)
+                if p.get("id") == provider_id or (not provider_id and t_base and p.get("base_url", "").rstrip("/") == t_base)
             ),
             None,
         )
@@ -407,7 +418,9 @@ def get_active_llm_runtime() -> Dict[str, Any]:
                 provider_id = prov.get("id", "openai")
 
     base_url = (base_url or os.getenv("LLM_BASE_URL", "https://cpa.r20.cn/v1")).rstrip("/")
-    api_key = api_key or os.getenv("LLM_API_KEY", "")
+    # A configured model without a key must not borrow the active environment's
+    # credential and send it to another provider's endpoint.
+    api_key = (api_key or "") if target_model else (api_key or os.getenv("LLM_API_KEY", ""))
 
     model_name = active_mid or getattr(settings, "llm_model", "gemini-3.8-flash-high")
     api_format = target_model.get("api_format") if target_model else _detect_api_format(base_url, model_name)
@@ -428,7 +441,7 @@ def get_active_llm_runtime() -> Dict[str, Any]:
 
 def activate_provider_model(provider_id: str, model_id: str, reasoning_effort: Optional[str] = None) -> Dict[str, Any]:
     """One-click switch to activate a model. Updates config, .env, and encrypted store."""
-    from .settings_store import update_env
+    from .settings_store import update_env, remove_env
     from .config import refresh_settings
     try:
         from r20_gateway.secrets import save_secrets
@@ -436,49 +449,16 @@ def activate_provider_model(provider_id: str, model_id: str, reasoning_effort: O
         save_secrets = None
 
     config = init_llm_config()
-    target_model = next((m for m in config.get("models", []) if m["id"] == model_id), None)
+    target_model = select_model(config, model_id, provider_id)
     if not target_model:
-        # Check providers models
-        for p in config.get("providers", []):
-            m_found = next((m for m in p.get("models", []) if m.get("id") == model_id), None)
-            if m_found:
-                target_model = {
-                    "id": model_id,
-                    "name": m_found.get("name", model_id),
-                    "provider_id": p.get("id"),
-                    "provider_name": p.get("name"),
-                    "base_url": p.get("base_url"),
-                    "api_key": p.get("api_key"),
-                    "api_format": p.get("api_format", "openai_chat"),
-                    "reasoning_type": m_found.get("reasoning_type", _detect_reasoning_type(model_id)),
-                    "reasoning_effort": m_found.get("reasoning_effort", "high"),
-                    "description": m_found.get("description", ""),
-                }
-                config.setdefault("models", []).append(target_model)
-                break
-
-    if not target_model:
-        target_model = {
-            "id": model_id,
-            "name": model_id,
-            "provider_name": "自定义",
-            "base_url": os.getenv("LLM_BASE_URL", "https://cpa.r20.cn/v1"),
-            "api_key": os.getenv("LLM_API_KEY", ""),
-            "api_format": "openai_chat",
-            "reasoning_type": _detect_reasoning_type(model_id),
-            "reasoning_effort": "high",
-            "description": "一键激活时自动收录",
-        }
-        config.setdefault("models", []).append(target_model)
+        raise ValueError("所选供应商下未找到模型，请先添加模型后再激活")
 
     effort = reasoning_effort or target_model.get("reasoning_effort") or "high"
     if effort not in STANDARD_REASONING_EFFORTS:
         effort = "auto"
 
-    config["active_model_id"] = model_id
-    config["active_reasoning_effort"] = effort
-    _atomic_write_json(LLM_CONFIG_FILE, config)
-
+    # Persist the active selection only after credentials have been saved.
+    # A missing encryption dependency must not leave a failed activation active.
     # Sync to .env and secrets
     base_url = target_model.get("base_url", "")
     api_key = target_model.get("api_key", "")
@@ -499,12 +479,17 @@ def activate_provider_model(provider_id: str, model_id: str, reasoning_effort: O
         "LLM_REASONING_EFFORT": effort,
     }
     if api_key:
-        env_values["LLM_API_KEY"] = api_key
-        if save_secrets:
-            save_secrets({"LLM_API_KEY": api_key})
+        if not save_secrets:
+            raise RuntimeError("加密密钥存储不可用，未将密钥写入明文配置")
+        save_secrets({"LLM_API_KEY": api_key})
+        remove_env({"LLM_API_KEY"})
 
     update_env(env_values)
     refresh_settings()
+    config["active_provider_id"] = target_model.get("provider_id", "custom")
+    config["active_model_id"] = model_id
+    config["active_reasoning_effort"] = effort
+    _atomic_write_json(LLM_CONFIG_FILE, config)
 
     return {
         "success": True,
@@ -521,6 +506,10 @@ def activate_provider_model(provider_id: str, model_id: str, reasoning_effort: O
 
 def upsert_model(provider_id: str, model_data: Dict[str, Any]) -> Dict[str, Any]:
     """Add or update a custom model definition."""
+    requested_provider = model_data.get("provider_id")
+    if requested_provider and provider_id not in ("", "custom", requested_provider):
+        raise ValueError("请求路径与模型的供应商不一致")
+    provider_id = requested_provider or provider_id
     mid = str(model_data.get("id", "")).strip()
     name = str(model_data.get("name", "")).strip() or mid
     base_url = str(model_data.get("base_url", "")).strip().rstrip("/")
@@ -563,7 +552,7 @@ def upsert_model(provider_id: str, model_data: Dict[str, Any]) -> Dict[str, Any]
         api_format = _detect_api_format(base_url, mid)
 
     models = config.setdefault("models", [])
-    existing = next((m for m in models if m["id"] == mid), None)
+    existing = next((m for m in models if m["id"] == mid and m.get("provider_id", "custom") == provider_id), None)
 
     if existing:
         existing["name"] = name
@@ -616,6 +605,15 @@ def upsert_model(provider_id: str, model_data: Dict[str, Any]) -> Dict[str, Any]
                 "description": desc,
             })
 
+    if prov:
+        local_model = next(m for m in prov["models"] if m["id"] == mid)
+        for field in ("base_url", "api_key", "api_format"):
+            supplied = model_data.get(field)
+            if supplied and supplied != prov.get(field):
+                local_model[field] = supplied
+            elif field != "api_key" or supplied:
+                local_model.pop(field, None)
+
     _atomic_write_json(LLM_CONFIG_FILE, config)
     return {
         "model_id": mid,
@@ -629,14 +627,17 @@ def upsert_model(provider_id: str, model_data: Dict[str, Any]) -> Dict[str, Any]
 def delete_model(provider_id: str, model_id: str) -> bool:
     """Delete a custom model."""
     config = init_llm_config()
-    if config.get("active_model_id") == model_id:
+    target = select_model(config, model_id, provider_id)
+    if not target:
+        return False
+    target_pid = target.get("provider_id", "custom")
+    if config.get("active_model_id") == model_id and config.get("active_provider_id") == target_pid:
         raise ValueError("不能删除当前正在使用的模型；请先切换到其他模型后再删除。")
 
     models = config.get("models", [])
-    filtered = [m for m in models if m["id"] != model_id]
-
+    filtered = [m for m in models if not (m["id"] == model_id and m.get("provider_id", "custom") == target_pid)]
     for prov in config.get("providers", []):
-        if not provider_id or provider_id == "custom" or prov.get("id") == provider_id:
+        if prov.get("id") == target_pid:
             prov["models"] = [m for m in prov.get("models", []) if m.get("id") != model_id]
 
     if len(filtered) == len(models):
@@ -737,6 +738,8 @@ def toggle_provider(provider_id: str, enabled: Optional[bool] = None) -> Dict[st
 def clear_provider_models(provider_id: str) -> bool:
     """Clear all models under a specific provider."""
     config = init_llm_config()
+    if config.get("active_provider_id") == provider_id:
+        raise ValueError("不能清空或删除当前使用的供应商，请先切换模型")
     providers = config.get("providers", [])
     p = next((x for x in providers if x["id"] == provider_id), None)
     if not p:
@@ -750,11 +753,14 @@ def clear_provider_models(provider_id: str) -> bool:
 def delete_provider(provider_id: str) -> bool:
     """Delete a provider definition."""
     config = init_llm_config()
+    if config.get("active_provider_id") == provider_id:
+        raise ValueError("不能清空或删除当前使用的供应商，请先切换模型")
     providers = config.get("providers", [])
     filtered = [p for p in providers if p["id"] != provider_id]
     if len(filtered) == len(providers):
         return False
     config["providers"] = filtered
+    config["models"] = [m for m in config.get("models", []) if m.get("provider_id") != provider_id]
     _atomic_write_json(LLM_CONFIG_FILE, config)
     return True
 

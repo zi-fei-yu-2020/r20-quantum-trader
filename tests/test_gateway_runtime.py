@@ -11,6 +11,12 @@ from r20_gateway.store import GatewayStore
 
 
 class GatewayRuntimePrivacyTests(unittest.TestCase):
+    def test_windows_control_plane_does_not_spawn_posix_worker(self):
+        import r20_gateway.supervisor as supervisor
+        with patch.object(supervisor.sys, "platform", "win32"), patch.dict("os.environ", {"R20_TESTING": "0"}), patch.object(supervisor, "ensure_worker") as spawn:
+            supervisor.start_supervisor()
+        spawn.assert_not_called()
+
     def test_telemetry_never_persists_prompt_content(self):
         with tempfile.TemporaryDirectory() as td:
             db = Path(td) / "gateway.db"

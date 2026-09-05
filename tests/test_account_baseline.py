@@ -41,6 +41,22 @@ class AccountBaselineTests(unittest.TestCase):
             baseline.update_initial_capital(0)
         self.assertFalse(self.path.exists())
 
+    def test_default_capital_is_not_confirmed_performance(self):
+        with patch.dict("os.environ", {"INITIAL_CAPITAL": ""}):
+            value = baseline.load_account_baseline()
+        self.assertFalse(value["baseline_configured"])
+        self.assertFalse(self.path.exists())
+
+    def test_explicit_capital_marks_baseline_confirmed(self):
+        baseline.update_initial_capital(5000)
+        self.assertTrue(baseline.load_account_baseline()["baseline_configured"])
+
+    def test_nonfinite_baseline_is_not_used(self):
+        with patch.dict("os.environ", {"INITIAL_CAPITAL": "inf"}):
+            value = baseline.load_account_baseline()
+        self.assertFalse(value["baseline_configured"])
+        self.assertEqual(value["initial_capital"], baseline.DEFAULT_CAPITAL)
+
     def test_load_uses_environment_default_when_file_missing(self):
         with patch.dict("os.environ", {"INITIAL_CAPITAL": "8765.43"}):
             value = baseline.load_account_baseline()

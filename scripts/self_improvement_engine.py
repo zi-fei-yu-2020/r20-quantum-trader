@@ -13,7 +13,6 @@ import time
 import datetime
 import urllib.request
 import tempfile
-import fcntl
 import hashlib
 from typing import Dict, Any, List, Optional, Tuple
 
@@ -67,6 +66,8 @@ def clamp(value, lower, upper, default):
 
 def single_evolution_cycle(func):
     def wrapped(*args, **kwargs):
+        # Read-only prompt views are cross-platform; execution still requires the real POSIX lock.
+        import fcntl
         lock_handle = open(EVOLUTION_LOCK_FILE, "a+", encoding="utf-8")
         try:
             fcntl.flock(lock_handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)

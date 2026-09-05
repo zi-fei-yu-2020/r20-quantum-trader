@@ -56,6 +56,10 @@ def _run() -> None:
 
 
 def start_supervisor() -> None:
+    # The worker requires POSIX flock and /proc ownership checks. A Windows
+    # control plane can serve read-only APIs, but must not spawn a crash loop.
+    if os.getenv("R20_TESTING") == "1" or sys.platform == "win32":
+        return
     global _thread
     if _thread and _thread.is_alive(): return
     _stop.clear(); ensure_worker(); _thread=threading.Thread(target=_run,name="r20-gateway-supervisor",daemon=True); _thread.start()

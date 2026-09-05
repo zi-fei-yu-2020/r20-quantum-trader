@@ -6,8 +6,8 @@ services:
       context: .
       dockerfile: Dockerfile
       args:
-        NODE_IMAGE: "${R20_NODE_IMAGE:-node:22-alpine}"
-        PYTHON_IMAGE: "${R20_PYTHON_IMAGE:-python:3.12-alpine}"
+        NODE_IMAGE: "${R20_NODE_IMAGE:-node:22-bookworm-slim}"
+        PYTHON_IMAGE: "${R20_PYTHON_IMAGE:-python:3.12-slim-bookworm}"
         OKX_CLI_SPEC: "${R20_OKX_CLI_SPEC:-@okx_ai/okx-trade-cli@^1.4.4}"
     image: "${R20_IMAGE:-r20-quantum-trader:local}"
     restart: unless-stopped

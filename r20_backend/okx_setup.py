@@ -226,12 +226,26 @@ def diagnose_okx_runtime(selected_mode: str, static_configured: bool, *, env: Ma
         "static_credentials_configured": bool(static_configured),
         "credential_source": "static-v5-key" if static_configured else "none",
         "read_probe": {"ok": False, "detail": "not run"},
+        "read_only_ready": False,
         "ready": False,
         "issues": [],
         "steps": [],
         "install_command": INSTALL_COMMAND,
     }
     if not binary:
+        if static_configured:
+            from scripts.okx_runtime import selected_environment
+            from r20_backend.okx_read_service import read_private_resource
+            try:
+                selected = selected_environment(env)
+                if selected.mode != selected_mode:
+                    raise ValueError("诊断环境与当前配置不一致，请刷新后重试")
+                read_private_resource("positions", selected)
+                status["read_probe"] = {"ok": True, "detail": "OKX REST 私有只读探针通过；交易执行仍需 CLI"}
+                status["read_only_ready"] = True
+            except Exception as exc:
+                status["read_probe"] = {"ok": False, "detail": str(exc)}
+                status["issues"].append("当前环境 REST 私有读取失败，请核对凭据及网络")
         status["issues"].append("OKX CLI 未安装或服务 PATH 中不可见")
         status["steps"].extend(["安装 Node.js 18+ 与 npm", f"执行：{INSTALL_COMMAND}", "安装后重启 r20-backend 与 r20-gateway"])
         return status
@@ -303,6 +317,7 @@ def diagnose_okx_runtime(selected_mode: str, static_configured: bool, *, env: Ma
     status["degraded"] = bool(oauth_ready and not status["read_probe"]["ok"] and _is_upstream_unavailable(status["read_probe"]["detail"]))
     status["auth_ready"] = bool(status["cli"]["supported"] and status["credential_source"] != "none")
     status["ready"] = bool(status["auth_ready"] and status["read_probe"]["ok"])
+    status["read_only_ready"] = bool(status["read_probe"]["ok"])
     if not static_configured and not oauth_ready and not status["api_key_profiles"]:
         status["issues"].append(f"未找到可用于 {selected_mode.upper()} 的 OKX 凭证或 OAuth 授权")
         status["steps"].extend([

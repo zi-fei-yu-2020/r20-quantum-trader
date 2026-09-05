@@ -6,6 +6,9 @@ factor library integration, multi-factor scoring and pyramiding gateways.
 """
 
 import os
+import io
+import json
+from types import SimpleNamespace
 import sys
 import unittest
 from unittest.mock import patch
@@ -168,7 +171,39 @@ class FactorLibraryIntegrationTest(unittest.TestCase):
 
     def test_factor_library_structure_contains_math_prob_foundations(self):
         item = {"instId": "BTC-USDT-SWAP", "name": "BTC", "type": "crypto", "precision": 1}
-        factors = factor_library.compute_instrument_factors(item, {})
+        # Deterministic market fixtures: never query OKX or execute its CLI.
+        candles = [
+            [str(1700000000000 + i * 900000), str(60000 + i * 10),
+             str(60020 + i * 10), str(59980 + i * 10), str(60010 + i * 10),
+             str(100 + i), "0", "0", "1"]
+            for i in range(24)
+        ][::-1]
+
+        def response(request, **kwargs):
+            url = request.full_url
+            if "/ticker?" in url:
+                data = [{"last": "60240", "bidPx": "60239", "askPx": "60241", "open24h": "60000"}]
+            elif "/candles?" in url:
+                data = candles
+            elif "/funding-rate?" in url:
+                data = [{"fundingRate": "0.0001"}]
+            elif "/open-interest?" in url:
+                data = [{"oiUsd": "1000000"}]
+            else:
+                data = []
+            return io.BytesIO(json.dumps({"code": "0", "data": data}).encode())
+
+        def cli_response(command, **kwargs):
+            data = [{"bids": [["60239", "20"]], "asks": [["60241", "10"]]}] if "orderbook" in command else []
+            return SimpleNamespace(returncode=0, stdout=json.dumps(data), stderr="")
+
+        with patch.object(factor_library.urllib.request, "urlopen", side_effect=response) as http, \
+             patch.object(factor_library.subprocess, "run", side_effect=cli_response) as cli:
+            factors = factor_library.compute_instrument_factors(item, {})
+        self.assertGreater(http.call_count, 0)
+        self.assertGreater(cli.call_count, 0)
+        self.assertEqual(factors["price"], 60240)
+        self.assertEqual(factors["microstructure"]["bid_ask_depth_ratio"], 2.0)
         self.assertIn("calculus_dynamics", factors)
         self.assertIn("definite_integrals", factors)
         self.assertIn("probability_theory", factors)

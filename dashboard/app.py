@@ -2,6 +2,7 @@
 Web Dashboard Application Module
 """
 from __future__ import annotations
+from contextlib import asynccontextmanager
 from typing import Any
 from pathlib import Path
 from scripts.okx_runtime import replace_cli_prefix as okx_private_command
@@ -49,7 +50,16 @@ def get_target_instruments() -> list[dict[str, Any]]:
 
 TARGET_INSTRUMENTS = load_instruments()
 
-app = FastAPI(title="R20 AI Quantitative Matrix", docs_url=None, redoc_url=None)
+@asynccontextmanager
+async def lifespan(_: FastAPI):
+    start_dashboard_background_worker()
+    try:
+        yield
+    finally:
+        stop_dashboard_background_worker()
+
+
+app = FastAPI(title="R20 AI Quantitative Matrix", docs_url=None, redoc_url=None, lifespan=lifespan)
 templates = Jinja2Templates(directory=os.path.join(DASHBOARD_DIR, "templates"))
 app.mount("/static", StaticFiles(directory=os.path.join(DASHBOARD_DIR, "static")), name="static")
 
@@ -61,6 +71,23 @@ def run_json_cmd_status(cmd):
         return False, None, res.stderr.strip() or res.stdout.strip() or "empty response"
     except Exception as e:
         return False, None, str(e)
+
+
+def read_account_resource(resource, environment, inst_id=""):
+    if environment.configured:
+        from r20_backend.okx_read_service import read_private_resource
+        try:
+            return True, read_private_resource(resource, environment, inst_id), ""
+        except Exception as exc:
+            return False, None, str(exc)
+    commands = {
+        "balance": "okx account balance --json",
+        "positions": "okx account positions --json",
+        "orders": "okx swap orders --json",
+        "bills": "okx account bills --limit 100 --json",
+        "algos": f"okx swap algo orders --instId {inst_id} --json",
+    }
+    return run_json_cmd_status(okx_private_command(commands[resource]))
 
 
 def run_json_cmd(cmd):
@@ -383,6 +410,8 @@ def _dashboard_background_worker_loop():
         time.sleep(2.0)
 
 def start_dashboard_background_worker():
+    if os.getenv("R20_TESTING") == "1":
+        return
     global _BG_WORKER_THREAD, _BG_WORKER_RUNNING
     if _BG_WORKER_THREAD is None or not _BG_WORKER_THREAD.is_alive():
         _BG_WORKER_RUNNING = True
@@ -412,11 +441,14 @@ def update_cache_cycle():
 
     source_errors = []
 
-    # Parallel Phase 1: Fetch Balance, Positions, and Maker Orders concurrently
+    # Freeze credentials/mode once for all reads in this update. API-key users
+    # do not need the CLI for monitoring; OAuth-only installs retain that path.
+    from scripts.okx_runtime import selected_environment
+    environment = selected_environment()
     with ThreadPoolExecutor(max_workers=3) as pool:
-        f_bal = pool.submit(run_json_cmd_status, okx_private_command("okx account balance --json"))
-        f_pos = pool.submit(run_json_cmd_status, okx_private_command("okx account positions --json"))
-        f_ord = pool.submit(run_json_cmd_status, okx_private_command("okx swap orders --json"))
+        f_bal = pool.submit(read_account_resource, "balance", environment)
+        f_pos = pool.submit(read_account_resource, "positions", environment)
+        f_ord = pool.submit(read_account_resource, "orders", environment)
         balance_ok, bal_data, balance_error = f_bal.result()
         positions_ok, pos_data, positions_error = f_pos.result()
         orders_ok, orders_data, orders_error = f_ord.result()
@@ -596,7 +628,8 @@ def update_cache_cycle():
 
     # A failed core account query must never overwrite last-known-good data with zeros.
     if not balance_ok or not positions_ok:
-        if _is_meaningful_dashboard_snapshot(CACHE_DATA):
+        if (_is_meaningful_dashboard_snapshot(CACHE_DATA)
+                and CACHE_DATA.get("account_source_id") == environment.identity):
             stale = dict(CACHE_DATA)
             stale_positions = (stale.get("positions_summary") or {}).get("items", [])
             enrich_position_risk_fields(stale_positions, trackers)
@@ -617,6 +650,7 @@ def update_cache_cycle():
             return
         CACHE_DATA = {
             "timestamp": timestamp_full,
+            "okx_environment": environment.mode,
             "data_health": {"status": "OFFLINE", "partial": True, "errors": source_errors},
             "account": {}, "today_stats": {}, "performance": {},
             "positions_summary": {"total": 0, "max_positions": len(load_instruments()), "items": []},
@@ -630,8 +664,7 @@ def update_cache_cycle():
         with ThreadPoolExecutor(max_workers=min(len(positions), 6)) as pool:
             futures = {
                 pos["instId"]: pool.submit(
-                    run_json_cmd_status,
-                    okx_private_command(f"okx swap algo orders --instId {pos['instId']} --json")
+                    read_account_resource, "algos", environment, pos["instId"]
                 )
                 for pos in positions
             }
@@ -675,21 +708,15 @@ def update_cache_cycle():
 
     enrich_position_risk_fields(positions, trackers)
 
-    # 3. Read Reset Initial State
-    account_init_file = os.path.join(DATA_DIR, "account_initial_state.json")
-    reset_time_str = "1970-01-01 00:00:00"
-    initial_capital_val = float(os.getenv("INITIAL_CAPITAL", "10000.0"))
-    if os.path.exists(account_init_file):
-        try:
-            with open(account_init_file, "r", encoding="utf-8") as f:
-                acc_init = json.load(f)
-                reset_time_str = acc_init.get("reset_time", "1970-01-01 00:00:00")
-                initial_capital_val = float(acc_init.get("initial_capital", 10000.0) or 10000.0)
-        except Exception:
-            pass
+    # Default seed capital is not a user-confirmed performance baseline.
+    from r20_backend.account_baseline import load_account_baseline
+    baseline = load_account_baseline()
+    reset_time_str = baseline["reset_time"]
+    initial_capital_val = baseline["initial_capital"]
+    baseline_configured = baseline["baseline_configured"]
 
     # 4. Load Bills and Real Order-Level Ledger
-    bills_ok, bills_data, bills_error = run_json_cmd_status(okx_private_command("okx account bills --limit 100 --json"))
+    bills_ok, bills_data, bills_error = read_account_resource("bills", environment)
     if not bills_ok:
         source_errors.append(f"bills: {bills_error}")
         bills_data = []
@@ -947,24 +974,10 @@ def update_cache_cycle():
             "timestamp": ai_info.get("timestamp"),
         })
 
-    # 7. Read Ledger Lifecycle Trades for Table (Directly sync fresh ledger if stale > 60s)
+    # 7. Read the lifecycle ledger only. Sync belongs to the trading/daily
+    # workers (which already call sync_full_ledger.py), not a monitoring refresh:
+    # syncing can write the ledger and emit close notifications.
     ledger_trades = []
-    need_ledger_sync = True
-    if os.path.exists(LEDGER_JSON_FILE):
-        try:
-            mtime = os.path.getmtime(LEDGER_JSON_FILE)
-            if time.time() - mtime < 60:
-                need_ledger_sync = False
-        except Exception:
-            pass
-
-    if need_ledger_sync:
-        try:
-            sync_script = os.path.join(WORKSPACE_DIR, "scripts", "sync_full_ledger.py")
-            if os.path.exists(sync_script):
-                subprocess.run(f"python3 {sync_script}", shell=True, capture_output=True, text=True, timeout=10)
-        except Exception:
-            pass
 
     if os.path.exists(LEDGER_JSON_FILE):
         try:
@@ -1093,6 +1106,8 @@ def update_cache_cycle():
 
     CACHE_DATA = {
         "timestamp": timestamp_full,
+        "okx_environment": environment.mode,
+        "account_source_id": environment.identity,
         "date": today_bj_str,
         "data_health": {
             "status": "LIVE" if not source_errors else "PARTIAL",
@@ -1110,15 +1125,16 @@ def update_cache_cycle():
             }
         },
         "account": {
-            "initial_capital": round(initial_capital_val, 2),
+            "initial_capital": round(initial_capital_val, 2) if baseline_configured else None,
+            "baseline_configured": baseline_configured,
             "total_eq": round(total_eq, 2),
             "avail_eq": round(avail_eq, 2),
             "cash_bal": round(cash_bal, 2),
             "upl": round(upl_acc, 2),
             "pos_upl_total": round(total_pos_upl, 2),
             "cum_realized_pnl": round(total_cum_realized_pnl, 2),
-            "cum_net_pnl": round(total_cum_net_pnl, 2),
-            "cum_roi_pct": cum_roi_pct,
+            "cum_net_pnl": round(total_cum_net_pnl, 2) if baseline_configured else None,
+            "cum_roi_pct": cum_roi_pct if baseline_configured else None,
             "cum_total_fees": round(cum_total_fees, 2),
             "margin_usage_pct": round(((total_eq - avail_eq) / total_eq * 100) if total_eq > 0 else 0, 1)
         },
@@ -1164,7 +1180,7 @@ def update_cache_cycle():
         "review": review_data,
         "ai_trading_memory_md": ai_memory_md_content,
         "ai_last_prompt": ai_last_prompt_text,
-        "snapshots": snapshots_list,
+        "snapshots": snapshots_list if baseline_configured else [],
         "state_snapshot": state_data,
         "logs": log_lines,
         "trades": trades_table,
@@ -1203,8 +1219,7 @@ async def refresh_cache_if_needed(ttl_seconds: float = 3.0):
         await loop.run_in_executor(SYNC_EXECUTOR, update_cache_cycle)
         return CACHE_DATA
 
-# Auto-start background worker to keep in-memory cache pre-warmed
-start_dashboard_background_worker()
+# Background work belongs to the ASGI lifespan, never module import.
 
 VUE_DIST_DIR = os.path.join(WORKSPACE_DIR, "frontend", "dist")
 VUE_ASSETS_DIR = os.path.join(VUE_DIST_DIR, "assets")

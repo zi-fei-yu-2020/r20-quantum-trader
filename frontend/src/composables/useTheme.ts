@@ -2,7 +2,7 @@ import { ref } from 'vue'
 
 export type ThemeMode = 'dark' | 'light'
 
-const currentTheme = ref<ThemeMode>('dark')
+const currentTheme = ref<ThemeMode>('light')
 let initialized = false
 
 export function useTheme() {
@@ -31,7 +31,7 @@ export function useTheme() {
   function initTheme() {
     if (initialized) return
     initialized = true
-    let saved: ThemeMode = 'dark'
+    let saved: ThemeMode = 'light'
     try {
       const stored = localStorage.getItem('r20_theme')
       if (stored === 'light' || stored === 'dark') {

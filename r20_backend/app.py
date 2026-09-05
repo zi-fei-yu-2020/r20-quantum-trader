@@ -514,6 +514,8 @@ def decision_summary() -> list[dict[str, Any]]:
 
 def get_admin_configuration() -> dict[str, str]:
     baseline = load_account_baseline()
+    from r20_backend.council_manager import load_council_config
+    council = load_council_config()
     try:
         llm_rt = get_active_llm_runtime()
         model_name = llm_rt.get("model") or settings.llm_model or "默认主脑"
@@ -530,10 +532,10 @@ def get_admin_configuration() -> dict[str, str]:
         "OKX 模拟盘凭证": "已配置" if settings.okx_demo_configured else "未配置",
         "LLM 决策主脑": model_name,
         "LLM 思考强度": effort,
-        "模型委员会": "加权共识机制 (ACTIVE)",
-        "物理拦截管线": "5大物理拦截器 (FAIL-CLOSED)",
-        "云端 OCO 覆盖": "100% 交易所云端挂载",
-        "初始本金基准": f"{baseline.get('initial_capital', 4061.04):,.2f} USDT",
+        "模型委员会": "已启用" if council.get("enabled") else "未启用",
+        "物理拦截管线": "以拦截器配置与执行记录为准",
+        "云端 OCO 覆盖": "以当前持仓保护单校验结果为准",
+        "初始本金基准": f"{baseline['initial_capital']:,.2f} USDT" if baseline["baseline_configured"] else "尚未确认；累计收益暂不展示",
         "管理员系统": "账号密码 + 服务端会话" if admin_auth.has_users() else "尚未初始化",
         "通知告警通道": "已配置多通道" if has_notify else "未配置",
         "应急平仓机制": "一次性 Token 复核已就绪" if settings.manual_close_enabled else "已禁用",
@@ -823,7 +825,11 @@ def gateway_status(x_r20_admin_token: str | None = Header(default=None), limit: 
             running = True
         except OSError:
             pass
-    return {"version": GATEWAY_VERSION, "running": running, "pid": pid or None, "stats": store.stats(), "event_health": store.event_health(), "deliveries": store.recent(limit), "scheduler": scheduler_snapshot(store)}
+    worker_supported = sys.platform != "win32"
+    return {"version": GATEWAY_VERSION, "running": running, "pid": pid or None,
+            "worker_supported": worker_supported,
+            "runtime_note": "" if worker_supported else "当前服务运行在 Windows：支持管理与只读连接测试；自动调度与交易 Worker 需要在 WSL/Linux 启动。",
+            "stats": store.stats(), "event_health": store.event_health(), "deliveries": store.recent(limit), "scheduler": scheduler_snapshot(store)}
 
 
 @app.post("/api/v1/admin/gateway/deliveries/{delivery_id}/replay")
@@ -878,6 +884,7 @@ def admin_config(x_r20_admin_token: str | None = Header(default=None)) -> dict[s
             "notification_webhook": settings.notification_webhook,
             "manual_close_enabled": settings.manual_close_enabled,
             "initial_capital": load_account_baseline()["initial_capital"],
+            "baseline_configured": load_account_baseline()["baseline_configured"],
             "initial_capital_reset_time": load_account_baseline()["reset_time"],
         },
     }
@@ -1034,7 +1041,7 @@ def admin_get_llm_models(x_r20_session: str | None = Header(default=None, alias=
 def admin_activate_llm_model(payload: LLMActivateRequest, x_r20_session: str | None = Header(default=None, alias="X-R20-Session")) -> dict[str, Any]:
     actor = require_superadmin(x_r20_session)
     try:
-        result = activate_provider_model(payload.provider_id or "custom", payload.model_id, payload.reasoning_effort)
+        result = activate_provider_model(payload.provider_id or "", payload.model_id, payload.reasoning_effort)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     audit_record("llm.model.activate", "success", {
@@ -1053,7 +1060,13 @@ def admin_test_llm(payload: LLMTestRequest, x_r20_session: str | None = Header(d
     api_format = payload.api_format or "openai_chat"
 
     raw_config = load_llm_config(mask_keys=False)
-    m_entry = next((m for m in raw_config.get("models", []) if m["id"] == payload.model), None)
+    from r20_backend.llm_manager import select_model
+    try:
+        m_entry = select_model(raw_config, payload.model, payload.provider_id or "")
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    if payload.provider_id and not m_entry:
+        raise HTTPException(status_code=400, detail="所选供应商下未找到模型")
     if m_entry:
         if not base_url:
             base_url = m_entry.get("base_url")
@@ -1095,7 +1108,7 @@ def admin_test_llm(payload: LLMTestRequest, x_r20_session: str | None = Header(d
 def admin_upsert_llm_model(payload: LLMModelUpsertRequest, provider_id: str = "custom", x_r20_session: str | None = Header(default=None, alias="X-R20-Session")) -> dict[str, Any]:
     actor = require_superadmin(x_r20_session)
     try:
-        res = upsert_model(provider_id, payload.model_dump(exclude_none=True))
+        res = upsert_model(provider_id if provider_id != "custom" else (payload.provider_id or "custom"), payload.model_dump(exclude_none=True))
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     audit_record("llm.model.upsert", "success", {"actor": actor["username"], "model_id": payload.id, "api_format": res.get("api_format")})
@@ -1107,7 +1120,7 @@ def admin_upsert_llm_model(payload: LLMModelUpsertRequest, provider_id: str = "c
 def admin_delete_llm_model(model_id: str, provider_id: str = "custom", x_r20_session: str | None = Header(default=None, alias="X-R20-Session")) -> dict[str, Any]:
     actor = require_superadmin(x_r20_session)
     try:
-        deleted = delete_model(provider_id, model_id)
+        deleted = delete_model(provider_id if provider_id != "custom" else "", model_id)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     if not deleted:
@@ -1158,7 +1171,10 @@ def admin_toggle_llm_provider(provider_id: str, payload: LLMProviderToggleReques
 @app.delete("/api/v1/admin/llm/providers/{provider_id}/models")
 def admin_clear_llm_provider_models(provider_id: str, x_r20_session: str | None = Header(default=None, alias="X-R20-Session")) -> dict[str, Any]:
     actor = require_superadmin(x_r20_session)
-    cleared = clear_provider_models(provider_id)
+    try:
+        cleared = clear_provider_models(provider_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     if not cleared:
         raise HTTPException(status_code=404, detail="未找到该供应商")
     audit_record("llm.provider.clear_models", "success", {"actor": actor["username"], "provider_id": provider_id})

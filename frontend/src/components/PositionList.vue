@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import AppCard from './ui/AppCard.vue'
+
 import { computed } from 'vue'
 import { useDashboardStore } from '../stores/dashboard'
 import { ShieldCheck, ShieldAlert, Layers } from 'lucide-vue-next'
@@ -14,26 +16,41 @@ function fmt4(v: any): string {
   if (!Number.isFinite(n)) return '--'
   return n >= 100 ? n.toFixed(2) : String(parseFloat(n.toFixed(4)))
 }
-const allProtected = computed(() =>
-  store.positions.length > 0 && store.positions.every((p: any) => p.protectionStatus === 'fully_protected' || Number(p.protectionCoveragePct || 0) >= 100)
+const allProtected = computed(
+  () =>
+    store.positions.length > 0 &&
+    store.positions.every(
+      (p: any) =>
+        p.protectionStatus === 'fully_protected' || Number(p.protectionCoveragePct || 0) >= 100,
+    ),
 )
 </script>
 
 <template>
-  <div
+  <AppCard
     class="rounded-xl border transition-all shadow-xs p-4 sm:p-5"
-    style="background-color: var(--bg-card); border-color: var(--border-subtle);"
+    style="background-color: var(--bg-card); border-color: var(--border-subtle)"
   >
     <!-- Card Header -->
-    <div class="flex flex-wrap items-center justify-between gap-3 pb-3 mb-3 border-b" style="border-color: var(--border-subtle);">
+    <div
+      class="flex flex-wrap items-center justify-between gap-3 pb-3 mb-3 border-b"
+      style="border-color: var(--border-subtle)"
+    >
       <div class="flex items-center space-x-2.5">
         <span class="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
-        <h2 class="text-xs sm:text-sm font-black font-mono uppercase tracking-wider" style="color: var(--text-main);">
-          实盘多空持仓与云端风控
+        <h2
+          class="text-xs sm:text-sm font-black font-mono uppercase tracking-wider"
+          style="color: var(--text-main)"
+        >
+          当前账户多空持仓与云端风控
         </h2>
         <span
           class="px-2 py-0.5 rounded text-xs font-mono font-bold border"
-          style="background-color: var(--bg-badge); color: var(--color-brand); border-color: var(--border-subtle);"
+          style="
+            background-color: var(--bg-badge);
+            color: var(--color-brand);
+            border-color: var(--border-subtle);
+          "
         >
           {{ store.positions.length }} / 6 在途
         </span>
@@ -45,7 +62,7 @@ const allProtected = computed(() =>
         :style="{
           backgroundColor: allProtected ? 'var(--color-up-bg)' : 'var(--color-warn-bg)',
           borderColor: allProtected ? 'var(--color-up-border)' : 'var(--color-warn-border)',
-          color: allProtected ? 'var(--color-up)' : 'var(--color-warn)'
+          color: allProtected ? 'var(--color-up)' : 'var(--color-warn)',
         }"
       >
         <ShieldCheck v-if="allProtected" class="w-3.5 h-3.5" />
@@ -58,15 +75,25 @@ const allProtected = computed(() =>
     <div
       v-if="store.positions.length === 0"
       class="py-10 text-center rounded-xl border border-dashed"
-      style="background-color: var(--bg-card-subtle); border-color: var(--border-subtle); color: var(--text-muted);"
+      style="
+        background-color: var(--bg-card-subtle);
+        border-color: var(--border-subtle);
+        color: var(--text-muted);
+      "
     >
       <div
         class="w-10 h-10 mx-auto mb-2 rounded-xl flex items-center justify-center border"
-        style="background-color: var(--bg-card); border-color: var(--border-medium); color: var(--text-muted);"
+        style="
+          background-color: var(--bg-card);
+          border-color: var(--border-medium);
+          color: var(--text-muted);
+        "
       >
         <Layers class="w-4 h-4" />
       </div>
-      <p class="text-xs font-mono font-medium">当前无在途持仓 · AI 决策中枢空仓扫描中 (100% 现金流动性安全)</p>
+      <p class="text-xs font-mono font-medium">
+        当前无在途持仓 · AI 决策中枢空仓扫描中 (100% 现金流动性安全)
+      </p>
     </div>
 
     <!-- Positions Table -->
@@ -75,7 +102,11 @@ const allProtected = computed(() =>
         <thead>
           <tr
             class="text-[11px] uppercase tracking-wider border-b"
-            style="background-color: var(--bg-card-subtle); border-color: var(--border-subtle); color: var(--text-muted);"
+            style="
+              background-color: var(--bg-card-subtle);
+              border-color: var(--border-subtle);
+              color: var(--text-muted);
+            "
           >
             <th class="py-2.5 px-3.5 font-bold">标的 / 杠杆</th>
             <th class="py-2.5 px-3.5 font-bold">方向</th>
@@ -87,23 +118,30 @@ const allProtected = computed(() =>
             <th class="py-2.5 px-3.5 text-right font-bold">未结盈亏 / ROI</th>
           </tr>
         </thead>
-        <tbody class="divide-y" style="border-color: var(--border-subtle);">
+        <tbody class="divide-y" style="border-color: var(--border-subtle)">
           <tr
             v-for="pos in store.positions"
             :key="pos.instId"
             class="transition-colors"
-            style="border-color: var(--border-subtle);"
+            style="border-color: var(--border-subtle)"
             :class="'hover:bg-[var(--bg-card-hover)]'"
           >
             <!-- 标的 / 杠杆 -->
             <td class="py-3 px-3.5">
               <div class="flex items-center space-x-2">
-                <span class="font-black text-sm tracking-wide font-mono" style="color: var(--text-main);">
+                <span
+                  class="font-black text-sm tracking-wide font-mono"
+                  style="color: var(--text-main)"
+                >
                   {{ pos.name }}
                 </span>
                 <span
                   class="px-1.5 py-0.2 rounded text-[10px] font-mono font-bold border"
-                  style="background-color: var(--bg-badge); color: var(--color-brand); border-color: var(--color-brand-border);"
+                  style="
+                    background-color: var(--bg-badge);
+                    color: var(--color-brand);
+                    border-color: var(--color-brand-border);
+                  "
                 >
                   {{ pos.lever }}x
                 </span>
@@ -115,9 +153,11 @@ const allProtected = computed(() =>
               <span
                 class="px-2 py-0.5 rounded text-[11px] font-bold inline-flex items-center space-x-1 border"
                 :style="{
-                  backgroundColor: pos.side === 'long' ? 'var(--color-up-bg)' : 'var(--color-down-bg)',
-                  borderColor: pos.side === 'long' ? 'var(--color-up-border)' : 'var(--color-down-border)',
-                  color: pos.side === 'long' ? 'var(--color-up)' : 'var(--color-down)'
+                  backgroundColor:
+                    pos.side === 'long' ? 'var(--color-up-bg)' : 'var(--color-down-bg)',
+                  borderColor:
+                    pos.side === 'long' ? 'var(--color-up-border)' : 'var(--color-down-border)',
+                  color: pos.side === 'long' ? 'var(--color-up)' : 'var(--color-down)',
                 }"
               >
                 <span>{{ pos.side === 'long' ? '多头 BUY' : '空头 SELL' }}</span>
@@ -125,23 +165,28 @@ const allProtected = computed(() =>
             </td>
 
             <!-- 持仓量 -->
-            <td class="py-3 px-3.5 font-bold num-tabular" style="color: var(--text-main);">
-              {{ pos.pos }} <span class="text-[10px] font-normal" style="color: var(--text-faint);">张</span>
+            <td class="py-3 px-3.5 font-bold num-tabular" style="color: var(--text-main)">
+              {{ pos.pos }}
+              <span class="text-[10px] font-normal" style="color: var(--text-faint)">张</span>
             </td>
 
             <!-- 开仓均价 -->
-            <td class="py-3 px-3.5 font-mono num-tabular" style="color: var(--text-muted);">
+            <td class="py-3 px-3.5 font-mono num-tabular" style="color: var(--text-muted)">
               ${{ fmt2(pos.avgPx) }}
             </td>
 
             <!-- 标记市价 -->
-            <td class="py-3 px-3.5 font-black font-mono text-sm num-tabular" style="color: var(--text-main);">
+            <td
+              class="py-3 px-3.5 font-black font-mono text-sm num-tabular"
+              style="color: var(--text-main)"
+            >
               ${{ fmt4(pos.markPx ?? pos.last) }}
             </td>
 
             <!-- 实际保证金 -->
-            <td class="py-3 px-3.5 font-mono num-tabular" style="color: var(--text-main);">
-              ${{ fmt2(pos.margin_usdt ?? pos.margin) }} <span class="text-[10px]" style="color: var(--text-faint);">U</span>
+            <td class="py-3 px-3.5 font-mono num-tabular" style="color: var(--text-main)">
+              ${{ fmt2(pos.margin_usdt ?? pos.margin) }}
+              <span class="text-[10px]" style="color: var(--text-faint)">U</span>
             </td>
 
             <!-- 云端止损防线 -->
@@ -151,7 +196,7 @@ const allProtected = computed(() =>
                 :style="{
                   backgroundColor: 'var(--bg-badge)',
                   borderColor: 'var(--border-subtle)',
-                  color: pos.side === 'long' ? 'var(--color-down)' : 'var(--color-up)'
+                  color: pos.side === 'long' ? 'var(--color-down)' : 'var(--color-up)',
                 }"
               >
                 <ShieldCheck class="w-3 h-3 shrink-0" />
@@ -169,14 +214,18 @@ const allProtected = computed(() =>
               </div>
               <div
                 class="text-[10px] font-bold font-mono num-tabular"
-                :style="{ color: Number(pos.uplRatio ?? pos.roi) >= 0 ? 'var(--color-up)' : 'var(--color-down)' }"
+                :style="{
+                  color:
+                    Number(pos.uplRatio ?? pos.roi) >= 0 ? 'var(--color-up)' : 'var(--color-down)',
+                }"
               >
-                {{ Number(pos.uplRatio ?? pos.roi) >= 0 ? '+' : '' }}{{ fmt2(pos.uplRatio ?? pos.roi) }}%
+                {{ Number(pos.uplRatio ?? pos.roi) >= 0 ? '+' : ''
+                }}{{ fmt2(pos.uplRatio ?? pos.roi) }}%
               </div>
             </td>
           </tr>
         </tbody>
       </table>
     </div>
-  </div>
+  </AppCard>
 </template>

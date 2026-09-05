@@ -1,16 +1,20 @@
 <script setup lang="ts">
+import AppCard from '../../components/ui/AppCard.vue'
+import LoadingState from '../../components/ui/LoadingState.vue'
+
+import { useFeedback, useToast } from '../../composables/useFeedback'
+
+import { useDialogs } from '../../composables/useDialogs'
+
 import { ref, computed, onMounted } from 'vue'
 import { useApi } from '../../composables/useApi'
 import { useAuthStore } from '../../stores/auth'
 import {
   Brain,
   Sparkles,
-  RefreshCw,
   Clock,
   Plus,
   Trash2,
-  CheckCircle2,
-  AlertCircle,
   Save,
   PlayCircle,
   BookOpen,
@@ -20,7 +24,6 @@ import {
   RotateCcw,
   ToggleLeft,
   ToggleRight,
-  ShieldAlert,
 } from 'lucide-vue-next'
 
 const { api } = useApi()
@@ -28,7 +31,7 @@ const auth = useAuthStore()
 
 const loading = ref(true)
 const busy = ref<'save' | 'run' | 'add' | 'delete' | 'toggle' | 'rollback' | ''>('')
-const bannerMsg = ref<{ text: string; type: 'ok' | 'err' | 'warn' } | null>(null)
+const bannerMsg = useFeedback()
 
 // Pipelines state (evolution_system & evolution_user)
 const activeTab = ref<'settings' | 'evolution_system' | 'evolution_user'>('settings')
@@ -39,12 +42,10 @@ const workingModules = ref<any[]>([])
 // Structured White-Box Memory state
 const structuredLessons = ref<any[]>([])
 const newMemoryText = ref('')
-const newCategory = ref('TACTICAL')
 
-// Scheduler settings
-const briefingTimes = ref<string[]>(['02:00', '08:00', '14:00', '20:00'])
-
-const selectedProfile = computed(() => (lib.value?.profiles || []).find((p: any) => p.id === selectedProfileId.value) || null)
+const selectedProfile = computed(
+  () => (lib.value?.profiles || []).find((p: any) => p.id === selectedProfileId.value) || null,
+)
 
 async function loadData() {
   loading.value = true
@@ -92,7 +93,12 @@ async function toggleLessonStatus(lessonId: string) {
 }
 
 async function rollbackToBaseline() {
-  if (!confirm('【防污染紧急回滚】确定要清除非基准的过期或被污染心法，重置回官方基准黄金心法库吗？')) return
+  if (
+    !(await confirm(
+      '【防污染紧急回滚】确定要清除非基准的过期或被污染心法，重置回官方基准黄金心法库吗？',
+    ))
+  )
+    return
   busy.value = 'rollback'
   bannerMsg.value = null
   try {
@@ -100,7 +106,10 @@ async function rollbackToBaseline() {
     if (res?.structured_lessons) {
       structuredLessons.value = res.structured_lessons
     }
-    bannerMsg.value = { text: '🛡️ 已成功执行宪法级防污染回滚，系统已重置为黄金基准认知！', type: 'ok' }
+    bannerMsg.value = {
+      text: '🛡️ 已成功执行宪法级防污染回滚，系统已重置为黄金基准认知！',
+      type: 'ok',
+    }
   } catch (e: any) {
     bannerMsg.value = { text: `回滚失败: ${e.message}`, type: 'err' }
   } finally {
@@ -114,7 +123,7 @@ async function addMemoryItem() {
   busy.value = 'add'
   bannerMsg.value = null
   try {
-    const res = await api('/api/v1/admin/memory', {
+    await api('/api/v1/admin/memory', {
       method: 'POST',
       body: JSON.stringify({ text }),
     })
@@ -130,7 +139,7 @@ async function addMemoryItem() {
 }
 
 async function deleteMemoryItem(idx: number) {
-  if (!confirm('确定删除此条自进化心法吗？')) return
+  if (!(await confirm('确定删除此条自进化心法吗？'))) return
   busy.value = 'delete'
   bannerMsg.value = null
   try {
@@ -177,10 +186,12 @@ async function savePipelineModules() {
 }
 
 async function triggerEvolutionNow() {
-  const phrase = prompt('立即强制执行自进化复盘任务（对全天战绩穿透提炼并生成最新复盘心法），请输入确认短语：RUN EVOLUTION')
+  const phrase = await prompt(
+    '立即强制执行自进化复盘任务（对全天战绩穿透提炼并生成最新复盘心法），请输入确认短语：RUN EVOLUTION',
+  )
   if (!phrase) return
   if (phrase.trim().toUpperCase() !== 'RUN EVOLUTION') {
-    alert('确认短语错误，已取消执行')
+    toast.success('确认短语错误，已取消执行')
     return
   }
   busy.value = 'run'
@@ -190,7 +201,10 @@ async function triggerEvolutionNow() {
       method: 'POST',
       body: JSON.stringify({ confirmation: 'RUN JOB' }),
     })
-    bannerMsg.value = { text: `✅ 自进化复盘已完成（已自动执行离群噪点过滤与宪法安全审查）！${res.detail || ''}`, type: 'ok' }
+    bannerMsg.value = {
+      text: `✅ 自进化复盘已完成（已自动执行离群噪点过滤与宪法安全审查）！${res.detail || ''}`,
+      type: 'ok',
+    }
     await loadData()
   } catch (e: any) {
     bannerMsg.value = { text: `执行复盘失败: ${e.message}`, type: 'err' }
@@ -200,6 +214,10 @@ async function triggerEvolutionNow() {
 }
 
 onMounted(loadData)
+
+const { confirm, prompt } = useDialogs()
+
+const toast = useToast()
 </script>
 
 <template>
@@ -207,57 +225,68 @@ onMounted(loadData)
     <!-- Header -->
     <div class="flex items-center justify-between">
       <div>
-        <h1 class="text-sm sm:text-base font-black font-mono tracking-wide" style="color: var(--text-main);">
+        <h2
+          class="text-sm sm:text-base font-black font-sans tracking-wide"
+          style="color: var(--text-main)"
+        >
           AI 策略自进化认知中枢与白盒防污染护栏 (Evolution Shield)
-        </h1>
-        <p class="text-xs font-mono mt-0.5" style="color: var(--text-muted);">
+        </h2>
+        <p class="text-sm font-sans mt-0.5" style="color: var(--text-muted)">
           引入离群噪点剔除、宪法级防偏见红线、心法生命周期衰减与白盒启停管理，杜绝极端行情反噬未来策略。
         </p>
       </div>
       <span
-        class="text-[10px] font-mono px-2 py-1 rounded border font-bold"
-        style="background-color: var(--color-brand-bg); color: var(--color-brand); border-color: var(--color-brand-border);"
+        class="text-xs font-sans px-2 py-1 rounded border font-bold"
+        style="
+          background-color: var(--color-brand-bg);
+          color: var(--color-brand);
+          border-color: var(--color-brand-border);
+        "
       >
         白盒认知 · 防偏见护栏
       </span>
     </div>
 
     <!-- Banner -->
-    <div
-      v-if="bannerMsg"
-      class="p-3 rounded-lg text-xs font-mono border"
-      :class="bannerMsg.type === 'ok' ? 'bg-emerald-500/10 border-emerald-500/20 text-emerald-400' : 'bg-rose-500/10 border-rose-500/20 text-rose-400'"
-    >
-      <div class="flex items-center gap-2">
-        <CheckCircle2 v-if="bannerMsg.type === 'ok'" class="w-4 h-4 shrink-0" />
-        <AlertCircle v-else class="w-4 h-4 shrink-0" />
-        <span>{{ bannerMsg.text }}</span>
-      </div>
-    </div>
 
     <!-- Navigation Tabs -->
-    <div class="flex flex-wrap items-center justify-between gap-3 p-1.5 rounded-xl border" style="background-color: var(--bg-card); border-color: var(--border-subtle);">
+    <AppCard
+      class="flex flex-wrap items-center justify-between gap-3 p-1.5 rounded-xl border"
+      style="background-color: var(--bg-card); border-color: var(--border-subtle)"
+    >
       <div class="flex flex-wrap gap-1">
         <button
           @click="switchTab('settings')"
-          class="flex items-center space-x-1.5 px-3 py-1.5 rounded-lg text-xs font-mono font-bold cursor-pointer transition-colors"
-          :style="activeTab === 'settings' ? { backgroundColor: 'var(--text-main)', color: 'var(--bg-card)' } : { color: 'var(--text-muted)' }"
+          class="flex items-center space-x-1.5 px-3 py-1.5 rounded-lg text-sm font-sans font-bold cursor-pointer transition-colors"
+          :style="
+            activeTab === 'settings'
+              ? { backgroundColor: 'var(--text-main)', color: 'var(--bg-card)' }
+              : { color: 'var(--text-muted)' }
+          "
         >
           <Brain class="w-3.5 h-3.5" />
           <span>白盒心法与防污染总览</span>
         </button>
         <button
           @click="switchTab('evolution_system')"
-          class="flex items-center space-x-1.5 px-3 py-1.5 rounded-lg text-xs font-mono font-bold cursor-pointer transition-colors"
-          :style="activeTab === 'evolution_system' ? { backgroundColor: 'var(--text-main)', color: 'var(--bg-card)' } : { color: 'var(--text-muted)' }"
+          class="flex items-center space-x-1.5 px-3 py-1.5 rounded-lg text-sm font-sans font-bold cursor-pointer transition-colors"
+          :style="
+            activeTab === 'evolution_system'
+              ? { backgroundColor: 'var(--text-main)', color: 'var(--bg-card)' }
+              : { color: 'var(--text-muted)' }
+          "
         >
           <BookOpen class="w-3.5 h-3.5" />
           <span>复盘官 System 模版</span>
         </button>
         <button
           @click="switchTab('evolution_user')"
-          class="flex items-center space-x-1.5 px-3 py-1.5 rounded-lg text-xs font-mono font-bold cursor-pointer transition-colors"
-          :style="activeTab === 'evolution_user' ? { backgroundColor: 'var(--text-main)', color: 'var(--bg-card)' } : { color: 'var(--text-muted)' }"
+          class="flex items-center space-x-1.5 px-3 py-1.5 rounded-lg text-sm font-sans font-bold cursor-pointer transition-colors"
+          :style="
+            activeTab === 'evolution_user'
+              ? { backgroundColor: 'var(--text-main)', color: 'var(--bg-card)' }
+              : { color: 'var(--text-muted)' }
+          "
         >
           <Terminal class="w-3.5 h-3.5" />
           <span>战绩流水 User 模版</span>
@@ -269,8 +298,12 @@ onMounted(loadData)
           v-if="auth.isSuperadmin"
           @click="rollbackToBaseline"
           :disabled="busy !== ''"
-          class="flex items-center space-x-1 px-3 py-1.5 rounded-lg text-xs font-mono font-bold cursor-pointer disabled:opacity-40 transition-all border shadow-xs"
-          style="background-color: var(--bg-card-subtle); border-color: var(--border-subtle); color: var(--text-main);"
+          class="flex items-center space-x-1 px-3 py-1.5 rounded-lg text-sm font-sans font-bold cursor-pointer disabled:opacity-40 transition-all border shadow-xs"
+          style="
+            background-color: var(--bg-card-subtle);
+            border-color: var(--border-subtle);
+            color: var(--text-main);
+          "
           title="遭遇极端行情导致心法被带偏时，一键恢复至官方未被污染的基准黄金心法"
         >
           <RotateCcw class="w-3.5 h-3.5 text-amber-400" />
@@ -281,76 +314,110 @@ onMounted(loadData)
           v-if="auth.isSuperadmin"
           @click="triggerEvolutionNow"
           :disabled="busy !== ''"
-          class="flex items-center space-x-1 px-3 py-1.5 rounded-lg text-xs font-mono font-bold cursor-pointer disabled:opacity-40 transition-all shadow-xs"
-          style="background-color: var(--color-brand-bg); border-color: var(--color-brand-border); color: var(--color-brand);"
+          class="flex items-center space-x-1 px-3 py-1.5 rounded-lg text-sm font-sans font-bold cursor-pointer disabled:opacity-40 transition-all shadow-xs"
+          style="
+            background-color: var(--color-brand-bg);
+            border-color: var(--color-brand-border);
+            color: var(--color-brand);
+          "
         >
           <PlayCircle class="w-3.5 h-3.5" />
           <span>{{ busy === 'run' ? '正在执行复盘提炼...' : '防污染立即复盘' }}</span>
         </button>
       </div>
-    </div>
+    </AppCard>
 
     <!-- TAB 1: Settings & Structured White-Box Memory -->
     <div v-if="activeTab === 'settings'" class="space-y-4">
       <!-- Strategy & Schedule Overview -->
-      <div class="grid grid-cols-1 md:grid-cols-4 gap-3 font-mono">
-        <div class="rounded-xl border p-3.5 shadow-xs" style="background-color: var(--bg-card); border-color: var(--border-subtle);">
-          <div class="flex items-center space-x-1.5 mb-1 text-[11px] font-bold" style="color: var(--text-muted);">
+      <div class="grid grid-cols-1 md:grid-cols-4 gap-3 font-sans">
+        <AppCard
+          class="rounded-xl border p-3.5 shadow-xs"
+          style="background-color: var(--bg-card); border-color: var(--border-subtle)"
+        >
+          <div
+            class="flex items-center space-x-1.5 mb-1 text-xs font-bold"
+            style="color: var(--text-muted)"
+          >
             <ShieldCheck class="w-3.5 h-3.5 text-emerald-400" />
             <span>防污染护栏状态</span>
           </div>
           <div class="text-sm font-bold text-emerald-400">ACTIVE (已启动)</div>
-          <div class="text-[10px] mt-1" style="color: var(--text-faint);">
-            离群噪点过滤 · 宪法防偏见
-          </div>
-        </div>
+          <div class="text-xs mt-1" style="color: var(--text-faint)">离群噪点过滤 · 宪法防偏见</div>
+        </AppCard>
 
-        <div class="rounded-xl border p-3.5 shadow-xs" style="background-color: var(--bg-card); border-color: var(--border-subtle);">
-          <div class="flex items-center space-x-1.5 mb-1 text-[11px] font-bold" style="color: var(--text-muted);">
+        <AppCard
+          class="rounded-xl border p-3.5 shadow-xs"
+          style="background-color: var(--bg-card); border-color: var(--border-subtle)"
+        >
+          <div
+            class="flex items-center space-x-1.5 mb-1 text-xs font-bold"
+            style="color: var(--text-muted)"
+          >
             <Clock class="w-3.5 h-3.5 text-cyan-400" />
             <span>自动复盘频次</span>
           </div>
           <div class="text-sm font-bold text-cyan-400">每 6 小时 (4次/天)</div>
-          <div class="text-[10px] mt-1" style="color: var(--text-faint);">
+          <div class="text-xs mt-1" style="color: var(--text-faint)">
             02:00, 08:00, 14:00, 20:00 (UTC+8)
           </div>
-        </div>
+        </AppCard>
 
-        <div class="rounded-xl border p-3.5 shadow-xs" style="background-color: var(--bg-card); border-color: var(--border-subtle);">
-          <div class="flex items-center space-x-1.5 mb-1 text-[11px] font-bold" style="color: var(--text-muted);">
+        <AppCard
+          class="rounded-xl border p-3.5 shadow-xs"
+          style="background-color: var(--bg-card); border-color: var(--border-subtle)"
+        >
+          <div
+            class="flex items-center space-x-1.5 mb-1 text-xs font-bold"
+            style="color: var(--text-muted)"
+          >
             <Sliders class="w-3.5 h-3.5 text-purple-400" />
             <span>当前生效心法</span>
           </div>
-          <div class="text-sm font-bold" style="color: var(--text-main);">
-            {{ structuredLessons.filter((l: any) => l.enabled).length }} / {{ structuredLessons.length }} 条
+          <div class="text-sm font-bold" style="color: var(--text-main)">
+            {{ structuredLessons.filter((l: any) => l.enabled).length }} /
+            {{ structuredLessons.length }} 条
           </div>
-          <div class="text-[10px] mt-1" style="color: var(--text-faint);">
-            实时透明注入主脑 Prompt
-          </div>
-        </div>
+          <div class="text-xs mt-1" style="color: var(--text-faint)">实时透明注入主脑 Prompt</div>
+        </AppCard>
 
-        <div class="rounded-xl border p-3.5 shadow-xs" style="background-color: var(--bg-card); border-color: var(--border-subtle);">
-          <div class="flex items-center space-x-1.5 mb-1 text-[11px] font-bold" style="color: var(--text-muted);">
+        <AppCard
+          class="rounded-xl border p-3.5 shadow-xs"
+          style="background-color: var(--bg-card); border-color: var(--border-subtle)"
+        >
+          <div
+            class="flex items-center space-x-1.5 mb-1 text-xs font-bold"
+            style="color: var(--text-muted)"
+          >
             <Sparkles class="w-3.5 h-3.5 text-amber-400" />
             <span>心法半衰期机制</span>
           </div>
           <div class="text-sm font-bold text-amber-400">敏锐半衰期 7~14 天</div>
-          <div class="text-[10px] mt-1" style="color: var(--text-faint);">
+          <div class="text-xs mt-1" style="color: var(--text-faint)">
             动态评分快速淘汰过期或失效认知
           </div>
-        </div>
+        </AppCard>
       </div>
 
       <!-- Structured White-Box Memory Management -->
-      <div class="rounded-xl border p-4 sm:p-5 shadow-xs transition-colors" style="background-color: var(--bg-card); border-color: var(--border-subtle);">
-        <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 mb-3 border-b" style="border-color: var(--border-subtle);">
+      <AppCard
+        class="rounded-xl border p-4 sm:p-5 shadow-xs transition-colors"
+        style="background-color: var(--bg-card); border-color: var(--border-subtle)"
+      >
+        <div
+          class="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 mb-3 border-b"
+          style="border-color: var(--border-subtle)"
+        >
           <div class="flex items-center space-x-2">
             <Brain class="w-4 h-4 text-emerald-400" />
-            <h2 class="text-xs font-black font-mono uppercase tracking-wide" style="color: var(--text-main);">
+            <h2
+              class="text-sm font-black font-sans uppercase tracking-wide"
+              style="color: var(--text-main)"
+            >
               白盒实战心法生命周期管理 (Structured Heuristic Rules)
             </h2>
           </div>
-          <span class="text-[10px] font-mono" style="color: var(--text-faint);">
+          <span class="text-xs font-sans" style="color: var(--text-faint)">
             每条心法均经宪法安全审查 · 支持单项热拔插启停与评分透视
           </span>
         </div>
@@ -358,17 +425,22 @@ onMounted(loadData)
         <!-- Add Rule -->
         <div class="flex flex-col sm:flex-row gap-2 mb-4">
           <input
+            aria-label="新增复盘经验"
             v-model="newMemoryText"
             @keydown.enter="addMemoryItem"
             placeholder="手动注入实战心法（如：【顺势回踩低吸】在 4H 多头通道中回踩短均线且量能缩减时挂单...）"
-            class="flex-1 rounded-lg px-3 py-2 text-xs font-mono outline-none border transition-colors"
-            style="background-color: var(--bg-input); border-color: var(--border-subtle); color: var(--text-main);"
+            class="flex-1 rounded-lg px-3 py-2 text-sm font-sans outline-none border transition-colors"
+            style="
+              background-color: var(--bg-input);
+              border-color: var(--border-subtle);
+              color: var(--text-main);
+            "
           />
           <button
             @click="addMemoryItem"
             :disabled="busy !== '' || !newMemoryText.trim()"
-            class="flex items-center justify-center space-x-1 px-4 py-2 rounded-lg text-xs font-mono font-bold cursor-pointer disabled:opacity-40 transition-all shadow-xs shrink-0"
-            style="background-color: var(--text-main); color: var(--bg-card);"
+            class="flex items-center justify-center space-x-1 px-4 py-2 rounded-lg text-sm font-sans font-bold cursor-pointer disabled:opacity-40 transition-all shadow-xs shrink-0"
+            style="background-color: var(--text-main); color: var(--bg-card)"
           >
             <Plus class="w-3.5 h-3.5" />
             <span>{{ busy === 'add' ? '安全审查中...' : '提交审查并收录' }}</span>
@@ -377,40 +449,42 @@ onMounted(loadData)
 
         <!-- Structured Lessons Cards Grid -->
         <div class="space-y-2.5">
-          <div v-if="loading" class="py-8 text-center text-xs font-mono" style="color: var(--text-muted);">
-            <RefreshCw class="w-4 h-4 animate-spin inline mr-1.5" style="color: var(--color-brand);" />
-            正在拉取白盒心法知识库...
-          </div>
+          <LoadingState v-if="loading" />
           <template v-else-if="structuredLessons.length">
             <div
               v-for="(item, idx) in structuredLessons"
               :key="item.id || idx"
               class="p-3.5 rounded-xl border transition-all flex flex-col justify-between gap-2.5"
               :style="{
-                backgroundColor: item.enabled ? 'var(--bg-card-subtle)' : 'rgba(255, 255, 255, 0.01)',
-                borderColor: item.enabled ? 'var(--border-subtle)' : 'rgba(255, 255, 255, 0.05)',
-                opacity: item.enabled ? 1 : 0.6
+                backgroundColor: item.enabled ? 'var(--bg-card-subtle)' : 'var(--bg-card)',
+                borderColor: item.enabled ? 'var(--border-subtle)' : 'var(--border-subtle)',
               }"
             >
               <!-- Card Header Row -->
-              <div class="flex items-center justify-between gap-2 font-mono text-xs">
+              <div class="flex items-center justify-between gap-2 font-sans text-sm">
                 <div class="flex items-center space-x-2">
                   <span
-                    class="px-2 py-0.5 rounded text-[10px] font-bold border"
+                    class="px-2 py-0.5 rounded text-xs font-bold border"
                     :style="{
-                      backgroundColor: item.is_baseline ? 'rgba(56, 117, 246, 0.15)' : 'rgba(16, 185, 129, 0.15)',
-                      borderColor: item.is_baseline ? 'rgba(56, 117, 246, 0.3)' : 'rgba(16, 185, 129, 0.3)',
-                      color: item.is_baseline ? '#3875F6' : '#10B981'
+                      backgroundColor: item.is_baseline
+                        ? 'var(--color-blue-bg)'
+                        : 'var(--color-up-bg)',
+                      borderColor: item.is_baseline
+                        ? 'var(--color-blue-border)'
+                        : 'var(--color-up-border)',
+                      color: item.is_baseline ? 'var(--color-blue)' : 'var(--color-up)',
                     }"
                   >
                     {{ item.is_baseline ? '👑 官方黄金基准' : '🧬 AI 实战自进化' }}
                   </span>
 
-                  <span class="text-[10px] font-bold" style="color: var(--text-muted);">
+                  <span class="text-xs font-bold" style="color: var(--text-muted)">
                     {{ item.category }}
                   </span>
 
-                  <span class="text-[10px] px-1.5 py-0.2 rounded border bg-emerald-500/15 border-emerald-500/30 text-emerald-400 font-bold">
+                  <span
+                    class="text-xs px-1.5 py-0.2 rounded border bg-emerald-500/15 border-emerald-500/30 text-emerald-400 font-bold"
+                  >
                     健康评分: {{ item.health_score }}分
                   </span>
                 </div>
@@ -420,16 +494,20 @@ onMounted(loadData)
                   <!-- Toggle Switch -->
                   <button
                     @click="toggleLessonStatus(item.id)"
-                    class="flex items-center space-x-1 px-2.5 py-1 rounded-md border text-[11px] font-bold cursor-pointer transition-colors"
-                    :style="item.enabled ? {
-                      backgroundColor: 'rgba(16, 185, 129, 0.15)',
-                      borderColor: 'rgba(16, 185, 129, 0.3)',
-                      color: '#10B981',
-                    } : {
-                      backgroundColor: 'var(--bg-card)',
-                      borderColor: 'var(--border-subtle)',
-                      color: 'var(--text-faint)',
-                    }"
+                    class="flex items-center space-x-1 px-2.5 py-1 rounded-md border text-xs font-bold cursor-pointer transition-colors"
+                    :style="
+                      item.enabled
+                        ? {
+                            backgroundColor: 'var(--color-up-bg)',
+                            borderColor: 'var(--color-up-border)',
+                            color: 'var(--color-up)',
+                          }
+                        : {
+                            backgroundColor: 'var(--bg-card)',
+                            borderColor: 'var(--border-subtle)',
+                            color: 'var(--text-faint)',
+                          }
+                    "
                     :title="item.enabled ? '点击停用本条心法' : '点击激活本条心法'"
                   >
                     <ToggleRight v-if="item.enabled" class="w-3.5 h-3.5" />
@@ -450,15 +528,25 @@ onMounted(loadData)
 
               <!-- Rule Text -->
               <p
-                class="text-xs font-mono leading-relaxed select-text"
-                :style="item.enabled ? { color: 'var(--text-main)' } : { color: 'var(--text-faint)', textDecoration: 'line-through' }"
+                class="text-sm font-sans leading-relaxed select-text"
+                :style="
+                  item.enabled
+                    ? { color: 'var(--text-main)' }
+                    : { color: 'var(--text-faint)', textDecoration: 'line-through' }
+                "
               >
                 {{ item.rule_text }}
               </p>
 
               <!-- Footer Audit Line -->
-              <div class="flex items-center justify-between text-[10px] font-mono pt-1 border-t" style="border-color: var(--border-subtle); color: var(--text-faint);">
-                <span>收录时间: {{ item.created_at || '--' }} · 支持样本量: {{ item.sample_size || 10 }} 笔</span>
+              <div
+                class="flex items-center justify-between text-xs font-sans pt-1 border-t"
+                style="border-color: var(--border-subtle); color: var(--text-faint)"
+              >
+                <span
+                  >收录时间: {{ item.created_at || '--' }} · 支持样本量:
+                  {{ item.sample_size || 10 }} 笔</span
+                >
                 <span class="text-emerald-500 flex items-center space-x-1">
                   <ShieldCheck class="w-3 h-3" />
                   <span>宪法安全审查: {{ item.shield_status || 'PASSED' }}</span>
@@ -466,31 +554,49 @@ onMounted(loadData)
               </div>
             </div>
           </template>
-          <div v-else class="py-8 text-center text-xs font-mono border rounded-lg border-dashed" style="border-color: var(--border-subtle); color: var(--text-faint);">
+          <div
+            v-else
+            class="py-8 text-center text-sm font-sans border rounded-lg border-dashed"
+            style="border-color: var(--border-subtle); color: var(--text-faint)"
+          >
             暂无自进化心法记忆，可点击右上角「回滚至黄金基准」恢复核心实战心法
           </div>
         </div>
-      </div>
+      </AppCard>
     </div>
 
     <!-- TAB 2 & 3: Template Pipelines (Evolution System / User) -->
     <div v-else class="space-y-4">
-      <div class="rounded-xl border p-4 sm:p-5 shadow-xs transition-colors space-y-4" style="background-color: var(--bg-card); border-color: var(--border-subtle);">
-        <div class="flex items-center justify-between pb-3 border-b" style="border-color: var(--border-subtle);">
+      <AppCard
+        class="rounded-xl border p-4 sm:p-5 shadow-xs transition-colors space-y-4"
+        style="background-color: var(--bg-card); border-color: var(--border-subtle)"
+      >
+        <div
+          class="flex items-center justify-between pb-3 border-b"
+          style="border-color: var(--border-subtle)"
+        >
           <div>
-            <h2 class="text-sm font-bold font-mono" style="color: var(--text-main);">
-              {{ activeTab === 'evolution_system' ? '自进化复盘官 System 提示词模版' : '自进化战绩流水 User 提示词模版' }}
+            <h2 class="text-sm font-bold font-sans" style="color: var(--text-main)">
+              {{
+                activeTab === 'evolution_system'
+                  ? '自进化复盘官 System 提示词模版'
+                  : '自进化战绩流水 User 提示词模版'
+              }}
             </h2>
-            <p class="text-xs font-mono mt-0.5" style="color: var(--text-muted);">
-              {{ activeTab === 'evolution_system' ? '定义复盘官的角色定位、归因逻辑与心法沉淀标准' : '配置每 6 小时自动组装实战对账单与动力学快照证据的模版语法' }}
+            <p class="text-sm font-sans mt-0.5" style="color: var(--text-muted)">
+              {{
+                activeTab === 'evolution_system'
+                  ? '定义复盘官的角色定位、归因逻辑与心法沉淀标准'
+                  : '配置每 6 小时自动组装实战对账单与动力学快照证据的模版语法'
+              }}
             </p>
           </div>
           <button
             v-if="auth.isSuperadmin"
             @click="savePipelineModules"
             :disabled="busy !== ''"
-            class="flex items-center space-x-1 px-4 py-2 rounded-lg text-xs font-mono font-bold cursor-pointer disabled:opacity-40 transition-all shadow-xs"
-            style="background-color: var(--text-main); color: var(--bg-card);"
+            class="flex items-center space-x-1 px-4 py-2 rounded-lg text-sm font-sans font-bold cursor-pointer disabled:opacity-40 transition-all shadow-xs"
+            style="background-color: var(--text-main); color: var(--bg-card)"
           >
             <Save class="w-3.5 h-3.5" />
             <span>{{ busy === 'save' ? '保存中...' : '保存模版' }}</span>
@@ -503,25 +609,40 @@ onMounted(loadData)
             v-for="(mod, mIdx) in workingModules"
             :key="mod.id || mIdx"
             class="border rounded-xl p-4 transition-all"
-            style="background-color: var(--bg-card-subtle); border-color: var(--border-subtle);"
+            style="background-color: var(--bg-card-subtle); border-color: var(--border-subtle)"
           >
             <div class="flex items-center justify-between mb-2">
-              <span class="text-xs font-bold font-mono" style="color: var(--text-main);">{{ mod.title }}</span>
-              <label class="flex items-center space-x-1.5 text-xs font-mono cursor-pointer">
-                <input v-model="mod.enabled" type="checkbox" class="accent-blue-500 w-3.5 h-3.5" :disabled="!auth.isSuperadmin" />
-                <span :class="mod.enabled ? 'text-emerald-500 font-bold' : 'text-zinc-500'">{{ mod.enabled ? '启用模块' : '已停用' }}</span>
+              <span class="text-sm font-bold font-sans" style="color: var(--text-main)">{{
+                mod.title
+              }}</span>
+              <label class="flex items-center space-x-1.5 text-sm font-sans cursor-pointer">
+                <input
+                  v-model="mod.enabled"
+                  type="checkbox"
+                  class="accent-blue-500 w-3.5 h-3.5"
+                  :disabled="!auth.isSuperadmin"
+                />
+                <span
+                  :class="mod.enabled ? 'text-emerald-500 font-bold' : 'text-[var(--text-muted)]'"
+                  >{{ mod.enabled ? '启用模块' : '已停用' }}</span
+                >
               </label>
             </div>
             <textarea
+              aria-label="复盘模块内容"
               v-model="mod.content"
               :disabled="!auth.isSuperadmin || mod.locked"
               rows="6"
-              class="w-full rounded-lg p-3 text-xs font-mono leading-relaxed outline-none border transition-colors resize-y"
-              style="background-color: var(--bg-input); border-color: var(--border-subtle); color: var(--text-main);"
+              class="w-full rounded-lg p-3 text-sm font-sans leading-relaxed outline-none border transition-colors resize-y"
+              style="
+                background-color: var(--bg-input);
+                border-color: var(--border-subtle);
+                color: var(--text-main);
+              "
             ></textarea>
           </div>
         </div>
-      </div>
+      </AppCard>
     </div>
   </div>
 </template>

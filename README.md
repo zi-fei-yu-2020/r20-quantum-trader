@@ -8,7 +8,7 @@
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.100%2B-009688.svg?style=flat-square)](https://fastapi.tiangolo.com/)
 [![Vue 3](https://img.shields.io/badge/Vue-3.x-4FC08D.svg?style=flat-square)](https://vuejs.org/)
 [![Tailwind CSS](https://img.shields.io/badge/Tailwind-3.x-38B2AC.svg?style=flat-square)](https://tailwindcss.com/)
-[![Tests](https://img.shields.io/badge/tests-172%20passed-brightgreen.svg?style=flat-square)](tests/)
+[![CI](https://github.com/zi-fei-yu-2020/r20-quantum-trader/actions/workflows/ci.yml/badge.svg?branch=dev)](https://github.com/zi-fei-yu-2020/r20-quantum-trader/actions/workflows/ci.yml)
 
 **全新演进的 LLM 原生数字资产对冲量化交易系统**  
 *同等身份资深交易员博弈提案 · 首席投资官 (CIO) 资金终审 · 全息持仓挂单审查 · 微积分动力学 · 交易所原生云端 OCO 风控*
@@ -115,11 +115,23 @@ python3 -m uvicorn r20_backend.app:app --host 0.0.0.0 --port 8080 --reload
 
 ## 🧪 自动化测试验证
 
-系统包含覆盖策略引擎、投委会机制、拦截器插件与安全鉴权的 172 项自动化单元测试：
+测试覆盖策略引擎、投委会机制、拦截器插件、安全鉴权及测试隔离。请在 **Linux / WSL 的独立虚拟环境**中运行：
 ```bash
-python3 -m unittest discover -s tests/
-# 输出: Ran 172 tests ... OK (100% 通过)
+python -m pip install -r requirements.txt
+python scripts/run_tests.py --verbose
 ```
+
+测试入口使用临时源码副本，不复制真实配置与运行数据，禁用后台任务并阻止未 mock 的网络和子进程调用。不要在实盘工作区直接执行 `unittest discover`。`fcntl` 是 Unix 标准库，Windows 用户应使用 WSL，而不是安装同名替代包。
+
+前端构建自动执行严格类型检查：
+```bash
+cd frontend
+npm ci
+npm run build
+# 也可单独运行 npm run typecheck
+```
+
+完整环境说明见 `docs/TESTING.md`；GitHub Actions 配置位于 `.github/workflows/ci.yml`，覆盖 `main`、`dev` 的推送和目标分支为这两者的 Pull Request。
 
 ---
 

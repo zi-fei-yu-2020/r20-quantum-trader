@@ -14,7 +14,6 @@ import datetime
 import urllib.request
 import subprocess
 import tempfile
-import fcntl
 from typing import Dict, Any, List, Optional, Tuple
 from concurrent.futures import ThreadPoolExecutor
 
@@ -66,6 +65,8 @@ def atomic_write_json(path: str, payload: Any) -> None:
 def single_brain_cycle(func):
     """Prevent overlapping cron runs from overwriting the shared decision cache."""
     def wrapped(*args, **kwargs):
+        # Read-only prompt views are cross-platform; execution still requires the real POSIX lock.
+        import fcntl
         os.makedirs(DATA_DIR, exist_ok=True)
         lock_handle = open(AI_BRAIN_LOCK_FILE, "a+", encoding="utf-8")
         try:

@@ -1,4 +1,5 @@
 import { defineStore } from 'pinia'
+import { dashboardIsStale } from '../utils/dashboardHealth'
 import { ref, computed } from 'vue'
 import type { DashboardResponse, InstrumentFactor, PositionItem, PendingOrderItem } from '../types/dashboard'
 
@@ -60,7 +61,7 @@ export const useDashboardStore = defineStore('dashboard', () => {
       }
     })
   })
-  const macroAssessment = computed(() => data.value?.macro_assessment || '全市场宏观多周期多因子矩阵扫描中...')
+  const macroAssessment = computed(() => data.value?.macro_assessment || '尚无模型分析结果，请检查策略任务是否已运行。')
   const llmRuntime = computed(() => data.value?.llm_runtime || {
     model: 'gemini-3.8-flash-high',
     provider_name: 'Google Gemini',
@@ -68,7 +69,7 @@ export const useDashboardStore = defineStore('dashboard', () => {
     api_format: 'openai_chat',
   })
   const logs = computed(() => data.value?.logs || [])
-  const isStale = computed(() => data.value?.is_stale ?? false)
+  const isStale = computed(() => dashboardIsStale(data.value))
 
   // Actions
   async function fetchDashboard(silent = false) {

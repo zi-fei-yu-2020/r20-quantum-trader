@@ -18,6 +18,12 @@ def _encrypt_secret(key_b64: str, secret: str) -> str:
 
 class QqBindTests(unittest.TestCase):
     def setUp(self):
+        # Binding state tests must not inspect processes or start a real bot.
+        daemon_patch = patch.object(qq_bind, "ensure_qq_gateway_daemon_running")
+        daemon_patch.start()
+        self.addCleanup(daemon_patch.stop)
+        self.addCleanup(qq_bind._TASKS.clear)
+        self.addCleanup(qq_bind._CAPTURE_SESSIONS.clear)
         qq_bind._TASKS.clear()
         qq_bind._CAPTURE_SESSIONS.clear()
 

@@ -44,9 +44,17 @@ def _run_cli(command: list[str], timeout: int = 20) -> list[dict[str, Any]]:
     return [row for row in rows if isinstance(row, dict)]
 
 
-def _request(method: str, path: str, params: dict[str, Any] | None = None, env: OKXEnvironment | None = None, timeout: int = 20) -> list[dict[str, Any]]:
+def _request(method: str, path: str, params: dict[str, Any] | list[dict[str, Any]] | None = None, env: OKXEnvironment | None = None, timeout: int = 20) -> list[dict[str, Any]]:
+    method = method.upper()
+    params = {} if params is None else params
+    if not isinstance(params, (dict, list)):
+        raise ValueError("OKX 参数必须为对象或批量对象数组")
+    if isinstance(params, list) and (method == "GET" or not params or not all(isinstance(row, dict) for row in params)):
+        raise ValueError("OKX 批量请求需要非空对象数组，且不能用于 GET")
     selected = env or selected_environment()
     if not selected.configured:
+        if isinstance(params, list):
+            raise RuntimeError("批量 OKX REST 操作需要当前环境的静态 API Key")
         # Fallback to CLI
         mode_flag = f"--{selected.mode}"
         if path == "/api/v5/account/positions":
@@ -67,10 +75,11 @@ def _request(method: str, path: str, params: dict[str, Any] | None = None, env: 
             return _run_cli(cmd, timeout=timeout)
         raise RuntimeError(f"OKX {selected.mode.upper()} 静态 API Key 未配置，且不支持该操作的 CLI 回退：{path}")
 
-    params = params or {}; method = method.upper()
-    query = urllib.parse.urlencode({k:v for k,v in params.items() if v not in (None, "")}) if method == "GET" else ""
+    cleaned = ([{k: v for k, v in row.items() if v not in (None, "")} for row in params]
+               if isinstance(params, list) else {k: v for k, v in params.items() if v not in (None, "")})
+    query = urllib.parse.urlencode(cleaned) if method == "GET" else ""
     request_path = path + (f"?{query}" if query else "")
-    body_text = json.dumps({k:v for k,v in params.items() if v not in (None, "")}, separators=(",", ":"), ensure_ascii=False) if method != "GET" else ""
+    body_text = json.dumps(cleaned, separators=(",", ":"), ensure_ascii=False) if method != "GET" else ""
     timestamp = _timestamp(); prehash = timestamp + method + request_path + body_text
     signature = base64.b64encode(hmac.new(selected.secret_key.encode(), prehash.encode(), hashlib.sha256).digest()).decode()
     headers = {
