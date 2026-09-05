@@ -1162,6 +1162,9 @@ def execute_batch_ai_brain_cycle(pos_summary: str = "当前总持仓 0/6", activ
         code = getattr(e, "status_code", None) or getattr(e, "code", None)
         attempts = getattr(e, "attempts", None)
         LAST_INFERENCE_ERROR = f"模型接口 HTTP {code}" if code else type(e).__name__
+        provider_reason = getattr(e, "provider_reason", "")
+        if provider_reason:
+            LAST_INFERENCE_ERROR += f"（{provider_reason}）"
         if attempts:
             LAST_INFERENCE_ERROR += f"，已尝试 {attempts} 次"
         telemetry.finish("failed", error=e)

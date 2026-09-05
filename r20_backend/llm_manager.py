@@ -1224,6 +1224,7 @@ def test_llm_connection(
         return {
             "ok": False, "status_code": exc.status_code,
             "attempts": exc.attempts, "error_category": exc.category,
+            "provider_error_code": exc.provider_code, "request_id": exc.request_id,
             "latency_ms": int((time.perf_counter() - t0) * 1000),
             "model": model, "api_format": api_format, "endpoint": endpoint,
             "error": str(exc),
