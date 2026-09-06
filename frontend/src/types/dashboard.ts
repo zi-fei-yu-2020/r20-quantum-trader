@@ -1,3 +1,4 @@
+import type { MacroAnalysis } from '../utils/macroAnalysis'
 // OKX raw numeric strings and locally aggregated numeric values coexist.
 export type NumericValue = string | number
 export type TradeAction = 'BUY_LONG' | 'SELL_SHORT' | 'WAIT'
@@ -137,6 +138,8 @@ export interface LLMRuntime {
 }
 
 export interface DashboardResponse {
+  macro_analysis?: MacroAnalysis
+  ledger_sync?: { status?: string; last_success?: number; pending_settlements?: number }
   instrument_support?: InstrumentSupportSummary
   timestamp: string
   is_stale?: boolean
