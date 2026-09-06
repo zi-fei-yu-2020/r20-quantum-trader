@@ -14,10 +14,10 @@ const memoryMd = computed(() => store.data?.ai_trading_memory_md || '')
   <div class="space-y-3.5">
     <!-- Lab Header -->
     <AppCard
-      class="rounded-xl border p-4 sm:p-5 flex items-center justify-between shadow-xs transition-colors"
+      class="rounded-xl border p-4 sm:p-5 flex flex-wrap gap-3 items-center justify-between shadow-xs transition-colors"
       style="background-color: var(--bg-card); border-color: var(--border-subtle)"
     >
-      <div class="flex items-center space-x-3">
+      <div class="flex items-center space-x-3 min-w-0 flex-1 basis-64">
         <div
           class="w-9 h-9 rounded-lg flex items-center justify-center border shrink-0"
           style="
@@ -40,7 +40,7 @@ const memoryMd = computed(() => store.data?.ai_trading_memory_md || '')
           </p>
         </div>
       </div>
-      <div class="flex items-center space-x-2 text-xs font-mono">
+      <div class="flex flex-wrap min-w-0 max-w-full items-center gap-2 text-xs font-mono">
         <span style="color: var(--text-faint)">自进化主脑:</span>
         <span class="font-bold font-mono" style="color: var(--text-main)">{{
           store.llmRuntime.model
@@ -57,7 +57,7 @@ const memoryMd = computed(() => store.data?.ai_trading_memory_md || '')
       >
         <div>
           <div
-            class="flex items-center justify-between pb-3 mb-3 border-b"
+            class="flex flex-wrap gap-2 items-center justify-between pb-3 mb-3 border-b"
             style="border-color: var(--border-subtle)"
           >
             <div class="flex items-center space-x-2">
@@ -100,7 +100,7 @@ const memoryMd = computed(() => store.data?.ai_trading_memory_md || '')
       >
         <div>
           <div
-            class="flex items-center justify-between pb-3 mb-3 border-b"
+            class="flex flex-wrap gap-2 items-center justify-between pb-3 mb-3 border-b"
             style="border-color: var(--border-subtle)"
           >
             <div class="flex items-center space-x-2">

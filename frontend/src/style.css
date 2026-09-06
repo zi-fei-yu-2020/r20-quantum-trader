@@ -837,6 +837,19 @@ body:has(dialog[open]) {
 .terminal-mobile-nav {
   display: none;
 }
+/* A wide table/pre must not become the implicit minimum width of a page grid. */
+.terminal-overview,
+.terminal-overview__left,
+.terminal-grid {
+  min-width: 0;
+  grid-template-columns: minmax(0, 1fr);
+}
+.terminal-grid > * {
+  min-width: 0;
+}
+.terminal-grid {
+  overflow-wrap: anywhere;
+}
 .terminal-overview {
   display: grid;
   gap: 24px;
@@ -1025,10 +1038,15 @@ body:has(dialog[open]) {
 .table-scroll-container,
 .table-scroll,
 .overflow-x-auto {
+  min-width: 0;
   overflow-x: auto;
   max-width: 100%;
   scrollbar-width: thin;
   overscroll-behavior-x: contain;
+}
+.table-scroll-container:focus-visible {
+  /* Keep the keyboard focus ring inside cards that intentionally clip corners. */
+  outline-offset: -3px;
 }
 ::-webkit-scrollbar {
   width: 6px;
@@ -1067,7 +1085,7 @@ body:has(dialog[open]) {
     gap: 16px;
   }
   .terminal-overview--dual {
-    grid-template-columns: 1fr;
+    grid-template-columns: minmax(0, 1fr);
   }
   .terminal-overview--dual .metric-grid {
     grid-template-columns: repeat(4, minmax(0, 1fr));
@@ -1243,7 +1261,7 @@ body:has(dialog[open]) > .ui-toasts {
     height: 28px;
   }
   .terminal-overview--dual .factor-grid {
-    grid-template-columns: 1fr;
+    grid-template-columns: minmax(0, 1fr);
   }
   .admin-content button {
     min-height: 40px;

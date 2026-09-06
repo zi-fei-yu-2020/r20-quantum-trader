@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import AppCard from './ui/AppCard.vue'
+import AppTable from './ui/AppTable.vue'
 
 import { ref, computed } from 'vue'
 import { useDashboardStore } from '../stores/dashboard'
@@ -57,13 +58,13 @@ function clean(v: any, fallback = '--'): string {
 </script>
 
 <template>
-  <div class="space-y-3.5">
+  <div class="trade-ledger space-y-3.5 min-w-0 max-w-full">
     <!-- Header -->
     <AppCard
       class="rounded-xl border p-4 sm:p-5 flex flex-wrap items-center justify-between gap-3 shadow-xs transition-colors"
       style="background-color: var(--bg-card); border-color: var(--border-subtle)"
     >
-      <div class="flex items-center space-x-3">
+      <div class="flex items-center space-x-3 min-w-0">
         <div
           class="w-9 h-9 rounded-lg flex items-center justify-center border shrink-0"
           style="
@@ -180,7 +181,9 @@ function clean(v: any, fallback = '--'): string {
       >
         无匹配交易台账记录
       </div>
-      <div v-else class="overflow-x-auto overflow-y-auto max-h-[580px]">
+      <template v-else>
+        <p id="trade-ledger-scroll-hint" class="px-4 py-2 text-xs sm:hidden" style="color: var(--text-muted)">左右滑动表格查看完整交易字段</p>
+        <AppTable label="交易记录明细" aria-describedby="trade-ledger-scroll-hint" class="overflow-y-auto max-h-[580px]">
         <table class="w-full text-left text-xs font-mono whitespace-nowrap">
           <thead class="sticky top-0 z-10" style="background-color: var(--bg-card)">
             <tr
@@ -221,7 +224,7 @@ function clean(v: any, fallback = '--'): string {
               </td>
               <td class="py-3 px-3">
                 <span
-                  class="px-2 py-0.5 rounded border text-[11px]"
+                  class="trade-ledger__strategy px-2 py-0.5 rounded border text-[11px]"
                   style="
                     background-color: var(--bg-badge);
                     border-color: var(--border-subtle);
@@ -285,12 +288,13 @@ function clean(v: any, fallback = '--'): string {
                 >
                   {{ t.status === 'holding' ? '在途' : '已平' }}
                 </span>
-                <span>{{ clean(t.exit_reason, '持仓中') }}</span>
+                <span class="trade-ledger__reason">{{ clean(t.exit_reason, '持仓中') }}</span>
               </td>
             </tr>
           </tbody>
         </table>
-      </div>
+        </AppTable>
+      </template>
 
       <!-- Table Footer Summary -->
       <div
@@ -307,3 +311,8 @@ function clean(v: any, fallback = '--'): string {
     </AppCard>
   </div>
 </template>
+
+<style scoped>
+.trade-ledger__strategy { display: inline-block; max-width: 15rem; white-space: normal; overflow-wrap: anywhere; }
+.trade-ledger__reason { display: inline-block; max-width: 22rem; white-space: normal; overflow-wrap: anywhere; vertical-align: middle; }
+</style>

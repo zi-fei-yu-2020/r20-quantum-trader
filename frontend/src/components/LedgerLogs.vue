@@ -12,7 +12,7 @@ const store = useDashboardStore()
     class="rounded-xl border p-4 sm:p-5 shadow-xs transition-colors"
     style="background-color: var(--bg-card); border-color: var(--border-subtle)"
   >
-    <div class="flex items-center justify-between mb-3">
+    <div class="flex flex-wrap gap-2 items-center justify-between mb-3">
       <div class="flex items-center space-x-2">
         <Terminal class="w-4 h-4" style="color: var(--color-brand)" />
         <h2
@@ -32,7 +32,7 @@ const store = useDashboardStore()
       <div
         v-for="(log, idx) in store.logs"
         :key="idx"
-        class="border-l-2 pl-2 py-0.5 leading-relaxed transition-colors hover:bg-[var(--bg-card-hover)]"
+        class="[overflow-wrap:anywhere] border-l-2 pl-2 py-0.5 leading-relaxed transition-colors hover:bg-[var(--bg-card-hover)]"
         style="border-color: var(--border-medium); color: var(--text-muted)"
       >
         {{ log }}
