@@ -30,4 +30,3 @@ export function resolveMacroAnalysis(data: { macro_analysis?: MacroAnalysis; mac
 export function macroStatusLabel(status: MacroAnalysis['status']): string {
   return { ready: '分析结果', running: '更新中', blocked: '本轮暂停', failed: '本轮未就绪', stale: '历史结果', empty: '暂无结果' }[status]
 }
-
