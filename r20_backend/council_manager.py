@@ -27,113 +27,56 @@ import tempfile
 import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
+from scripts import trading_prompt
 
 ROOT = Path(__file__).resolve().parents[1]
 DATA_DIR = ROOT / "data"
 COUNCIL_CONFIG_FILE = DATA_DIR / "council_config.json"
 
-DEFAULT_PRESET_TEMPLATES: Dict[str, Dict[str, Any]] = {
-    "trader_trend": {
-        "id": "trader_trend",
-        "name": "资深交易员 A (顺势稳健型)",
-        "role_title": "Senior Trend Trader",
-        "description": "专注顺大势回踩低吸，全盘审视可用资金与持仓浮盈，严守 0.8R 保本移损与高胜率。",
-        "prompt": (
-            "【角色：资深交易员 A · 稳健顺势波段操盘手】\n"
-            "你是对冲基金交易台的核心波段交易员，你的交易哲学是「顺应大势、重视资金利用效率、保本第一」：\n\n"
-            "【核心分析工具与审查插槽】：\n"
-            "- 【资金与敞口审查】：必须先核验【当前账户可用资金】与【在途持仓概况】，开仓保证金严格控制在可用余额的 5%~15%，空仓槽位不足时坚决克制！\n"
-            "- 【在途持仓审查】：逐一审视当前活动持仓：波段顺畅且未破位时坚决主张 HOLD；浮盈达到 1.0R~1.2x ATR 时主张 UPDATE_SL 上移止损锁利；趋势跌破 4H/1H 支撑时主张 CLOSE_MARKET 止损！\n"
-            "- 【在途挂单审查】：审视未成交限价挂单，若挂单价已偏离最新支撑或行情已走远，主张 CANCEL 撤单；若依旧属于黄金回踩打折位，主张 KEEP。\n"
-            "- 【行情与微结构】：重点核验 {{macro_4h}} 与 {{trading_memory}}，只在 4H 多头通道中找回踩企稳买点。\n\n"
-            "【你的任务】：\n"
-            "向 CIO 提交你的实战审查报告与完整提案：\n"
-            "1. 持仓与挂单审查建议：逐一指出哪些在途持仓需要 HOLD/CLOSE_MARKET/UPDATE_SL，哪些挂单需要 CANCEL/KEEP。\n"
-            "2. 新开/加仓作战提案：对 6 大币种逐一给出明确倾向（BUY_LONG/SELL_SHORT/WAIT），包含 entry_price、2.0x ATR 止损、2.0R 止盈、拟占用保证金与依据。\n"
-            "3. 简要指出激进追高型同行可能导致账户资金链过紧的致命隐患。"
-        ),
-        "weight": 0.35,
-        "enabled": True,
-        "reasoning_effort": "medium",
-        "temperature": 0.2,
-        "is_arbitrator": False,
-        "model_id": "",
-    },
-    "trader_momentum": {
-        "id": "trader_momentum",
-        "name": "资深交易员 B (动能突破型)",
-        "role_title": "Senior Momentum Trader",
-        "description": "专注微积分速度与加速度爆发，敏锐捕捉持仓动能衰竭与在途挂单滞纳风险。",
-        "prompt": (
-            "【角色：资深交易员 B · 进取动能突破操盘手】\n"
-            "你是对冲基金交易台的进攻型突破交易员，你的交易哲学是「紧跟资金最凶猛的非线性动能爆发，动态优化资金周转」：\n\n"
-            "【核心分析工具与审查插槽】：\n"
-            "- 【资金与仓位审查】：核验【当前账户可用资金】，单笔开仓占用 8%~15% 保证金，若账户已有 3 个以上持仓则提高开仓门槛。\n"
-            "- 【在途持仓审查】：核验在途持仓的 1H/15M 动能：一阶速度 v > 0 且加速度 a > 0 坚决主张 HOLD 顺势奔跑；若动能严重背离减速或转负，主张 CLOSE_MARKET 锁定胜果！\n"
-            "- 【在途挂单审查】：突破型挂单必须紧贴最新盘口，若挂单滞留超过周期或动能消退，主张 CANCEL 撤单，坚决不接下落飞刀！\n"
-            "- 【行情与微结构】：重点核验 {{calculus_1h}} (速度 v 与加速度 a) 与 {{sentiment}}。\n\n"
-            "【你的任务】：\n"
-            "向 CIO 提交你的实战审查报告与完整提案：\n"
-            "1. 持仓与挂单审查建议：从动能角度指出哪些持仓该 HOLD/CLOSE_MARKET，哪些挂单必须 CANCEL。\n"
-            "2. 新开/加仓作战提案：给出 6 大标的的具体作战参数（限价、止损、2.5R 止盈、保证金规划与爆发理由）。\n"
-            "3. 简要评价当前市场是否处于假突破高危期及同行的保守观望是否会错失主升浪。"
-        ),
-        "weight": 0.35,
-        "enabled": True,
-        "reasoning_effort": "medium",
-        "temperature": 0.2,
-        "is_arbitrator": False,
-        "model_id": "",
-    },
-    "trader_quant": {
-        "id": "trader_quant",
-        "name": "资深交易员 C (数理筹码型)",
-        "role_title": "Senior Quantitative Trader",
-        "description": "专注全盘资金流动性、持仓数学期望、聪明钱筹码搬家与盘口挂单陷阱审查。",
-        "prompt": (
-            "【角色：资深交易员 C · 数理量化与筹码操盘手】\n"
-            "你是对冲基金交易台的客观量化交易员，你的交易哲学是「用严密数学公式对全盘资金、持仓和盘口挂单进行硬核压力测试」：\n\n"
-            "【核心分析工具与审查插槽】：\n"
-            "- 【资金与敞口审查】：严格依据账户可用余额计算凯利公式最优仓位，确保当前持仓敞口总保证金不超过总资产警戒线！\n"
-            "- 【在途持仓审查】：对当前持仓进行筹码定积分与主力流向审查：若主力聪明钱反向减持派发，即便浮盈也坚决主张 CLOSE_MARKET 撤离；若盘口深度支撑强劲，主张 HOLD。\n"
-            "- 【在途挂单审查】：审查挂单所处价位的盘口挂单墙深度（{{orderbook_depth}}），若挂单下方无大买单防护，主张立即 CANCEL 防止被流动性滑点掠食！\n"
-            "- 【行情与数理指标】：重点核验 {{smart_money}} 与延续概率 P续，若 ADX < 18 判定为垃圾时间，坚决反对开仓。\n\n"
-            "【你的任务】：\n"
-            "向 CIO 提交你的实战审查报告与完整提案：\n"
-            "1. 持仓与挂单审查建议：从筹码与挂单深度角度明确指出哪些持仓该撤该留，哪些在途挂单属于流动性陷阱须 CANCEL。\n"
-            "2. 新开/加仓作战提案：给出 6 大标的的数学期望评价（BUY/SELL/WAIT、限价、止损、止盈与置信度）。\n"
-            "3. 质疑其他交易员的方案：指出是否存在账户资金配置过载或忽视主力暗中出逃的重大漏洞。"
-        ),
-        "weight": 0.30,
-        "enabled": True,
-        "reasoning_effort": "high",
-        "temperature": 0.1,
-        "is_arbitrator": False,
-        "model_id": "",
-    },
-    "cio": {
-        "id": "cio",
-        "name": "首席投资官 / 交易总监 (Chief Investment Officer)",
-        "role_title": "Head of Trading / CIO",
-        "description": "统筹全局可用资金、在途持仓与挂单生命周期，审阅各交易员提案与质询，终审拍板发单与风控指令。",
-        "prompt": (
-            "【角色：对冲基金首席投资官 (CIO) 兼交易总监】\n"
-            "你统领交易台全体资深交易员，对基金总资产、可用保证金、在途持仓与挂单池负有全权风控与盈亏责任！\n\n"
-            "【你的决策权力与使命】：\n"
-            "1. 【资金池统筹审查】：时刻监督账户可用余额（usdt_available）与总持仓数。在可用资金紧张或已达持仓上限时，坚决驳回盲目开仓，优先保全资本。\n"
-            "2. 【在途持仓动态裁决 (position_management)】：综合交易员意见，对每一个在途活动持仓做出 HOLD（继续持有）、CLOSE_MARKET（平仓斩仓）或 UPDATE_SL（移动止损保本）的权威批复，严禁让盈利单演变为亏损！\n"
-            "3. 【在途挂单生命周期管理 (pending_orders_management)】：对每一个未成交限价挂单做出 CANCEL（撤单）或 KEEP（保留）裁决，坚决清理僵尸挂单与高风险挂单。\n"
-            "4. 【新标的开仓方案终审 (decisions)】：审阅各位交易员就 6 大标的提交的完整提案与攻防互评，明确裁定采纳谁的方案执行（输出完整四维点位：limit_price, stop_loss, take_profit, leverage, margin_usd）或全员驳回观望 WAIT。\n"
-            "5. 最终必须输出符合交易所执行层契约的标准完整 JSON！"
-        ),
-        "weight": 1.0,
-        "enabled": True,
-        "reasoning_effort": "high",
-        "temperature": 0.2,
-        "is_arbitrator": True,
-        "model_id": "",
-    },
-}
+DEFAULT_PRESET_TEMPLATES: Dict[str, Dict[str, Any]] = {'trader_trend': {'id': 'trader_trend',
+                  'name': '资深交易员 A (顺势稳健型)',
+                  'role_title': 'Senior Trend Trader',
+                  'description': '审查 4H/1H 结构与回踩/区间边界。提供支持、最强反证和失效价格；不强制交易，不预设胜率。',
+                  'prompt': '审查 4H/1H 结构与回踩/区间边界。提供支持、最强反证和失效价格；不强制交易，不预设胜率。',
+                  'weight': 0.35,
+                  'enabled': True,
+                  'reasoning_effort': 'medium',
+                  'temperature': 0.2,
+                  'is_arbitrator': False,
+                  'model_id': ''},
+ 'trader_momentum': {'id': 'trader_momentum',
+                     'name': '资深交易员 B (动能突破型)',
+                     'role_title': 'Senior Momentum Trader',
+                     'description': '审查突破、量价与动量变化；说明假突破和滑点风险。普通减速不自动等于退出，无法证明优势时 WAIT。',
+                     'prompt': '审查突破、量价与动量变化；说明假突破和滑点风险。普通减速不自动等于退出，无法证明优势时 WAIT。',
+                     'weight': 0.35,
+                     'enabled': True,
+                     'reasoning_effort': 'medium',
+                     'temperature': 0.2,
+                     'is_arbitrator': False,
+                     'model_id': ''},
+ 'trader_quant': {'id': 'trader_quant',
+                  'name': '资深交易员 C (数理筹码型)',
+                  'role_title': 'Senior Quantitative Trader',
+                  'description': '核验数理字段、周期与数值；说明相关性和未校准评分限制，不能把启发式评分当胜率。',
+                  'prompt': '核验数理字段、周期与数值；说明相关性和未校准评分限制，不能把启发式评分当胜率。',
+                  'weight': 0.3,
+                  'enabled': True,
+                  'reasoning_effort': 'high',
+                  'temperature': 0.1,
+                  'is_arbitrator': False,
+                  'model_id': ''},
+ 'cio': {'id': 'cio',
+         'name': '首席投资官 / 交易总监 (Chief Investment Officer)',
+         'role_title': 'Head of Trading / CIO',
+         'description': '审查所有候选证据、反证与失效条件；可以拒绝全部提案。只输出基础契约规定的 JSON，不提高评分以获得开仓许可。',
+         'prompt': '审查所有候选证据、反证与失效条件；可以拒绝全部提案。只输出基础契约规定的 JSON，不提高评分以获得开仓许可。',
+         'weight': 1.0,
+         'enabled': True,
+         'reasoning_effort': 'high',
+         'temperature': 0.2,
+         'is_arbitrator': True,
+         'model_id': ''}}
 
 ALL_AVAILABLE_PRESETS = dict(DEFAULT_PRESET_TEMPLATES)
 
@@ -199,6 +142,7 @@ def save_council_config(config: Dict[str, Any]) -> Dict[str, Any]:
         role.setdefault("weight", 0.3)
         role.setdefault("reasoning_effort", "medium")
         role.setdefault("temperature", 0.2)
+        _role_preference(role_id, role)
 
     config["consensus_mode"] = str(config.get("consensus_mode", "weighted")).lower()
     if config["consensus_mode"] not in {"strict", "weighted", "aggressive"}:
@@ -257,6 +201,17 @@ def reset_role_template(role_id: str) -> Dict[str, Any]:
     return save_council_config(config)
 
 
+def _role_preference(role_id, role_spec):
+    content=str(role_spec.get('prompt') or '')
+    if trading_prompt.legacy_reference(content):
+        return DEFAULT_PRESET_TEMPLATES.get(role_id, {}).get('prompt', '')
+    issues=trading_prompt.conflicts(content)
+    if issues:
+        raise trading_prompt.ContractError('Council role preference conflicts: '+role_id+':'+','.join(issues))
+    if len(content)>12000:raise trading_prompt.ContractError('Council role preference too long')
+    return content
+
+
 def _call_single_trader(
     role_id: str,
     role_spec: Dict[str, Any],
@@ -288,29 +243,12 @@ def _call_single_trader(
     else:
         override_effort = cfg.get("active_reasoning_effort", "medium")
 
-    prompt_content = role_spec.get("prompt", "")
+    prompt_content = _role_preference(role_id, role_spec)
     role_name = role_spec.get("name", role_id)
 
-    trader_system_prompt = (
-        f"【最高交易宪法与策略纪律】\n"
-        f"{master_constitutional_rules}\n\n"
-        f"====================================================\n"
-        f"【你的交易员身份与操盘职责】\n"
-        f"{prompt_content}\n"
-        f"注意：你作为专业交易员，必须在上述【最高交易宪法】框架内提交实战作战提案（Pitch），重点覆盖【账户可用余额】、【在途持仓动态处理】、【在途未成交挂单撤留】与【新标的点位规划】！"
-    )
-
-    trader_user_prompt = (
-        f"【当前全景市场数据、账户资金与在途持仓挂单】\n"
-        f"{market_prompt}\n\n"
-        f"请以你「{role_name}」的专业视角，向首席投资官 (CIO) 提交本轮实操审查与作战方案：\n"
-        f"1. 账户持仓与挂单审查：\n"
-        f"   - 对在途持仓逐一给出管理建议：HOLD（波段完好继续持有）、CLOSE_MARKET（结构破位斩仓）或 UPDATE_SL（浮盈锁定移动止损）；\n"
-        f"   - 对在途未成交限价挂单逐一给出建议：CANCEL（偏离盘口或动能失效立即撤单）或 KEEP（继续保留）；\n"
-        f"2. 6大标的新开/加仓作战提案：\n"
-        f"   - 针对各标的输出明确方案：倾向（BUY_LONG / SELL_SHORT / WAIT）、入场限价 limit_price、2.0x ATR 止损 stop_loss、止盈 take_profit、拟投入保证金与置信度；\n"
-        f"3. 质询与风控：简要指出其他交易员方案可能带来的资金过载或流动性风险（60字内/标的）。"
-    )
+    trader_system_prompt = master_constitutional_rules + "\n你是投委会研究员，只提交可审查提案，不具有执行权。优先给出证据引用、反证和失效条件；其他角色意见不是新增事实。"
+    trader_user_prompt = trading_prompt.canonical({'role_preference': prompt_content, 'role_name': role_name,
+        'market_input': market_prompt, 'task': '基于 facts 给出候选或 WAIT，并审查持仓/挂单风险。不可观测时明确未知，不凑高分。'})
 
     messages = [
         {"role": "system", "content": trader_system_prompt},
@@ -337,6 +275,8 @@ def _call_single_trader(
             "reasoning": reasoning.strip() if reasoning else "",
             "latency_ms": latency,
             "weight": role_spec.get("weight", 1.0),
+            "system_hash": trading_prompt.fingerprint(trader_system_prompt),
+            "user_hash": trading_prompt.fingerprint(trader_user_prompt),
         }
     except Exception as e:
         return {
@@ -380,6 +320,9 @@ def execute_council_debate(
         k for k in roles.keys()
         if k != cio_key and roles[k].get("enabled", True) is not False
     ]
+
+    for role_key in trader_keys + [cio_key]:
+        _role_preference(role_key, roles.get(role_key, cio_spec))
 
     trader_proposals: Dict[str, Dict[str, Any]] = {}
     if trader_keys:
@@ -442,51 +385,10 @@ def execute_council_debate(
     else:
         override_effort = cfg.get("active_reasoning_effort", "high")
 
-    cio_system_prompt = (
-        f"{original_system_prompt}\n\n"
-        "====================================================\n"
-        f"【身份特别授权：你是对冲基金首席投资官 (CIO) 兼交易总监】\n"
-        f"{cio_spec.get('prompt', '')}\n\n"
-        "====================================================\n"
-        "【投委会终审发单契约强约束（全面落盘持仓处理、挂单撤留与新标的点位！）】\n"
-        "你必须对全局资金、在途持仓、在途挂单及 6 大主力标的做出终审裁决：\n"
-        "1. 【持仓与挂单闭环管理】：\n"
-        "   - 在 position_management 中对所有活动持仓下达权威指令（HOLD / CLOSE_MARKET / UPDATE_SL）及理由；\n"
-        "   - 在 pending_orders_management 中对所有在途未成交挂单下达处理指令（CANCEL / KEEP）及理由；\n"
-        "2. 【6 大标的开仓点位裁决 (decisions)】：\n"
-        "   - 仔细比对各位交易员就 6 大标的提交的方案与互评，评估逻辑最扎实者采纳，存在漏洞者驳回；\n"
-        "   - 在 reasoning 中明确写出你的仲裁批复（如「【CIO批复】采纳交易员 A 对 BTC 稳健回踩买多方案，驳回交易员 B 的追多」或「【CIO批复】驳回全员方案，市场震荡全员空仓 WAIT」）；\n"
-        "   - 若批准对某标的开仓（BUY_LONG 或 SELL_SHORT），必须输出完整的四维点位：\n"
-        "     {\n"
-        '       "action": "BUY_LONG" 或 "SELL_SHORT",\n'
-        '       "confidence": 82,  // 最终核定置信度整数 0~100\n'
-        '       "entry_price": 78250.0,  // 挂单入场限价（数字），严禁市价追高\n'
-        '       "limit_price": 78250.0,  // 入场限价同义兼容\n'
-        '       "stop_loss": 76500.0,  // 严格基于 1.8~2.2x 1H ATR 设置的防插针止损价（数字）\n'
-        '       "stop_loss_price": 76500.0,  // 止损价同义兼容\n'
-        '       "take_profit": 81750.0,  // 至少 2.0R 盈亏比的目标止盈价（数字）\n'
-        '       "take_profit_price": 81750.0,  // 止盈价同义兼容\n'
-        '       "leverage": 3,  // 杠杆倍数（整型 2~5）\n'
-        '       "margin_usdt": 150.0,  // 拟投入保证金（须在可用余额安全范围内）\n'
-        '       "reasoning": "【CIO批复】采纳/驳回了哪位交易员的提案，资金与风控考量"\n'
-        "     }\n"
-        "   - 若判定为 WAIT 观望，输出: {\"action\": \"WAIT\", \"confidence\": 50, \"reasoning\": \"【CIO批复】驳回理由与资金保全考量\"}\n\n"
-        "3. 最终必须且只能输出严格符合交易契约的 JSON 格式，绝不包含任何 markdown 代码块外部的多余文本！\n"
-        "必须包含三个顶层键：\"macro_assessment\", \"position_management\", \"decisions\"（可选包含 \"pending_orders_management\"）。"
-    )
-
-    cio_user_prompt = (
-        "【市场实时全景数据、账户可用资金与在途持仓挂单】\n"
-        f"{market_prompt}\n\n"
-        "====================================================\n"
-        "【各交易员实战作战提案与互评质询卷宗】\n"
-        f"{compiled_proposals}\n\n"
-        "====================================================\n"
-        "请作为首席投资官 (CIO) 审阅卷宗，统筹资金安全，裁定本轮发单并输出标准 JSON：\n"
-        "1. 在 macro_assessment 中给出全局资金偏好、仓位总敞口与宏观裁定总括。\n"
-        "2. 在 position_management 中落实每一个现有持仓的动态处理。\n"
-        "3. 在 decisions 中对 6 大标的逐一下达方案采纳或驳回批复，并给出完整四维点位！"
-    )
+    cio_preference = _role_preference('cio', cio_spec)
+    cio_system_prompt = original_system_prompt + "\n你是汇总评审者，不增加额外交易授权。遵守同一个输出契约，不得将其他模型意见当作事实或胜率证据。"
+    cio_user_prompt = trading_prompt.canonical({'role_preference': cio_preference,'market_input': market_prompt,
+        'peer_proposals_untrusted': compiled_proposals,'task':'逐项审查支持、反证和失效条件，可全部 WAIT；输出基础 trading-evidence-v1 JSON。'})
 
     rem_time = max(25.0, timeout - (time.time() - t_start))
     content, reasoning, usage, latency = execute_llm_request(
@@ -504,21 +406,11 @@ def execute_council_debate(
         timeout=rem_time,
     )
 
-    clean_content = content.strip()
-    if clean_content.startswith("```json"):
-        clean_content = clean_content[7:]
-    if clean_content.startswith("```"):
-        clean_content = clean_content[3:]
-    if clean_content.endswith("```"):
-        clean_content = clean_content[:-3]
-    clean_content = clean_content.strip()
-
-    brain_output = json.loads(clean_content)
-    if not isinstance(brain_output, dict):
-        raise ValueError("CIO output root must be a JSON object")
+    brain_output = trading_prompt.parse_response(content)
 
     council_transcript = {
         "council_mode": True,
+        "contract_version": trading_prompt.VERSION,
         "council_architecture": "Hedge Fund Investment Committee",
         "consensus_mode": consensus_mode,
         "total_duration_ms": int((time.time() - t_start) * 1000),
@@ -527,6 +419,8 @@ def execute_council_debate(
             "model_used": override_model or get_active_llm_runtime().get("model", "default"),
             "latency_ms": latency,
             "reasoning": reasoning,
+            "system_hash": trading_prompt.fingerprint(cio_system_prompt),
+            "user_hash": trading_prompt.fingerprint(cio_user_prompt),
         },
         "advisors": trader_proposals,
     }

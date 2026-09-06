@@ -55,7 +55,7 @@ class StrategyResearchTests(unittest.TestCase):
         calls=[]
         def call(system,payload):
             calls.append(payload)
-            return [{'instId':'TEST','action':'WAIT','confidence':0}]
+            return {'contract_version':'trading-evidence-v1','macro_assessment':'No evidence','position_management':[],'pending_orders_management':[],'decisions':{'TEST':{'action':'WAIT','confidence':0}}}
         snapshot={'as_of_ms':int(time.time()*1000),'packages':[{'instId':'TEST','price':100,'atr':1,'recent_1h':[],
                   'calculus':{'velocity':1},'bidPx':99,'askPx':101,'smart_money':{'x':1}}],'memory':['approved lesson']}
         result=shadow_research.collect(snapshot,call,model='test',scope='test-shadow')

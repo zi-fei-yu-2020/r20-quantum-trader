@@ -95,18 +95,14 @@ MAX_REVISIONS = 100
 MAX_MODULES_PER_PIPELINE = 40
 _SECTION_RE = re.compile(r"(?m)(?=^={0,30}\s*【[^\n】]+】[^\n]*$)")
 
+from scripts.trading_prompt import STYLE_SYSTEM, STYLE_USER
+
 PRESETS: dict[str, dict[str, Any]] = {
     "stable": {
-        "id": "stable", "name": "全维度波段强化版", "description": "基于 1H~4H 宏观多空趋势、因果微积分、定积分能量、概率论高权重定价与智能加仓的量化决策方案（系统唯一主策略）。", "editable": True,
-        "trading_system": """【交易风格：全维度波段强化（概率论权重提升·强开单·高胜率·防割肉）】\n所有 P0 硬约束保持不变，不得把“稳健”解释为长期空仓。核心裁决由【概率论与期望值】优先定性：当条件延续/击穿概率具有优势且 R:R≥2.0 时果断进场！杜绝频繁随意割肉：止损给足 1.8~2.2x ATR 彻底隔绝杂波插针扫损；浮盈达 0.8R~1.0R 坚决启动保本移损锁死胜率，杜绝浮盈变亏损。多空对称顺势，形态契合时自信评定 78%~88% 积极开单进场！""",
-        "trading_user": """【全维度波段强化裁决偏好（概率论高权重·多空对称·高胜率·防割肉体系）】
-1. 概率论最高权重决策：优先根据条件延续概率 P续 与击穿概率 P破 的数学期望定价；P续 占优专注做多回踩，P破 占优专注承压做空；
-2. 强烈开单欲望：拒绝机械空仓观望，普通回抽优先作为限价入场定位，4H/1H 顺势多头找回踩低吸挂多，4H/1H 顺势空头找反弹承压挂空，箱体震荡边界双向高抛低吸；
-3. 彻底拒绝随意割肉：止损距离外扩给足 1.8x~2.2x 1H ATR 呼吸空间，隔绝 15M/5M 噪音假动作；
-4. 浮盈达 0.8R~1.0R 主动输出 UPDATE_SL 移至保本位，锁定胜率下限，杜绝盈利单回吐成亏损割肉；
-5. 形态确立且 R:R≥2.0 时，自信给出 78%~88% 置信度果断开单！""",
-        "evolution_system": """【全维度波段复盘风格】\n优先识别回撤、过度交易、追价和低质量入场，但只使用真实可观测证据。小样本、数理快照缺失或因果不可辨时 NO_CHANGE；任何记忆都不得成为绕过硬风控的新阈值。""",
-        "evolution_user": """【全维度波段进化任务】\n评估信号一致性、风险预算、手续费、入场与退出质量；只有多个独立样本支持时才沉淀新经验，否则保留旧记忆并提出需要补充的证据。""",
+        "id": "stable", "name": "全维度波段·证据优先", "description": "审查支持证据、反证与失效条件，无优势时等待；执行层控制最终风险。", "editable": True,
+        "trading_system": STYLE_SYSTEM, "trading_user": STYLE_USER,
+        "evolution_system": "仅根据已确认交易与同期快照提出待验证假设；小样本或缺少数理快照时 NO_CHANGE，不宣称因果或胜率提升。",
+        "evolution_user": "区分事实与假设，核对费用、回撤和执行质量；新经验进入候选库，不自动覆盖运行记忆。",
     },
 }
 
@@ -169,7 +165,8 @@ def compile_modules(modules: list[dict[str, Any]]) -> str:
 def base_template_modules(text: str, pipeline: str) -> list[dict[str, Any]]:
     modules = text_to_modules(text, "base", locked=False)
     for module in modules:
-        module["locked"] = False
+        from scripts.trading_prompt import PROTECTED_TITLES
+        module["locked"] = pipeline.startswith("trading_") and module["title"].rstrip(":：") in PROTECTED_TITLES
     return modules
 
 
@@ -276,8 +273,8 @@ def resolve_profile(profile: dict[str, Any]) -> dict[str, Any]:
     if resolved.get("editor_mode") != "simple": return resolved
     policy = resolved.get("simple_policy") or {}; strategy = str(policy.get("strategy") or "").strip(); review = str(policy.get("review_focus") or "").strip()
     participation = {"conservative":"稳健参与，证据不足时等待", "balanced":"均衡参与高质量机会", "active":"积极参与证据完整的趋势机会"}.get(policy.get("participation"), "均衡参与高质量机会")
-    evidence = {"strict":"要求多周期、动力学、能量与概率风险严格共振", "balanced":"允许轻微证据分歧但必须可解释", "trend":"趋势与动力学优先，风险异常仍等待"}.get(policy.get("evidence"), "要求多周期、动力学、能量与概率风险严格共振")
-    risk = {"low":"优先使用允许风险区间低位", "middle":"优先使用允许风险区间中位", "high":"强信号可使用允许风险区间高位但绝不突破硬上限"}.get(policy.get("risk_budget"), "优先使用允许风险区间中位")
+    evidence = {"strict":"要求可核验的支持、反证和失效条件，不要求所有指标一致", "balanced":"允许轻微证据分歧但必须可解释", "trend":"趋势与动力学优先，风险异常仍等待"}.get(policy.get("evidence"), "要求可核验的支持、反证和失效条件，不要求所有指标一致")
+    risk = {"low":"优先使用允许风险区间低位", "middle":"优先使用允许风险区间中位", "high":"仅提出风险区间偏好，实际数量由执行层按最终止损预算计算"}.get(policy.get("risk_budget"), "优先使用允许风险区间中位")
     resolved["trading_system"] = f"【用户策略偏好·简单模式】\n{participation}；{evidence}；{risk}。\n{strategy}".strip()
     resolved["trading_user"] = ""
     resolved["evolution_system"] = f"【用户复盘关注·简单模式】\n围绕用户策略检查执行一致性，不得修改 P0、OCO、JSON 契约或风险硬门禁。\n{review or strategy}".strip()
@@ -333,6 +330,14 @@ def validate_profile(profile: dict[str, Any]) -> dict[str, Any]:
                 break
     if total > MAX_PROFILE_CHARS: errors.append(f"四类模板合计不得超过 {MAX_PROFILE_CHARS} 字符")
     if not total and not pipelines and profile.get("editor_mode") != "simple": warnings.append("当前方案四类附加模板均为空，将只使用基础提示词")
+    from scripts.trading_prompt import preference_layers
+    _, composition_warnings, allow_open = preference_layers(resolve_profile(profile))
+    for item in composition_warnings:
+        if item.get('code') == 'preference_conflict':
+            errors.append('交易偏好与基础契约冲突：' + ', '.join(item.get('reasons', [])))
+        elif item.get('code') == 'legacy_builtin_reference_refreshed':
+            warnings.append('识别到旧内置引用；运行时采用新版基础契约，保存文件不变')
+    if not allow_open and not errors: errors.append('交易偏好无法安全组合，禁止新增仓位')
     return {"valid": not errors, "errors": list(dict.fromkeys(errors)), "warnings": warnings, "characters": module_total if pipelines else total}
 
 
@@ -591,19 +596,22 @@ def apply_module_layout(base: str, profile: dict[str, Any], pipeline: str, label
     output.extend(module for module in base_modules if module["title"] not in matched)
     return compile_modules(output)
 
-    # Fail closed: preserve every live value that an older layout does not know.
-    output.extend(module for module in base_modules if module["title"] not in matched)
-    return compile_modules(output)
-
 
 def pipeline_view(base: str, profile: dict[str, Any], pipeline: str) -> list[dict[str, Any]]:
     base_modules = base_template_modules(base, pipeline)
     current = ((profile.get("pipelines") or {}).get(pipeline) if isinstance(profile.get("pipelines"), dict) else [])
+    if pipeline.startswith('trading_'):
+        from scripts.trading_prompt import legacy_reference, fingerprint
+        references={fingerprint(m['content']) for m in base_modules}
+        extra=[]
+        raw=current if isinstance(current,list) and current else text_to_modules(str(profile.get(pipeline) or ''),'custom')
+        for module in raw:
+            if fingerprint(module.get('content','')) in references or legacy_reference(module.get('content','')):continue
+            # Preserve custom edits visibly as lower-priority preferences, not stale locked rules.
+            extra.append({**module,'source':'custom','locked':False})
+        return base_modules+extra
     if isinstance(current, list) and any(item.get("source") == "base" for item in current):
-        view = copy.deepcopy(current)
-        for m in view:
-            m["locked"] = False
-        return view
+        return copy.deepcopy(current)
     return base_modules + text_to_modules(str(profile.get(pipeline) or ""), "custom")
 
 

@@ -13,12 +13,13 @@ import sys
 import time
 ROOT=Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:sys.path.insert(0,str(ROOT))
-from scripts import strategy_evidence as evidence
+from scripts import strategy_evidence as evidence, trading_prompt
 
 VARIANTS=[('baseline',[]),('llm',['llm']),('llm_calculus',['llm','calculus']),
           ('llm_calculus_microstructure',['llm','calculus','microstructure']),
           ('llm_calculus_microstructure_memory',['llm','calculus','microstructure','memory'])]
-SYSTEM='''You are a shadow-only signal filter. Never execute any action. Return JSON {"decisions":[{"instId":"...","action":"WAIT|BUY_LONG|SELL_SHORT","confidence":0,"entry_price":0,"take_profit_price":0,"stop_loss_price":0}]}. WAIT is valid for every instrument. Confidence is an uncalibrated score, not a win probability. Do not manufacture confidence to cross a gate. Use only supplied closed-bar evidence. Feature fields omitted from this request are unavailable, not neutral. No tools or trading commands are permitted.'''
+SYSTEM=trading_prompt.BASE_SYSTEM
+
 
 
 def baseline(package):
@@ -44,22 +45,28 @@ def collect(snapshot,call_model,*,model,scope):
     for identity,features in VARIANTS:
         selected=[]
         for p in packages:
-            allowed={'instId','price','recent_1h','recent_4h','atr_1h','atr','structure_1h','structure_4h'}
+            allowed={'instId','price','recent_1h','recent_4h','atr_1h','atr','structure_1h','macro_4h','data_quality','environment_support'}
             if 'calculus' in features:allowed.add('calculus')
             if 'microstructure' in features:allowed.update({'bidPx','askPx','takerNetUsd','oiUsd','fundingRate','smart_money'})
             selected.append({k:p[k] for k in allowed if k in p})
         request={'as_of_ms':as_of,'packages':selected}
         if 'memory' in features:request['memory']=memory
-        prompt_hash=hashlib.sha256(evidence.canonical({'system':SYSTEM,'request':request}).encode()).hexdigest()
+        bundle=trading_prompt.compose({'id':'shadow-'+identity},request,selected)
+        request['compiled_prompt']=bundle.user
+        prompt_hash=hashlib.sha256(evidence.canonical({'system':bundle.system,'request':request}).encode()).hexdigest()
         try:
-            decisions=[baseline(p) for p in packages] if not features else call_model(SYSTEM,request)
+            if not features:
+                decisions=[baseline(p) for p in packages]
+            else:
+                checked=trading_prompt.validate_response(call_model(bundle.system,request),selected)
+                decisions=[{'instId':key,**value} for key,value in checked['decisions'].items()]
             if not isinstance(decisions,list) or {d.get('instId') for d in decisions}!=insts or len(decisions)!=len(insts):raise ValueError('Incomplete shadow output')
             evidence.canonical(decisions)  # Reject NaN/Infinity before declaring a cohort complete.
             for d in decisions:
                 if d.get('action') not in {'WAIT','BUY_LONG','SELL_SHORT'}:raise ValueError('Invalid shadow action')
             output.append({'id':identity,'features':features,'model':model if features else '',
                 'prompt_hash':prompt_hash,'memory_hash':hashlib.sha256(evidence.canonical(memory).encode()).hexdigest() if 'memory' in features else '',
-                'strategy_hash':hashlib.sha256((SYSTEM+identity+'closed-baseline-v1').encode()).hexdigest(),
+                'strategy_hash':hashlib.sha256(Path(__file__).read_bytes()+Path(trading_prompt.__file__).read_bytes()+(bundle.system+identity).encode()).hexdigest(),
                 'decisions':decisions,'features_as_of_ms':as_of,'generated_at_ms':int(time.time()*1000),'provenance':'forward_archived'})
         except Exception as exc:errors.append({'variant':identity,'error':type(exc).__name__})
     finished=int(time.time()*1000)
@@ -133,7 +140,7 @@ def main():
     def call(system,payload):
         text,_,_,_=execute_llm_request(messages=[{'role':'system','content':system},{'role':'user','content':evidence.canonical(payload)}],
             model=runtime['model'],base_url=runtime['base_url'],api_key=runtime['api_key'],api_format=runtime.get('api_format'),reasoning_effort=runtime.get('reasoning_effort'),temperature=0,response_format={'type':'json_object'},timeout=45)
-        return json.loads(text)['decisions']
+        return trading_prompt.parse_response(text)
     snapshot=json.loads(Path(args.snapshot).read_text(encoding='utf-8'))
     result=collect(snapshot,call,model=runtime['model'],scope=args.scope)
     print(json.dumps({'complete':result['complete'],'errors':result['errors'],'executed_orders':0}))

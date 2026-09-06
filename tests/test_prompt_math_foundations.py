@@ -60,11 +60,11 @@ class PromptMathFoundationsTests(unittest.TestCase):
 
     def test_system_prompt_does_not_turn_soft_disagreement_into_permanent_wait(self):
         prompt = ai_brain_trader.SYSTEM_PROMPT
-        self.assertIn("不得被解释成“只有完美共振才允许交易”", prompt)
-        self.assertIn("P2/P3 的轻微分歧应通过减小保证金处理", prompt)
-        self.assertIn("减速”不是永久禁令", prompt)
-        self.assertIn("存在至少一个合法顺势候选时", prompt)
-        self.assertIn("目标 R:R ≥ 2.2", prompt)
+        self.assertIn("没有开仓数量、频率或置信度配额", prompt)
+        self.assertIn("不直接等同于开仓许可或永久禁令", prompt)
+        self.assertIn("存在分歧时说明它为何不推翻假设", prompt)
+        self.assertIn("程序", prompt)
+        self.assertNotIn("必须果断给出", prompt)
 
     def test_user_prompt_injects_real_1h_math_values(self):
         missing = "/tmp/r20-test-file-does-not-exist"

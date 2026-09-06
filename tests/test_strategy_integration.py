@@ -21,7 +21,7 @@ class StrategyIntegrationTests(unittest.TestCase):
         observer=patch.object(position_guard,'observe_equity',return_value={});observer.start();self.addCleanup(observer.stop)
 
     def test_full_final_preflight_uses_actual_leverage_and_commits_before_write(self):
-        identity=evidence.append(self.env.identity,'decision',{'instrument':META['instId'],'decision':{'action':'BUY_LONG'}})
+        identity=evidence.append(self.env.identity,'decision',{'instrument':META['instId'],'decision':{'action':'BUY_LONG','contract_version':'trading-evidence-v1','contract_valid':True,'valid_until':time.time()+300}})
         def private(method,path,params,env):
             self.assertEqual(method,'GET');self.assertEqual(env.mode,'demo')
             if path.endswith('/positions') or path.endswith('/orders-pending'):return []

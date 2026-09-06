@@ -73,6 +73,12 @@ def prepare(env, *, inst_id, side, entry, stop, take_profit, requested_size, bud
         recorded=db.execute("SELECT payload FROM events WHERE id=? AND scope=? AND kind='decision'",(decision_id,env.identity)).fetchone()
     if not recorded: raise risk.RiskRejected('Decision evidence not found for this account')
     record=json.loads(recorded[0])
+    decision=record.get('decision',{})
+    from scripts.trading_prompt import VERSION
+    if decision.get('contract_version')!=VERSION or decision.get('contract_valid') is not True:
+        raise risk.RiskRejected('Decision output contract was not validated')
+    if time.time() >= risk.number(decision.get('valid_until'),positive=True):
+        raise risk.RiskRejected('Candidate validity expired')
     expected='BUY_LONG' if side=='long' else 'SELL_SHORT'
     if record.get('instrument')!=inst_id or record.get('decision',{}).get('action')!=expected:
         raise risk.RiskRejected('Decision evidence does not authorize this instrument/direction')

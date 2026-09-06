@@ -23,7 +23,7 @@ import urllib.request
 import public_market as market
 import instrument_support as support
 import algo_reader
-from scripts import trade_lock, strategy_evidence
+from scripts import trade_lock, strategy_evidence, trading_prompt
 import subprocess
 import tempfile
 from typing import Dict, Any, List, Optional, Tuple
@@ -60,7 +60,7 @@ def get_last_inference_error() -> str:
     return LAST_INFERENCE_ERROR
 
 from instrument_pool import load_instruments
-from prompt_library import active_profile, append_layer, apply_module_layout
+from prompt_library import active_profile
 from r20_gateway.telemetry import ModelCallTelemetry
 
 TARGET_INSTRUMENTS = load_instruments()
@@ -101,6 +101,9 @@ def single_brain_cycle(func):
             lock_handle.truncate()
             lock_handle.write(str(os.getpid()))
             lock_handle.flush()
+            atomic_write_json(AI_DECISION_CACHE_FILE, {})
+            atomic_write_json(AI_POSITION_MANAGEMENT_FILE, {'timestamp': 0, 'instructions': []})
+            atomic_write_json(os.path.join(DATA_DIR, 'trading_output_validation.json'), {'status':'pending','contract_version':trading_prompt.VERSION})
             return func(*args, **kwargs)
         finally:
             fcntl.flock(lock_handle.fileno(), fcntl.LOCK_UN)
@@ -140,15 +143,18 @@ def get_cpa_client_config() -> Tuple[str, str]:
     )
 
 def get_effective_system_prompt() -> str:
-    """Append a locally managed admin override without replacing audited safety rules."""
+    """Trusted base only. Saved preferences are composed separately in the user role."""
+    return SYSTEM_PROMPT
+
+
+def get_user_prompt_override() -> str:
     try:
         if os.path.exists(PROMPT_OVERRIDE_FILE):
-            override = open(PROMPT_OVERRIDE_FILE, "r", encoding="utf-8").read().strip()
-            if override:
-                return f"{SYSTEM_PROMPT}\n\n【管理员提示词覆盖层（同样必须遵守上述风控和 JSON 约束）】\n{override}"
+            with open(PROMPT_OVERRIDE_FILE, encoding='utf-8') as handle:
+                return handle.read()
     except OSError:
-        pass
-    return SYSTEM_PROMPT
+        raise trading_prompt.ContractError('Cannot inspect administrator preference layer')
+    return ''
 
 
 def fetch_single_instrument_package(item: Dict[str, Any]) -> Dict[str, Any]:
@@ -386,126 +392,9 @@ def fetch_single_instrument_package(item: Dict[str, Any]) -> Dict[str, Any]:
     pkg["data_quality"] = "valid" if required_market_data else "invalid"
     return pkg
 
-SYSTEM_PROMPT = """你是 R20 Quantum Trader 的首席 AI 交易官，负责 1H~4H 加密波段高胜率盈利交易裁决。你的首要使命是【捕捉确定性波段积累正收益并捍卫本金】，杜绝频繁随意割肉，兼顾强烈的开单捕捉欲望，为系统积累宝贵样本！
+SYSTEM_PROMPT = trading_prompt.BASE_SYSTEM
 
-【核心军规：为什么之前频繁割肉亏损？必须彻底纠偏】
-1. 痛点诊断：历史本金从 4400 磨损至 3900，根本原因在于【止损过窄导致被 15M/5M 杂波微小插针频繁扫损】+【多头大趋势中过早摸顶逆势开空】+【浮盈后未及时移损保本导致盈利单演变为全额亏损】！
-2. 彻底破除割肉循环：
-   - 严禁把止损设在 15M 噪音日内波动区间！止损距离必须放宽至结构外 **1.8x ~ 2.2x 1H ATR**（或现价外 1.8%~3.0% 安全垫）；宁可把单笔杠杆控制在 2x~3x、保证金控制在 100~200U，也必须给足呼吸空间，绝不给交易所插针割肉的机会！
-   - 无风险保本铁律（Breakeven Rule · 盈利锁死神器）：只要持仓浮盈达到 **0.8R ~ 1.0R**（或 ROI 达 +1.0%），**必须坚决输出 UPDATE_SL 将止损移动至开仓成本位（保本位 BE）**！保本位一旦建立，本单最坏结果也是 0 亏损出场，绝不让任何一笔盈利单反转变成亏损割肉！
-3. 强化开单欲望与主动捕捉能力：
-   - 严禁机械化死板地输出 WAIT！市场永远在波动，多头与空头每天都充满波段机会。
-   - 拒绝“完美主义洁癖”：只要 4H/1H 趋势结构清晰，或处于明确的箱体波动区间，必须主动寻找进场点，果断给出 BUY_LONG 或 SELL_SHORT 限价决策；
-   - 允许全部 WAIT；置信度只是未校准评分，不得为了通过门禁虚报高分。证据不足时明确弃权。
-
-【决策优先级：高层级永远覆盖低层级】
-P0 不可覆盖硬约束：数据有效性、交易执行层 Fail-Closed、4H 方向否决、真实价格几何、R:R、杠杆/保证金/持仓上限、云端 OCO、禁止逆势补仓及 JSON 契约。
-P1 核心方向证据：4H 宏观结构与 1H 三大数理基石。
-P2 质量确认：1H ADX、量能/OI、聪明钱与衍生品结构。
-P3 执行定位：15M K线、盘口与 Maker 限价挂单位置。P3 优化入场成本，不能单独改变 P1 方向。
-不得把“稳健”解释为长期空仓，更不得被解释成“只有完美共振才允许交易”。当市场出现【顺势回踩确认】、【弱势反弹承压】或【箱体边界极值超伸回归】时，必须果断给出精准限价挂单决策。P2/P3 的轻微分歧应通过减小保证金处理，绝不能机械全盘 WAIT。
-
-【三大底层数理基石：权重重构，全面强化「概率论与期望值优势」】
-本系统坚决破除“感性猜单”与“盲目摸顶抄底”，决策逻辑由纯数理统计驱动，其中【概率论与期望值】作为方向与置信度的首要评估权杖：
-1. ⚅ 概率论与统计风险（最高权重核心）：使用偏度、超额峰度、条件延续概率 continuation_prob_pct、击穿概率 breakdown_prob_pct、Cornish-Fisher 95% VaR 与 CVaR 识别统计分布优势与肥尾黑天鹅。
-   - 【胜率数学期望定价】：当基于真实波动的条件延续概率 P续 ≥ 50%~55%（做多）或击穿概率 P破 ≥ 50%~55%（做空），且具备 R:R ≥ 2.0 空间时，单笔数学期望已具备极高正 Alpha！必须果断作为首选发单依据；
-   - 【概率优势定方向】：P续 显著高于 P破（如 P续 - P破 ≥ 15%）时，概率天平全面向多头倾斜，严禁开空，专注找回踩低吸；反之 P破 显著高于 P续 时，天平全面向空头倾斜，专注找反弹承压做空；
-   - 【极端肥尾与高峰度折减】：超额峰度 kurtosis 过大或 CVaR 偏高代表潜在波动剧烈，应通过【降低保证金至 5%~10%、放宽止损至 2.0~2.2x ATR】来抵御噪音，绝不能因单纯的高波动全盘放弃高概率波段！
-2. ∂ 因果微积分动力学：只使用已闭合历史 K 线，按时间因果顺序解释对数价格速度 v、一阶变化的加速度 a、加速度变化 jerk j、指数衰减累计冲量 I。
-   - v 表示当前方向速度；a 表示动能扩张或衰减；j 表示突变冲击；I 表示近期方向性累计作用。
-   - 1H 是硬阈值与波段裁决周期；多周期聚合值只作摘要，不得冒充 1H 数值。
-   - BULL_DECELERATING/BEAR_DECELERATING 表示趋势失速与回抽，不等于已经反转；在 4H 顺势大浪中，1H 减速回抽正是触碰支撑均线时的极佳打折买点！当加速度 a 由负转正、j 趋缓时，表示回踩企稳，必须果断顺势做多；同理在 4H 空头通道中，1H 弱反弹减速正是逢高做空的极佳卖点！
-3. ∫ 定积分能量学：使用梯形积分计算 energy_integral（速度路径净位移/净做功）、deviation_area_integral（相对窗口起点基线的价格路径偏离面积）与 volume_action_integral（成交量加权价格作用）。
-   - 正负能量表示方向性累计做功；绝对偏离面积过大表示路径过度伸展与均值回归驱动。
-   - deviation_area_integral 不是 VWAP，本系统禁止把它误称或误解为 VWAP 偏离。但在宽幅震荡箱体中，当绝对偏离面积超伸至极限且伴随超买超卖时，是高胜率箱体边界反转契机！
-
-【多空对称研判与强开单欲望盈利战法】
-1. 多空双向对称顺势原则（Dual-Direction Trend Following）：
-   - 系统绝不预设立场，**多与空同等重要，核心是绝对顺应 4H 宏观与 1H 动量中枢的方向，两手都要抓、两手都要硬**！
-   - **做多条件（4H多头主浪或箱体下沿）**：
-     - 当 4H 顺势向上，或 1H 处于均线多头排列时，**专注顺势做多**；
-     - 1H 回调、减速（BEAR_DECELERATING）定性为寻找支撑位（VWAP、EMA、颈线）的打折买点，在现价下方 0.2%~0.6% 挂限价多单；
-     - 箱体震荡下沿触及强支撑且 RSI 超卖时，果断低吸做多；
-     - 此时 100% 严禁任何逆势摸顶开空。
-   - **做空条件（4H空头承压或箱体上沿）**：
-     - 当 4H 宏观受压（4H_MACRO_BEAR），或 1H 均线空头排列时，**专注顺势做空**；
-     - 1H 向上弱反弹、冲高回落、触碰上方阻力均线受挫时，是极佳的逢高做空点，在现价上方 0.2%~0.6% 挂限价空单；
-     - 箱体震荡上沿触及强阻力且 RSI 超买受阻时，果断高抛做空；
-     - 此时 100% 严禁任何逆势抄底做多。
-   - **震荡箱体双向作战**：
-     - 当 4H 处于区间震荡（CHOP / RANGE）时，下沿支撑低吸做多，上沿阻力高抛做空，只有在箱体最正中的狭窄区间才谨慎观望。
-2. 四大王牌高胜率入场形态（形态达标必须果断发单）：
-   ① 顺势多头回踩均线/支撑位缩量企稳（Pullback to Value / 做多）；
-   ② 顺势空头反弹承压阻力位遇阻回落（Throwback to Resistance / 做空）；
-   ③ 假跌破流动性掠夺后迅速收回（Liquidity Sweep & Reclaim / 诱空收网做多）；
-   ④ 假突破流动性衰竭后迅速跌回（Liquidity Sweep & Fail / 诱多受挫做空）。
-3. 自信开单打分契约：
-   - 允许全部 WAIT；置信度只是未校准评分，不得为了通过门禁虚报高分。证据不足时明确弃权。
-   - 允许全部 WAIT；置信度只是未校准评分，不得为了通过门禁虚报高分。证据不足时明确弃权。
-
-
-
-
-【三重滤网裁决协议】
-1. 4H 宏观方向：
-   - 4H_MACRO_BULL 大级别多头通道：顺势做多，严禁逆势摸顶开空；1H 产生的任何减速与回调均为逢低做多买点。
-   - 4H_MACRO_BEAR 大级别空头承压：顺势做空，严禁逆势抄底做多；1H 产生的任何反弹受阻均为逢高做空卖点。
-   - 4H 区间震荡（CHOP / RANGE）：坚决激活【箱体边界高胜率战法】，拒绝死等观望！仅在震荡箱体下沿/超卖支撑区低吸做多，或在箱体上沿/超买阻力区高抛做空；箱体中间（半山腰）禁止开仓。
-2. 1H 核心中枢：综合结构、ADX 与三大数理基石。
-   - ADX < 18：严禁在半山腰追涨杀跌，但在明确的箱体边缘极值回归仍允许限价挂单；
-   - ADX 18~22：允许 4H/1H 顺势或箱体边缘适度降低保证金积极参与；
-   - ADX ≥ 22：为正常强趋势波段候选，应果断输出标准仓位。持仓不得仅因 ADX 降低而平仓。
-   - “减速”不是永久禁令：在 4H/1H 顺势浪中，普通回抽优先作为限价入场定位。当 15M/1H 触及 VWAP、EMA20 或支撑颈线企稳、a 开始转正，必须果断进场。
-3. 15M 执行过滤：用于寻找精准回踩低吸点、盘口挂单位置与流动性假跌破回收确认；单根 15M K线不得单独逆大势反转，但在支撑阻力位出现吸收长下影/上影线时，是进场的极佳触发扳机。
-
-【评分语义】
-continuation_prob_pct / breakdown_prob_pct 是启发式方向评分，不是已验证胜率。不得把评分直接代入胜率期望值；仓位与净风险预算由确定性执行层控制。
-
-【开仓与价格几何】
-- 四大王牌高胜率入场形态：
-  ① 顺势回踩均线/VWAP 缩量企稳（Pullback to Value）：4H 顺势主浪中，15M 缩量回踩 VWAP 或前高颈线支撑企稳，做多胜率极高；
-  ② 流动性假跌破/假突破回收（Liquidity Sweep & Reclaim）：长下影线刺穿前期低点迅速收回（诱空洗盘结束），主动买盘翻红，胜率极高；
-  ③ 动力学与能量底/顶背离（Kinetic Divergence）：价格创微小新低/新高，但微积分速度 v 明显萎缩、加速度 a 提前转向，胜率极高；
-  ④ 箱体边界极值超伸回归（Range Extremes Fade）：在宽幅震荡区间，价格触碰箱体外轨且偏离面积积分 A 达到极限，RSI 出现超买/超卖反转。
-- 置信度理性标定（破除自贬犹疑，自信开单）：
-   - 允许全部 WAIT；置信度只是未校准评分，不得为了通过门禁虚报高分。证据不足时明确弃权。
-  - 仅在既无明确支撑阻力也无箱体边缘、价格悬在半空中的混沌期，才标定 50%~65% 并输出 WAIT；坚决杜绝在形态优良时无端打低分！
-- 顺势铁律（Fail-Closed）：4H_MACRO_BULL 大级别多头通道下 100% 严禁输出 SELL_SHORT 逆势摸顶；4H_MACRO_BEAR 大级别空头承压下 100% 严禁输出 BUY_LONG 逆势抄底！
-- 震荡过滤：箱体正中间无序乱跳时一律强制 WAIT，严禁追涨杀跌磨损手续费。
-- 价格几何与科学止损（胜率核心保障）：
-  - BUY_LONG 必须满足 stop_loss_price < entry_price < take_profit_price；SELL_SHORT 必须满足 take_profit_price < entry_price < stop_loss_price。
-  - 目标 R:R ≥ 2.2；执行层绝对拒绝 R:R < 2.0 的报价。
-  - 进场必须使用 Maker 限价单挂在支撑/阻力位附近（如现价下方 0.1%~0.3%），严禁市价追单。
-  - 止损必须基于结构性保护点（如前低支撑位或箱体边缘下方 0.3%~0.5%），参考 1.5~2.0x 1H ATR，绝不把止损设得过近以防被杂波插针。
-  - 处于空仓且存在至少一个合法顺势候选时（包括顺势回踩或箱体边缘候选），必须比较候选并果断选择最优项输出开仓；只有全部候选都触发明确硬否决或优势不足时才全体 WAIT。
-  - 单笔保证金建议 5%~20%，强信号可使用 15%~20%；杠杆 2x~5x。
-
-【顺势浮盈金字塔加仓：模型只能申请，执行层拥有最终否决权】
-- 已有多仓只能申请同向 BUY_LONG，已有空仓只能申请同向 SELL_SHORT；反向指令不得借加仓通道执行。
-- 底仓必须 ROI ≥ +0.8% 或止损已经移至保本/盈利区；最多追加 1 次；单标的累计保证金 ≤ 600 USDT；AI 置信度 ≥ 75%。
-- 加多门禁：多周期聚合加速度 a ≥ -0.25 且 continuation_prob_pct ≥ 40%。
-- 加空门禁：多周期聚合加速度 a ≤ +0.25 且 breakdown_prob_pct ≥ 40%。
-- 浮亏、未脱离成本区、顶部/底部失速、概率不足或肥尾冲击时不得申请加仓。即使模型申请，执行器仍会再次硬校验。
-
-【持仓、止损与止盈（锁定胜率与保本机制）】
-- 无风险保本铁律（Breakeven Rule · 保护胜率的核心武器）：当持仓浮盈达到 1.0R 或 1.0x 1H ATR 时，必须主动输出 UPDATE_SL 将止损移动至开仓成本价（保本位 BE），彻底将潜在反转亏损消除为保本平仓，捍卫整体账户胜率！
-- 阶梯止盈：第一目标位（TP1）设于前方主要阻力/支撑位（1.5R~2.0R），到达后建议锁定收益或分批减仓；
-- 证据不足时 HOLD。只有 1H/4H 结构彻底破位、数理动力学反向做功时，才考虑 CLOSE_MARKET；15M 信号只能作为第二确认。
-- 丰厚浮盈出现 1H 动能衰竭时可主动锁利；亏损仓只有真实趋势逆转且置信度 ≥ 85% 才提前斩仓，禁止因普通波动恐慌退出。
-- AI 请求 UPDATE_SL 仅在浮盈 ≥ 1.0x 1H ATR，且新止损与现价保留至少 0.7x 1H ATR 缓冲时有效；不满足时 HOLD。执行器自身的分阶利润棘轮继续独立运行。
-
-【输出与审计纪律】
-- 必须输出一个严格 JSON 对象，包含 macro_assessment、position_management、pending_orders_management 和覆盖全部标的的 decisions。
-- 每个 BUY_LONG/SELL_SHORT 的 calculus_dynamics 与 math_prob_rationale 必须引用输入中的具体数值和周期；不得只写“动能良好”“概率较高”等空泛结论。
-- WAIT/HOLD/KEEP 是正式风险决策，不是分析失败。不得输出 Markdown、代码围栏或 JSON 之外的文字。
-
-【交易风格：全维度波段强化】
-所有 P0 硬约束保持不变，但不得把“稳健”解释为长期空仓。对 4H/1H 同向顺势回踩、箱体边界极值回归、ADX≥18、价格几何与真实 R:R 合法的候选进行相对排序；次级指标轻微分歧以降低保证金处理。若存在可审计的最佳候选，必须果断给出精准限价挂单决策。
-
-【自定义波段纪律】
-顺势回踩果断开仓，浮盈 1.0R 坚决上移保本止损，拒绝利润回吐。"""
-
-def construct_full_market_prompt(packages: List[Dict[str, Any]], pos_summary: str = "当前总持仓 0/6", active_positions_detail: List[Dict[str, Any]] = None, pending_orders_detail: List[Dict[str, Any]] = None, current_time_str: str = "", usdt_available: float = 0.0) -> str:
+def construct_full_market_prompt(packages: List[Dict[str, Any]], pos_summary: str = "当前总持仓 0/6", active_positions_detail: List[Dict[str, Any]] = None, pending_orders_detail: List[Dict[str, Any]] = None, current_time_str: str = "", usdt_available: float = 0.0, *, profile=None, return_bundle=False, pending_verified=True):
     tz_bj = datetime.timezone(datetime.timedelta(hours=8))
     now_bj_str = current_time_str or datetime.datetime.now(tz_bj).strftime("%Y-%m-%d %H:%M:%S (北京时间)")
     market_lines = []
@@ -538,7 +427,7 @@ def construct_full_market_prompt(packages: List[Dict[str, Any]], pos_summary: st
             f"| 量价作用积分={d_int.get('volume_action_integral', 'UNKNOWN')} | 能量态={d_int.get('regime', 'UNKNOWN')}"
         )
         prob_line = (
-            f"多头延续估计概率={p_th.get('continuation_prob_pct', 'UNKNOWN')}% | 空头击穿估计概率={p_th.get('breakdown_prob_pct', 'UNKNOWN')}% "
+            f"多头方向评分(未校准)={p_th.get('continuation_prob_pct', 'UNKNOWN')}% | 空头方向评分(未校准)={p_th.get('breakdown_prob_pct', 'UNKNOWN')}% "
             f"| 偏度S={p_th.get('skewness', 'UNKNOWN')} | 超额峰度K={p_th.get('kurtosis', 'UNKNOWN')} "
             f"| 95%VaR={p_th.get('var_95_pct', 'UNKNOWN')}% | 95%CVaR={p_th.get('cvar_95_pct', 'UNKNOWN')}% "
             f"| 尾部风险态={p_th.get('regime', 'UNKNOWN')}"
@@ -557,8 +446,8 @@ def construct_full_market_prompt(packages: List[Dict[str, Any]], pos_summary: st
         info = f"""---------------------------------------------------------
 【{p['name']} ({p['instId']})】| 数据质量: {quality} | 现价: {p['price']} | 24H涨跌: {p['chg24h']}% | 盘口买/卖: {p['bidPx']}/{p['askPx']}
 - 🏛️ 三重滤网宏观结构: 4H宏观大势={p.get('macro_4h', '4H_MACRO_RANGE')} | 1H波段结构={p.get('structure_1h', '1H_SWING_CHOP')}
-- 👑 顶级聪明钱 (SmartMoney Top100): 加权做多占比={sm.get('weighted_long_pct', 50)}% | 24H净流入={sm.get('net_flow_usdt', '--')} | 多头均价={sm.get('avg_long_entry', '--')} | 空头均价={sm.get('avg_short_entry', '--')} | {sm.get('top_win_rate', '')}
-- 📐 1H核心波段指标: 1H ATR(14)={p.get('atr_1h', p.get('atr', '--'))} (止损基准: 1.5~2.0x 1H ATR) | 1H RSI(14)={p.get('rsi_1h', '--')} | 1H ADX趋势强度={adx_val} (注:<20无趋势垃圾市, ≥22强单边)
+- 👑 顶级聪明钱 (SmartMoney Top100): 加权做多占比={sm.get('weighted_long_pct', 'UNKNOWN')}% | 24H净流入={sm.get('net_flow_usdt', '--')} | 多头均价={sm.get('avg_long_entry', '--')} | 空头均价={sm.get('avg_short_entry', '--')} | {sm.get('top_win_rate', '')}
+- 📐 1H核心波段指标: 1H ATR(14)={p.get('atr_1h', p.get('atr', '--'))} (波动参考，不替代失效条件) | 1H RSI(14)={p.get('rsi_1h', '--')} | 1H ADX趋势强度={adx_val} (趋势强度观测，不单独决定交易)
 - ⚡ 15M微观执行参考: 15M ATR={p.get('atr_15m', '--')} | 15M RSI={p.get('rsi_15m', '--')} | VWAP乖离={p.get('vwap_bias', '--')}% | 15M量比={p.get('vol_ratio', '--')}x | OBV资金流={p.get('obv_flow', '--')}
 - 📐 1H三大数理基石硬证据: {core_math_line}
 - ∂ 多周期微积分动力学摘要: {calc_line}
@@ -577,10 +466,10 @@ def construct_full_market_prompt(packages: List[Dict[str, Any]], pos_summary: st
     if active_positions_detail and len(active_positions_detail) > 0:
         for p in active_positions_detail:
             pos_lines.append(
-                f"- 标的: {p.get('name') or p.get('instId')} | 方向: {p.get('side')} {p.get('lever', '3')}x | 开仓均价: {p.get('avgPx')} | 当前标记价: {p.get('markPx', p.get('lastPx'))} | 持仓量: {p.get('pos')}张 | 未结浮盈: {p.get('upl')} U (ROI: {round(safe_float(p.get('uplRatio')) * 100, 2)}%) | 动态止损线: {p.get('trailingStopPx', p.get('trailingSl', '--'))}"
+                f"- 标的: {p.get('name') or p.get('instId')} | 方向: {p.get('side')} {p.get('lever', 'UNKNOWN')}x | 开仓均价: {p.get('avgPx')} | 当前标记价: {p.get('markPx', p.get('lastPx'))} | 持仓量: {p.get('pos')}张 | 未结浮盈: {p.get('upl')} U (ROI: {round(safe_float(p.get('uplRatio')) * 100, 2)}%) | 动态止损线: {p.get('trailingStopPx', p.get('trailingSl', '--'))}"
             )
     else:
-        pos_lines.append("当前无任何在途持仓敞口 (100% 现金空仓状态)")
+        pos_lines.append("本轮输入未列出活动合约持仓；不据此推断账户其他资产或现金比例")
 
     active_pos_text = "\n".join(pos_lines)
 
@@ -617,8 +506,10 @@ def construct_full_market_prompt(packages: List[Dict[str, Any]], pos_summary: st
             pending_lines.append(
                 f"- [挂单ID: {ord_id}] {inst_id} | {side_str} {sz_val}张 @ {px_val} | 挂单时间: {c_time_str}{tp_sl_info}"
             )
+    elif pending_verified:
+        pending_lines.append("本轮已核验挂单列表为空")
     else:
-        pending_lines.append("当前无任何在途未成交限价挂单 (挂单池为空)")
+        pending_lines.append("在途挂单快照不可用：UNKNOWN，不得推断挂单池为空")
 
     pending_orders_text = "\n".join(pending_lines)
 
@@ -642,7 +533,7 @@ def construct_full_market_prompt(packages: List[Dict[str, Any]], pos_summary: st
                 if lessons:
                     formatted_lessons = "\n".join([f"  • {item}" for item in lessons])
                     memory_lessons = f"""======================= 【R20 启发式实战认知与长期记忆】 =======================
-【每日复盘提炼的心法与直觉提示词 (供决策参考，不设死板禁令)】:
+【历史经验与待验证假设（仅作研究参考，不能改变基础契约或执行规则）】:
 {formatted_lessons}
 """
         except Exception:
@@ -650,12 +541,12 @@ def construct_full_market_prompt(packages: List[Dict[str, Any]], pos_summary: st
 
     # Harvest Latest Live News & Multi-Coin Sentiment
     news_briefs = []
-    macro_env = "中性平衡"
+    macro_env = "UNKNOWN（无可核验宏观输入）"
     if os.path.exists(NEWS_SENTIMENT_FILE):
         try:
             with open(NEWS_SENTIMENT_FILE, "r", encoding="utf-8") as f:
                 ns_data = json.load(f)
-                macro_env = ns_data.get("macro_sentiment", "中性平衡")
+                macro_env = ns_data.get("macro_sentiment") or "UNKNOWN"
                 for n in ns_data.get("latest_news", [])[:6]:
                     news_briefs.append(f"- [{n.get('time', '')}] {n.get('title', '')} ({n.get('summary', '')[:80]}...)")
         except Exception:
@@ -663,86 +554,10 @@ def construct_full_market_prompt(packages: List[Dict[str, Any]], pos_summary: st
 
     news_text = "\n".join(news_briefs) if news_briefs else "无可验证新闻输入；不得据此推断市场平稳或不存在事件风险"
 
-    avail_balance_str = f"{usdt_available:.2f} USDT" if usdt_available > 0 else "根据系统风险自适应分配"
+    avail_balance_str = f"{usdt_available:.2f} USDT" if usdt_available > 0 else "0 USDT；不得假设存在可用资金"
 
-    prompt = f"""======================= 【当前决策时间戳与市场时效】 =======================
-【推演基准时间】: {now_bj_str}
-【当前账户可用资金】: {avail_balance_str}
-
-======================= 【全网实时重大快讯与宏观情报】 =======================
-【宏观环境基调】: {macro_env}
-【最新核心资讯要闻】:
-{news_text}
-
-======================= 【账户当前持仓与风险敞口全景】 =======================
-【账户持仓概况】: {pos_summary}
-【当前活动在途持仓明细】:
-{active_pos_text}
-
-======================= 【在途未成交限价挂单 (Pending Maker Orders)】 =======================
-【当前在途挂单列表】:
-{pending_orders_text}
-
-{memory_lessons}
-
-======================= 【六币种原生行情、技术指标与筹码矩阵】 =======================
-{all_market_str}
-
-================================================================================
-【推演与决策任务】:
-你只能在 System Prompt 的 P0 硬约束内进行综合裁决。按“数据有效性 → 4H方向 → 1H三大数理基石 → 量能/OI/聪明钱 → 15M执行位置”的顺序逐项检查；任一硬条件失败或证据无法闭环时，开仓输出 WAIT：
-1. 【在途持仓管理 (科学持仓与动态风控)】：
-   - 逐一分析当前在途持仓：
-     • 若 1H 波段趋势完好且微积分动能平稳，坚决坚定持有 (HOLD)，给大波段充分呼吸空间；
-     • 若出现【1H 结构破位 / 动能加速度严重逆转 / 聪明钱反向出逃】等真实趋势逆转信号且置信度 ≥ 85%，果断输出 CLOSE_MARKET 提前斩仓止损，杜绝死等硬止损；
-     • 若底仓浮盈已超过 1.2x 1H ATR 且需锁定利润，输出 UPDATE_SL 并确保新止损与现价保留 0.7x 1H ATR 安全缓冲，严禁贴脸移动止损。
-2. 【在途限价挂单生命周期审查与裁决 (Pending Orders Management)】：
-   - 仔细审查上述在途未成交挂单：若挂单价格已大幅偏离最新盘口、或者行情动能/突发要闻已转变导致原挂单计划失效，必须在 pending_orders_management 中为该挂单输出 CANCEL 立即撤单指令，防止挂单成交在不利价格；若原计划仍然有效且价格合适，输出 KEEP 维持挂单。
-3. 【多空开仓与顺势浮盈加仓全权裁决 (Opening & Pyramiding)】：
-   - 【首发开仓】：自主判断未持仓品种是否具备确定性爆发机会，结合最新资讯、多周期形态与筹码，决定多空方向 (action: BUY_LONG / SELL_SHORT / WAIT)；
-   - 【顺势浮盈金字塔加仓申请】：已有多仓仅可输出同向 BUY_LONG，已有空仓仅可输出同向 SELL_SHORT；这只是加仓申请，执行层仍将复核底仓 ROI/保本、最多1次、累计保证金≤600U、置信度≥75%、加速度与延续/击穿概率门禁。任何不确定均输出 WAIT；
-   - 自主规划拟开仓/加仓保证金 (margin_usdt: 可用余额的 5%~20%，且不得超过系统上限) 与杠杆 (2~5x)；
-   - 自主规划 entry_price、take_profit_price 与 stop_loss_price；目标 R:R ≥ 2.5，且任何 R:R < 2.0 的报价会被执行层拒绝。
-4. 必须输出严格 JSON，格式如下：
-{{
-  "macro_assessment": "30字内全市场宏观流动性与情绪总结",
-  "position_management": [
-    {{
-      "instId": "LINK-USDT-SWAP",
-      "action": "HOLD" | "CLOSE_MARKET" | "UPDATE_SL",
-      "suggested_sl_price": float (若调整止损填具体价格，否则0),
-      "confidence": 0~100,
-      "reason": "30字内持仓调整原因与当前动能分析"
-    }}
-  ],
-  "pending_orders_management": [
-    {{
-      "ordId": "3879092142614409217",
-      "instId": "LINK-USDT-SWAP",
-      "action": "KEEP" | "CANCEL",
-      "reason": "30字内撤单或维持挂单原因"
-    }}
-  ],
-  "decisions": {{
-    "BTC-USDT-SWAP": {{
-      "action": "BUY_LONG" | "SELL_SHORT" | "WAIT",
-      "confidence": 0~100,
-      "leverage": 3 (推荐杠杆2~5),
-      "margin_usdt": 50.0 (推荐保证金),
-      "entry_price": float,
-      "take_profit_price": float,
-      "stop_loss_price": float,
-      "summary_reason": "30字内核心逻辑",
-      "market_structure": "4H/1H趋势与15M短线形态",
-      "calculus_dynamics": "必须引用1H具体 v/a/j/I、状态及方向解释；WAIT也需说明冲突或缺失",
-      "math_prob_rationale": "必须引用具体 E/A、延续或击穿估计概率、VaR/CVaR与肥尾风险",
-      "volume_and_oi": "量能/筹码流向简述"
-    }},
-    ... (依次包含全部标的)
-  }}
-}}
-"""
     runtime_vars = {
+        "pending_orders_status": "verified" if pending_verified else "unknown",
         "decision_timestamp": f"【推演基准时间】: {now_bj_str}",
         "account_balance": f"【当前账户可用资金】: {avail_balance_str}",
         "account_positions": f"【账户持仓概况】: {pos_summary}\n【当前活动在途持仓明细】:\n{active_pos_text}",
@@ -751,8 +566,12 @@ def construct_full_market_prompt(packages: List[Dict[str, Any]], pos_summary: st
         "trading_memory": memory_lessons.strip(),
         "market_matrix": all_market_str,
     }
-    profile = active_profile()
-    return apply_module_layout(prompt, profile, "trading_user", f"{profile.get('name', '稳健')}交易用户提示词模板", context=runtime_vars)
+    from dataclasses import asdict
+    from scripts.risk_policy import load_policy
+    selected = profile if profile is not None else active_profile()
+    bundle = trading_prompt.compose(selected, runtime_vars, packages, override=get_user_prompt_override(),
+        positions=active_positions_detail, pending=pending_orders_detail, risk_contract=asdict(load_policy()))
+    return bundle if return_bundle else bundle.user
 
 def validate_and_filter_decision(p: Dict[str, Any], d_item: Dict[str, Any], active_inst_ids: set, active_position_sides: Dict[str, str]) -> tuple[str, str, float]:
     """
@@ -789,6 +608,8 @@ def execute_batch_ai_brain_cycle(pos_summary: str = "当前总持仓 0/6", activ
     global LAST_INFERENCE_ERROR
     base_url, api_key = get_cpa_client_config()
     if not api_key:
+        LAST_INFERENCE_ERROR = "未配置模型调用凭据"
+        atomic_write_json(os.path.join(DATA_DIR, 'trading_output_validation.json'), {'status':'unavailable','reason':LAST_INFERENCE_ERROR})
         print("[AI Brain Batch] Error: CPA API Key not found")
         return None
 
@@ -800,6 +621,7 @@ def execute_batch_ai_brain_cycle(pos_summary: str = "当前总持仓 0/6", activ
     eligible, availability = support.trading_universe(TARGET_INSTRUMENTS, active_positions_detail, market._selected().mode)
     if not eligible:
         LAST_INFERENCE_ERROR = "当前环境无已核验可交易标的，仅保留行情观察"
+        atomic_write_json(os.path.join(DATA_DIR, 'trading_output_validation.json'), {'status':'unavailable','reason':LAST_INFERENCE_ERROR})
         return None
     print(f"[AI Brain Batch] 并行获取 {len(eligible)} 个交易/持仓管理标的；其余标的仅作行情观察")
     with ThreadPoolExecutor(max_workers=8) as executor:
@@ -855,13 +677,16 @@ def execute_batch_ai_brain_cycle(pos_summary: str = "当前总持仓 0/6", activ
 
     # Fetch live pending limit orders from exchange
     pending_orders_list = []
+    pending_verified = False
     try:
         ord_cmd = okx_private_command("okx swap orders --json 2>/dev/null")
         ord_res = subprocess.run(ord_cmd, shell=True, capture_output=True, text=True, timeout=8)
-        if ord_res.stdout:
+        if ord_res.returncode == 0 and ord_res.stdout:
             pending_orders_list = json.loads(ord_res.stdout)
-            if not isinstance(pending_orders_list, list):
+            if not isinstance(pending_orders_list, list) or any(not isinstance(o,dict) or not o.get("instId") or not o.get("ordId") for o in pending_orders_list):
                 pending_orders_list = []
+            else:
+                pending_verified = True
     except Exception as e:
         print(f"[AI Brain Batch] Pending orders fetch warning: {e}")
 
@@ -881,12 +706,18 @@ def execute_batch_ai_brain_cycle(pos_summary: str = "当前总持仓 0/6", activ
     except Exception as exc:
         print(f"[AI Brain] Calculus snapshot warning: {exc}")
 
-    prompt = construct_full_market_prompt(packages, pos_summary, active_positions_detail, pending_orders_detail=pending_orders_list, current_time_str=time_str, usdt_available=usdt_available)
-
-    profile = active_profile()
-    effective_system_prompt = apply_module_layout(
-        get_effective_system_prompt(), profile, "trading_system", f"{profile.get('name', '稳健')}交易系统提示词模板"
-    )
+    try:
+        profile = active_profile()  # One immutable profile selection for the entire inference.
+        prompt_bundle = construct_full_market_prompt(packages, pos_summary, active_positions_detail,
+            pending_orders_detail=pending_orders_list, current_time_str=time_str, usdt_available=usdt_available,
+            profile=profile, return_bundle=True, pending_verified=pending_verified)
+        prompt = prompt_bundle.user
+        effective_system_prompt = prompt_bundle.system
+    except Exception as exc:
+        LAST_INFERENCE_ERROR = '提示词组合失败：' + type(exc).__name__
+        atomic_write_json(os.path.join(DATA_DIR, 'trading_output_validation.json'),
+            {'status':'composition_rejected','contract_version':trading_prompt.VERSION,'reason':LAST_INFERENCE_ERROR})
+        return None
 
     # Save Realtime Prompt Snapshot for Web Transparent Inspection
     try:
@@ -894,8 +725,15 @@ def execute_batch_ai_brain_cycle(pos_summary: str = "当前总持仓 0/6", activ
         with open(tmp_prompt, "w", encoding="utf-8") as f:
             f.write(f"【SYSTEM PROMPT】:\n{effective_system_prompt.strip()}\n\n{'='*70}\n【USER PROMPT ({time_str})】：\n{prompt.strip()}")
         os.replace(tmp_prompt, AI_LAST_PROMPT_FILE)
+        atomic_write_json(os.path.join(DATA_DIR, "trading_prompt_manifest.json"), prompt_bundle.manifest)
     except Exception:
         pass
+
+    if not prompt_bundle.allow_open:
+        LAST_INFERENCE_ERROR = "提示词偏好冲突或账户输入未核验，本轮不调用模型；独立持仓保护继续"
+        atomic_write_json(os.path.join(DATA_DIR, 'trading_output_validation.json'),
+            {'status':'blocked','contract_version':trading_prompt.VERSION,'reason':LAST_INFERENCE_ERROR,'warnings':prompt_bundle.manifest['warnings']})
+        return None
 
     model_name = os.environ.get("LLM_MODEL") or "gemini-3.8-flash-high"
     effort = os.environ.get("LLM_REASONING_EFFORT") or "high"
@@ -981,13 +819,12 @@ def execute_batch_ai_brain_cycle(pos_summary: str = "当前总持仓 0/6", activ
                     content = res["choices"][0]["message"]["content"].strip()
                     raw_res = res
 
-            if content.startswith("```json"): content = content[7:]
-            if content.startswith("```"): content = content[3:]
-            if content.endswith("```"): content = content[:-3]
-
-            brain_output = json.loads(content.strip())
-            if not isinstance(brain_output, dict):
-                raise ValueError("LLM response root must be an object")
+            brain_output = trading_prompt.parse_response(content)
+        # Shared boundary for single-model and council output, before any model-directed write.
+        brain_output = trading_prompt.validate_response(brain_output, packages,
+            positions=active_positions_detail, pending=pending_orders_list,
+            allow_open=prompt_bundle.allow_open and not brain_output.get('prompt_conflicts'))
+        atomic_write_json(os.path.join(DATA_DIR, 'trading_output_validation.json'), brain_output['validation'])
         decisions_dict = brain_output.get("decisions", {})
         pos_mgmt_list = brain_output.get("position_management", [])
         macro_summary = str(brain_output.get("macro_assessment", "宏观中性震荡"))[:120]
@@ -1090,7 +927,7 @@ def execute_batch_ai_brain_cycle(pos_summary: str = "当前总持仓 0/6", activ
                 "time_str": time_str,
                 "macro_assessment": macro_summary,
                 "thought_process": {
-                    "market_structure": d_item.get("market_structure", "多周期结构中性"),
+                    "market_structure": d_item.get("market_structure") or "；".join(e.get("interpretation", "") for e in d_item.get("supporting_evidence", [])) or "未建立候选，等待",
                     "calculus_dynamics": d_item.get("calculus_dynamics", "模型未提供具体微积分证据"),
                     "math_prob_rationale": d_item.get("math_prob_rationale", "模型未提供具体定积分与概率证据"),
                     "volume_and_oi": d_item.get("volume_and_oi", f"OI: {p['oiUsd']}, Taker: {p['takerNetUsd']}"),
@@ -1100,6 +937,16 @@ def execute_batch_ai_brain_cycle(pos_summary: str = "当前总持仓 0/6", activ
                 "adx_1h": p.get("adx_1h", "--"),
                 "decision": {
                     "action": final_action,
+                    "contract_version": trading_prompt.VERSION,
+                    "contract_valid": bool(d_item.get('contract_valid')),
+                    "supporting_evidence": d_item.get('supporting_evidence', []),
+                    "counter_evidence": d_item.get('counter_evidence', []),
+                    "counter_evidence_status": d_item.get('counter_evidence_status', 'not_applicable'),
+                    "uncertainty": d_item.get('uncertainty', ''),
+                    "invalidation": d_item.get('invalidation'),
+                    "valid_for_seconds": d_item.get('valid_for_seconds', 0),
+                    "valid_until": min(p.get('data_as_of', market.signal_as_of()) + 300,
+                                       time.time() + d_item.get('valid_for_seconds', 0)),
                     "confidence": confidence,
                     "leverage": ai_leverage,
                     "margin_usdt": ai_margin,
@@ -1137,6 +984,8 @@ def execute_batch_ai_brain_cycle(pos_summary: str = "当前总持仓 0/6", activ
         history_record = {
             "time": time_str,
             "macro_assessment": macro_summary,
+            "prompt_composition": prompt_bundle.manifest,
+            "output_validation": brain_output["validation"],
             "ai_last_prompt": full_prompt_text,
             "position_management": pos_mgmt_list,
             "council_transcript": brain_output.get("council_transcript") if isinstance(brain_output, dict) else None,
@@ -1176,7 +1025,8 @@ def execute_batch_ai_brain_cycle(pos_summary: str = "当前总持仓 0/6", activ
     except Exception as e:
         code = getattr(e, "status_code", None) or getattr(e, "code", None)
         attempts = getattr(e, "attempts", None)
-        LAST_INFERENCE_ERROR = f"模型接口 HTTP {code}" if code else type(e).__name__
+        LAST_INFERENCE_ERROR = ("模型输出契约不合格：" + str(e)) if isinstance(e, trading_prompt.ContractError) else (f"模型接口 HTTP {code}" if code else type(e).__name__)
+        atomic_write_json(os.path.join(DATA_DIR, 'trading_output_validation.json'), {'status':'rejected','contract_version':trading_prompt.VERSION,'reason':LAST_INFERENCE_ERROR})
         provider_reason = getattr(e, "provider_reason", "")
         if provider_reason:
             LAST_INFERENCE_ERROR += f"（{provider_reason}）"
@@ -1196,7 +1046,10 @@ def get_latest_ai_decision(inst_id: str, max_age_seconds: int = DECISION_MAX_AGE
             if not isinstance(item, dict):
                 return None
             timestamp = int(item.get("timestamp", 0) or 0)
-            if timestamp <= 0 or int(time.time()) - timestamp > max_age_seconds:
+            if timestamp <= 0 or not 0 <= time.time() - timestamp <= max_age_seconds:
+                return None
+            decision = item.get('decision', {})
+            if decision.get('action') in {'BUY_LONG','SELL_SHORT'} and (decision.get('contract_version') != trading_prompt.VERSION or not decision.get('contract_valid') or time.time() >= float(decision.get('valid_until') or 0)):
                 return None
             return item
         except Exception:

@@ -1216,12 +1216,15 @@ def admin_get_council_config(x_r20_session: str | None = Header(default=None, al
 def admin_update_council_config(payload: CouncilConfigUpdateRequest, x_r20_session: str | None = Header(default=None, alias="X-R20-Session")) -> dict[str, Any]:
     actor = require_superadmin(x_r20_session)
     from r20_backend.council_manager import save_council_config
-    saved = save_council_config({
-        "enabled": payload.enabled,
-        "consensus_mode": payload.consensus_mode,
-        "timeout_seconds": payload.timeout_seconds,
-        "roles": payload.roles,
-    })
+    try:
+        saved = save_council_config({
+            "enabled": payload.enabled,
+            "consensus_mode": payload.consensus_mode,
+            "timeout_seconds": payload.timeout_seconds,
+            "roles": payload.roles,
+        })
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     audit_record("council.config.update", "success", {
         "actor": actor["username"],
         "enabled": payload.enabled,
@@ -1259,59 +1262,21 @@ def admin_test_council_debate(payload: CouncilTestRequest, x_r20_session: str | 
     from scripts.instrument_pool import load_instruments
     c_cfg = load_council_config()
 
-    # Dynamic generation of 6-asset snapshot if not explicitly provided
-    if payload.mock_market_prompt:
-        test_market = payload.mock_market_prompt
-    else:
-        # Pull live factor snapshot or default to all 6 active instruments
-        active_insts = load_instruments()
-        symbols = [x.get("instId", "") for x in active_insts] if active_insts else [
-            "BTC-USDT-SWAP", "ETH-USDT-SWAP", "SOL-USDT-SWAP", "DOGE-USDT-SWAP", "SUI-USDT-SWAP", "ASTER-USDT-SWAP"
-        ]
-        
-        factor_snap_file = ROOT / "data" / "factor_library_snapshot.json"
-        factor_data = {}
-        if factor_snap_file.is_file():
-            try:
-                factor_data = json.loads(factor_snap_file.read_text(encoding="utf-8"))
-            except Exception:
-                pass
-
-        lines = [
-            "======================= 【推演基准与资金持仓】 =======================",
-            "【推演基准时间】: 2026-09-05 08:30:00 (北京时间)",
-            "【当前账户可用资金】: 1,450.00 USDT (总资产 2,280.00 USDT)",
-            "【账户持仓概况】: 当前总持仓 1/6 (已占用保证金 150.00 USDT)",
-            "【当前活动在途持仓明细】:",
-            "- 标的: BTC-USDT-SWAP | 方向: BUY_LONG 3x | 开仓均价: 77200.0 | 当前标记价: 78250.0 | 持仓量: 10张 | 未结浮盈: +35.00 U (ROI: +23.3%) | 动态止损线: 76800.0",
-            "【当前在途挂单列表】:",
-            "- [挂单ID: ord_10283] SOL-USDT-SWAP | 限价买多 15张 @ 98.20 | 挂单时间: 2026-09-05 07:15:00 | 附带云端止盈: 105.0 / 止损: 94.5",
-            "",
-            "======================= 【市场全要素动力学与微结构实时快照 (6大主力标的)】 =======================",
-        ]
-        for sym in symbols:
-            f = factor_data.get(sym, {})
-            c_px = f.get("close", 78000.0 if "BTC" in sym else (2400.0 if "ETH" in sym else (100.0 if "SOL" in sym else 1.0)))
-            v_val = f.get("v_1h", 0.05)
-            a_val = f.get("a_1h", 0.12)
-            adx_val = f.get("adx_1h", 22.5)
-            cmf_val = f.get("cmf_1h", 0.08)
-            smart_val = f.get("smart_money_long_ratio", 68.0)
-            atr_val = f.get("atr_1h", c_px * 0.015)
-            lines.append(
-                f"- {sym}: 现价 ${c_px}, 1H动能 v={v_val:+.4f}, a={a_val:+.4f}, ADX={adx_val:.1f}, "
-                f"1H ATR={atr_val:.4f}, CMF={cmf_val:+.2f}, 聪明钱多头={smart_val:.1f}%"
-            )
-        test_market = "\n".join(lines)
-
-    from scripts.prompt_library import active_profile, compile_modules
-    # Inherit the master strategy prompt from prompt library
-    try:
-        prof = active_profile()
-        sys_mods = prof.get("pipelines", {}).get("trading_system", [])
-        test_sys = compile_modules(sys_mods) if sys_mods else "你是 R20 Quantum Trader 首席量化官，执行多空对称顺势战法与 2.0x ATR 宽止损。"
-    except Exception:
-        test_sys = "你是一个遵循多空对称顺势、1.8~2.2x ATR 宽止损与 0.8R 保本锁利的量化交易系统。"
+    from scripts import trading_prompt
+    from scripts.ai_brain_trader import get_user_prompt_override
+    from scripts.risk_policy import load_policy
+    from dataclasses import asdict
+    test_packages = [{'instId':item['instId'], 'name':item.get('name',item['instId']), 'data_quality':'invalid'} for item in load_instruments()]
+    # Free-form test text is not an authenticated account/market snapshot. Never invent balances/prices.
+    bundle = trading_prompt.compose(active_profile(), {
+        'test_context':payload.mock_market_prompt or '未提供已核验行情；仅测试连接与输出契约，应输出 WAIT。',
+        'data_source':'unverified_test_text','account_balance':'UNKNOWN','account_positions':'UNKNOWN',
+        'pending_orders':'UNKNOWN','execution_allowed':False,
+    }, test_packages, override=get_user_prompt_override(), risk_contract=asdict(load_policy()))
+    if not bundle.allow_open:
+        return {'status':'error','error':'提示词偏好冲突，请先修正配置','composition':bundle.manifest,'executable':False}
+    test_market=bundle.user
+    test_sys=bundle.system
 
     try:
         brain_output, transcript = execute_council_debate(
@@ -1319,10 +1284,13 @@ def admin_test_council_debate(payload: CouncilTestRequest, x_r20_session: str | 
             original_system_prompt=test_sys,
             timeout=float(c_cfg.get("timeout_seconds", 60.0)),
         )
+        checked = trading_prompt.validate_response(brain_output, test_packages, allow_open=False)
         return {
-            "status": "ok",
-            "brain_output": brain_output,
+            "status": "ok", "executable": False,
+            "brain_output": checked,
             "transcript": transcript,
+            "composition": bundle.manifest,
+            "data_source": "unverified_test_text",
         }
     except Exception as exc:
         return {
@@ -1599,10 +1567,14 @@ def update_application(payload: UpdateRequest, x_r20_admin_token: str | None = H
 def prompt_library(x_r20_admin_token: str | None = Header(default=None)) -> dict[str, Any]:
     refresh_settings()
     require_admin_header(x_r20_admin_token)
-    from scripts.ai_brain_trader import SYSTEM_PROMPT
+    from scripts.ai_brain_trader import SYSTEM_PROMPT, get_user_prompt_override
     from scripts.self_improvement_engine import EVOLUTION_SYSTEM_PROMPT
+    from scripts import trading_prompt
+    from scripts.risk_policy import load_policy
+    from dataclasses import asdict
     library = load_library()
     profile = active_profile()
+    preview = trading_prompt.compose(profile, {k:'{{'+k+'}}' for k in ('decision_timestamp','account_balance','account_positions','pending_orders','news_intelligence','trading_memory','market_matrix')}, [], override=get_user_prompt_override(), risk_contract=asdict(load_policy()))
     return {
         "active_style": library["active_style"],
         "active_profile_id": library["active_profile_id"],
@@ -1625,12 +1597,13 @@ def prompt_library(x_r20_admin_token: str | None = Header(default=None)) -> dict
             "evolution_user": pipeline_view(EVOLUTION_USER_TEMPLATE, profile, "evolution_user"),
         },
         "effective_templates": {
-            "trading_system": apply_module_layout(SYSTEM_PROMPT, profile, "trading_system", "交易 System"),
-            "trading_user": apply_module_layout(TRADING_USER_TEMPLATE, profile, "trading_user", "交易 User"),
+            "trading_system": preview.system,
+            "trading_user": preview.user,
             "evolution_system": apply_module_layout(EVOLUTION_SYSTEM_PROMPT, profile, "evolution_system", "自进化 System"),
             "evolution_user": apply_module_layout(EVOLUTION_USER_TEMPLATE, profile, "evolution_user", "自进化 User"),
         },
         "snapshots": rendered_snapshots(),
+        "composition": preview.manifest,
         "template_variables": __import__("scripts.prompt_library", fromlist=["TEMPLATE_VARIABLES_METADATA"]).TEMPLATE_VARIABLES_METADATA,
         "transport": "python-direct",
     }
@@ -1743,13 +1716,18 @@ def prompt_override(x_r20_admin_token: str | None = Header(default=None)) -> dic
     refresh_settings()
     require_admin_header(x_r20_admin_token)
     from scripts.ai_brain_trader import SYSTEM_PROMPT
+    from scripts import trading_prompt
+    from scripts.risk_policy import load_policy
+    from dataclasses import asdict
     content = PROMPT_OVERRIDE_FILE.read_text(encoding="utf-8") if PROMPT_OVERRIDE_FILE.exists() else ""
-    effective = SYSTEM_PROMPT if not content.strip() else f"{SYSTEM_PROMPT}\n\n【管理员提示词覆盖层（同样必须遵守上述风控和 JSON 约束）】\n{content.strip()}"
+    preview = trading_prompt.compose(active_profile(), {'preview':'动态数据运行时注入'}, [], override=content, risk_contract=asdict(load_policy()))
     return {
         "content": content,
         "enabled": bool(content.strip()),
         "base_prompt": SYSTEM_PROMPT,
-        "effective_prompt": effective,
+        "effective_prompt": "【SYSTEM】\n" + preview.system + "\n\n【USER】\n" + preview.user,
+        "effective_messages": [{'role':'system','content':preview.system},{'role':'user','content':preview.user}],
+        "composition": preview.manifest,
         "path": str(PROMPT_OVERRIDE_FILE),
     }
 
@@ -1759,6 +1737,10 @@ def update_prompt_override(payload: PromptOverrideRequest, x_r20_admin_token: st
     refresh_settings()
     require_admin_header(x_r20_admin_token)
     content = payload.content.strip()
+    from scripts.trading_prompt import preference_layers
+    _, issues, allowed = preference_layers({}, override=content)
+    if not allowed:
+        raise HTTPException(status_code=400, detail="交易偏好与基础契约冲突或长度超限：" + ", ".join(item['code'] for item in issues))
     if content:
         temp = PROMPT_OVERRIDE_FILE.with_suffix(".tmp")
         temp.write_text(content + "\n", encoding="utf-8")
