@@ -44,7 +44,7 @@ def _run_cli(command: list[str], timeout: int = 20) -> list[dict[str, Any]]:
     return [row for row in rows if isinstance(row, dict)]
 
 
-def _request(method: str, path: str, params: dict[str, Any] | list[dict[str, Any]] | None = None, env: OKXEnvironment | None = None, timeout: int = 20) -> list[dict[str, Any]]:
+def _request_untracked(method: str, path: str, params: dict[str, Any] | list[dict[str, Any]] | None = None, env: OKXEnvironment | None = None, timeout: int = 20) -> list[dict[str, Any]]:
     method = method.upper()
     params = {} if params is None else params
     if not isinstance(params, (dict, list)):
@@ -97,6 +97,15 @@ def _request(method: str, path: str, params: dict[str, Any] | list[dict[str, Any
     failures = [row for row in data if isinstance(row, dict) and str(row.get("sCode", "0")) != "0"]
     if failures: raise RuntimeError(f"OKX {failures[0].get('sCode')}: {failures[0].get('sMsg') or '业务请求失败'}")
     return [row for row in data if isinstance(row, dict)]
+
+
+def _request(method: str, path: str, params=None, env=None, timeout: int = 20):
+    selected = env or selected_environment()
+    if method.upper() != "GET" and path.startswith("/api/v5/trade/"):
+        from scripts.algo_reader import algo_mutation
+        with algo_mutation(selected):
+            return _request_untracked(method, path, params, selected, timeout)
+    return _request_untracked(method, path, params, selected, timeout)
 
 
 def _create_intent(env: OKXEnvironment, position: dict[str, Any]) -> tuple[str, str]:

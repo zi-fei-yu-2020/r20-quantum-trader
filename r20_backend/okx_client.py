@@ -17,7 +17,7 @@ class OKXClient:
     def __init__(self) -> None:
         self.base_url = settings.okx_base_url.rstrip("/")
 
-    def _request(self, method: str, path: str, params: dict[str, Any] | None = None) -> Any:
+    def _send_once(self, selected, method: str, path: str, params: dict[str, Any] | None = None) -> Any:
         params = params or {}
         method = method.upper()
         query = urlencode(params) if method == "GET" else ""
@@ -27,17 +27,17 @@ class OKXClient:
         headers = {"User-Agent": "R20-Standalone/6.6.2"}
         if body:
             headers["Content-Type"] = "application/json"
-        if settings.okx_api_key and settings.okx_secret_key and settings.okx_passphrase:
+        if selected.api_key and selected.secret_key and selected.passphrase:
             timestamp = datetime.now(timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z")
             prehash = timestamp + method + request_path + (body.decode("utf-8") if body else "")
-            digest = hmac.new(settings.okx_secret_key.encode(), prehash.encode(), hashlib.sha256).digest()
+            digest = hmac.new(selected.secret_key.encode(), prehash.encode(), hashlib.sha256).digest()
             headers.update({
-                "OK-ACCESS-KEY": settings.okx_api_key,
+                "OK-ACCESS-KEY": selected.api_key,
                 "OK-ACCESS-SIGN": base64.b64encode(digest).decode(),
                 "OK-ACCESS-TIMESTAMP": timestamp,
-                "OK-ACCESS-PASSPHRASE": settings.okx_passphrase,
+                "OK-ACCESS-PASSPHRASE": selected.passphrase,
             })
-            if settings.okx_simulated:
+            if selected.simulated:
                 headers["x-simulated-trading"] = "1"
         req = Request(url, data=body, headers=headers, method=method)
         with urlopen(req, timeout=10) as response:
@@ -45,6 +45,16 @@ class OKXClient:
         if payload.get("code") not in (None, "0", 0):
             raise RuntimeError(payload.get("msg", "OKX request failed"))
         return payload.get("data", payload)
+
+    def _request(self, method, path, params=None):
+        from scripts.okx_runtime import OKXEnvironment
+        from scripts.algo_reader import algo_mutation
+        selected = OKXEnvironment(settings.okx_environment, settings.okx_api_key,
+                                  settings.okx_secret_key, settings.okx_passphrase, self.base_url)
+        if method.upper() != "GET" and path.startswith("/api/v5/trade/"):
+            with algo_mutation(selected):
+                return self._send_once(selected, method, path, params)
+        return self._send_once(selected, method, path, params)
 
     def ticker(self, inst_id: str) -> Any:
         return public_json(f"{self.base_url}/api/v5/market/ticker?" + urlencode({"instId": inst_id}), simulated=settings.okx_simulated)["data"]

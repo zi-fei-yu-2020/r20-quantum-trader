@@ -14,6 +14,7 @@ import datetime
 import urllib.request
 import public_market as market
 import instrument_support as support
+import algo_reader
 import subprocess
 import tempfile
 from typing import Dict, Any, List, Optional, Tuple
@@ -1027,7 +1028,8 @@ def execute_batch_ai_brain_cycle(pos_summary: str = "当前总持仓 0/6", activ
                 p_reason = str(p_order.get("reason", "模型指示撤销该挂单"))
                 if p_act == "CANCEL" and p_ord_id and p_inst_id:
                     cxl_cmd = okx_private_command(f"okx swap cancel {p_inst_id} --ordId {p_ord_id} --json")
-                    cxl_res = subprocess.run(cxl_cmd, shell=True, capture_output=True, text=True, timeout=10)
+                    with algo_reader.command_barrier(cxl_cmd, market._selected()):
+                        cxl_res = subprocess.run(cxl_cmd, shell=True, capture_output=True, text=True, timeout=10)
                     print(f"[AI Brain Batch] 🛑 AI自主撤回失效/过时限价单: {p_inst_id} (ordId={p_ord_id}, 原因={p_reason})")
 
         standard_cache = {}

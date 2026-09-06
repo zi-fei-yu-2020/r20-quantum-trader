@@ -28,6 +28,7 @@ import subprocess
 import urllib.request
 import public_market as market
 import instrument_support as support
+import algo_reader
 import fcntl
 from typing import Tuple, Dict, Any, List, Optional
 from concurrent.futures import ThreadPoolExecutor
@@ -135,7 +136,8 @@ def is_tradfi_market_liquid(asset_type: str) -> bool:
 def run_cmd_result(cmd, timeout=15):
     """Return process metadata; callers must inspect returncode before mutating local state."""
     try:
-        res = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=timeout)
+        with algo_reader.command_barrier(cmd, market._selected()):
+            res = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=timeout)
         parsed = None
         if res.stdout.strip():
             try:
@@ -166,7 +168,8 @@ def run_cmd(cmd, timeout=15):
 
 def run_json_cmd(cmd, timeout=15):
     try:
-        res = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=timeout)
+        with algo_reader.command_barrier(cmd, market._selected()):
+            res = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=timeout)
         if res.returncode == 0 and res.stdout.strip():
             return json.loads(res.stdout.strip())
         return None
@@ -480,11 +483,14 @@ def _live_oco_coverage(orders: List[Dict[str, Any]], pos_side: str) -> float:
 
 
 def ensure_cloud_position_protection(inst_id: str, pos_side: str, size: float, tp_px: float, sl_px: float) -> Tuple[bool, str]:
-    """Verify 100% live cloud OCO coverage, repair any gap, and verify again."""
-    query = run_cmd_result(okx_private_command(f"okx swap algo orders --instId {inst_id} --json"), timeout=20)
-    if not query["ok"] or not isinstance(query.get("data"), list):
-        return False, f"unable to verify cloud OCO: {query['stderr'] or query['stdout'] or 'invalid response'}"
-    coverage = _live_oco_coverage(query["data"], pos_side)
+    """Unknown reads never cause blind repair; fresh confirmed gaps are repaired once."""
+    env = market._selected()
+    try:
+        orders = algo_reader.orders_for_instrument(algo_reader.read_algo_orders(env, priority="risk"), inst_id)
+    except Exception as exc:
+        detail = str(exc) if isinstance(exc, algo_reader.AlgoReadError) else type(exc).__name__
+        return False, f"UNKNOWN: unable to verify cloud OCO after bounded reads: {detail}"
+    coverage = _live_oco_coverage(orders, pos_side)
     missing = max(0.0, float(size) - coverage)
     if missing <= max(1e-12, float(size) * 0.001):
         return True, f"cloud OCO coverage verified ({coverage:g}/{size:g})"
@@ -495,19 +501,28 @@ def ensure_cloud_position_protection(inst_id: str, pos_side: str, size: float, t
         f"--tdMode cross --ordType oco --sz {missing:g} --tpTriggerPx {tp_px} --tpOrdPx=-1 "
         f"--slTriggerPx {sl_px} --slOrdPx=-1 --reduceOnly --cxlOnClosePos --json"
     )
-    placed = run_cmd_result(command, timeout=20)
-    if not placed["ok"]:
-        return False, f"cloud OCO repair failed: {placed['stderr'] or placed['stdout'] or 'order rejected'}"
-
+    placed = run_cmd_result(command, timeout=20)  # Exactly one write attempt.
+    # An ambiguous write is NOT repeated. Reconcile by fresh reads only.
+    write_confirmed = placed["ok"]
+    deadline = time.monotonic() + 6
+    last_detail = "UNKNOWN: no fresh post-repair snapshot obtained before deadline"
     for _ in range(4):
-        time.sleep(0.5)
-        verify = run_cmd_result(okx_private_command(f"okx swap algo orders --instId {inst_id} --json"), timeout=20)
-        if not verify["ok"] or not isinstance(verify.get("data"), list):
-            continue
-        verified_coverage = _live_oco_coverage(verify["data"], pos_side)
-        if verified_coverage + max(1e-12, float(size) * 0.001) >= float(size):
-            return True, f"cloud OCO repaired and verified ({verified_coverage:g}/{size:g})"
-    return False, "cloud OCO repair was submitted but full coverage could not be verified"
+        remaining = deadline - time.monotonic()
+        if remaining <= .5: break
+        time.sleep(.5)
+        try:
+            orders = algo_reader.orders_for_instrument(algo_reader.read_algo_orders(
+                env, priority="risk", force=True, timeout=deadline - time.monotonic()), inst_id)
+        except Exception as exc:
+            detail = str(exc) if isinstance(exc, algo_reader.AlgoReadError) else type(exc).__name__
+            last_detail = f"UNKNOWN: post-repair verification unavailable: {detail}"
+            break  # Reader already applied bounded retry/Retry-After; no outer retry storm.
+        verified_coverage = _live_oco_coverage(orders, pos_side)
+        if verified_coverage + max(1e-12, float(size) * .001) >= float(size):
+            label = "repaired and verified" if write_confirmed else "reconciled after uncertain write"
+            return True, f"cloud OCO {label} ({verified_coverage:g}/{size:g})"
+        last_detail = "INSUFFICIENT: fresh post-repair snapshot still shows incomplete coverage"
+    return False, last_detail
 
 
 def record_trade(trade_data):
@@ -1017,23 +1032,25 @@ def manage_position_tp_and_trailing(f, curr_pos, trackers, timestamp_full, execu
     if not protected:
         closed, close_detail = close_position_confirmed(inst_id, "long" if is_long else "short", pos_sz)
         if not closed:
-            executed_actions.append(f"[{name}] 🚨 云端 OCO 缺失且安全退出失败: {protection_detail}; {close_detail}")
+            executed_actions.append(f"[{name}] 🚨 云端 OCO 核验未通过且安全退出失败: {protection_detail}; {close_detail}")
             return False, "保护与退出均失败"
         pnl_val = curr_pos["upl"]
-        executed_actions.append(f"[{name}] 🧯 云端 OCO 无法确认，已安全平仓: {protection_detail}")
+        check_status = "insufficient" if protection_detail.startswith("INSUFFICIENT:") else "unknown"
+        check_label = "确认保护不足" if check_status == "insufficient" else "保护核验未知"
+        executed_actions.append(f"[{name}] 🧯 {check_label}，已按安全策略确认平仓: {protection_detail}")
         record_trade({
             "is_trade": True, "time": timestamp_full, "inst": name, "name": name,
-            "action": "平仓", "action_type": "保护失效退出",
-            "direction": f"平{'多' if is_long else '空'}", "side": f"{'多' if is_long else '空'}单保护失效退出",
+            "action": "平仓", "action_type": f"{check_label}退出", "protection_check_status": check_status,
+            "direction": f"平{'多' if is_long else '空'}", "side": f"{'多' if is_long else '空'}单{check_label}退出",
             "size": pos_sz, "sz": pos_sz, "price": cur_px,
             "fee": (pos_sz * ct_val * cur_px) * TAKER_FEE_RATE, "pnl": pnl_val,
-            "remark": f"云端 OCO 无法达到全仓覆盖，交易所确认安全平仓：{protection_detail}"
+            "remark": f"未能确认云端 OCO 全仓覆盖，按安全策略确认平仓：{protection_detail}"
         })
-        add_stop_cooldown(inst_id, "long" if is_long else "short", "云端保护失效")
+        add_stop_cooldown(inst_id, "long" if is_long else "short", "云端保护核验失败")
         if notify_trade_close:
-            notify_trade_close(inst=name, pnl=pnl_val, stage="云端保护失效退出", exit_px=cur_px)
+            notify_trade_close(inst=name, pnl=pnl_val, stage=f"云端{check_label}退出", exit_px=cur_px)
         trackers.pop(pos_key, None)
-        return True, "保护失效安全退出"
+        return True, "保护核验安全退出"
     t["cloudProtection"] = {"verifiedAt": timestamp_full, "detail": protection_detail}
 
     # 2. Volatility Time-Stop Exit (After 8 Hours dead consolidation without expansion)
@@ -1278,7 +1295,13 @@ def execute_ai_position_management(real_pos_dict, trackers, timestamp_full, exec
             if not tightens_risk:
                 executed_actions.append(f"[{name}] 浮盈空间不足或与现价缓冲过近({current_px} vs 拟调SL {new_sl})，拒绝过早收紧止损")
                 continue
-            algo_orders = run_json_cmd(okx_private_command(f"okx swap algo orders --instId {inst_id} --json")) or []
+            try:
+                algo_orders = algo_reader.orders_for_instrument(
+                    algo_reader.read_algo_orders(market._selected(), priority="risk", force=True), inst_id)
+            except Exception as exc:
+                detail = str(exc) if isinstance(exc, algo_reader.AlgoReadError) else type(exc).__name__
+                executed_actions.append(f"[{name}] 止损单核验暂不可用，未发送改单，原保护单保持不变: {detail}")
+                continue
             live_algo = next((o for o in algo_orders if o.get("state") == "live" and o.get("posSide") == pos_side and o.get("slTriggerPx")), None)
             if not live_algo:
                 executed_actions.append(f"[{name}] 未找到真实云端止损单，无法更新")

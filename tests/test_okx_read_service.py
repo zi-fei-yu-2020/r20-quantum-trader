@@ -13,16 +13,16 @@ class OKXReadOnlyTests(unittest.TestCase):
         self.demo = OKXEnvironment('demo', 'fake-key', 'fake-secret', 'fake-pass')
 
     def test_all_resources_are_get_only_and_keep_environment(self):
-        with patch('r20_backend.okx_read_service._request', return_value=[]) as request:
+        with patch('r20_backend.okx_read_service._request', return_value=[]) as request, patch('r20_backend.okx_read_service.read_algo_orders', return_value=[]) as algos:
             for resource in ('balance', 'positions', 'orders', 'bills'):
                 read_private_resource(resource, self.demo)
             read_private_resource('algos', self.demo, 'BTC-USDT-SWAP')
-        self.assertEqual(request.call_count, 6)
+        self.assertEqual(request.call_count, 4)
         for call in request.call_args_list:
             self.assertEqual(call.args[0], 'GET')
             self.assertIs(call.args[3], self.demo)
             self.assertNotIn('cancel', call.args[1])
-        self.assertEqual({c.args[2].get('ordType') for c in request.call_args_list[-2:]}, {'oco', 'conditional'})
+        algos.assert_called_once_with(self.demo, priority='monitor')
 
     def test_arbitrary_resource_or_missing_credentials_never_sends(self):
         with patch('r20_backend.okx_read_service._request') as request:
@@ -77,6 +77,29 @@ class OKXReadOnlyTests(unittest.TestCase):
             self.assertIsNone(account['initial_capital'])
             self.assertFalse(account['baseline_configured'])
             self.assertEqual(dashboard.CACHE_DATA['snapshots'], [])
+
+    def test_five_positions_share_one_algo_read_and_failure_is_unknown_not_unprotected(self):
+        names = ['BTC','ETH','SOL','DOGE','SUI']
+        positions = [{'instId': n+'-USDT-SWAP', 'pos':'4','posSide':'long','avgPx':'100','markPx':'102','lever':'3','upl':'8','uplRatio':'.02'} for n in names]
+        algos = [{'instId': n+'-USDT-SWAP', 'algoId':str(i), 'state':'live','posSide':'long','side':'sell','reduceOnly':'true','sz':'4','tpTriggerPx':'110','slTriggerPx':'95'} for i,n in enumerate(names)]
+        baseline = {'initial_capital': 10000, 'reset_time':'1970-01-01 00:00:00', 'baseline_configured':False}
+        for failed in (False, True):
+            calls=[]
+            def read(resource, env, inst_id=''):
+                calls.append((resource,inst_id))
+                if resource=='positions': return True, positions, ''
+                if resource=='balance': return True,[{'totalEq':'1000','details':[{'ccy':'USDT','eq':'1000','availBal':'900'}]}],''
+                if resource=='algos': return (False,None,'rate_limited') if failed else (True,algos,'')
+                return True,[],''
+            with patch.object(dashboard,'CACHE_DATA',{}), patch('scripts.okx_runtime.selected_environment',return_value=self.demo), patch.object(dashboard,'read_account_resource',side_effect=read), patch.object(dashboard,'load_position_trackers',return_value={}), patch('r20_backend.account_baseline.load_account_baseline',return_value=baseline), patch.object(dashboard,'persist_dashboard_cache'):
+                dashboard.update_cache_cycle()
+                result=dashboard.CACHE_DATA['positions_summary']['items']
+                self.assertEqual(len(result),5)
+                self.assertEqual([c for c in calls if c[0]=='algos'], [('algos','')])
+                if failed:
+                    self.assertTrue(all(p['protectionStatus'] in ('unknown_stale','verification_stale') for p in result))
+                else:
+                    self.assertTrue(all(p['protectionStatus']=='fully_protected' for p in result))
 
     def test_failed_demo_does_not_reuse_live_or_other_account_cache(self):
         for identity in ('okx:live:other', 'okx:demo:other', None):

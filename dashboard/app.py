@@ -74,7 +74,7 @@ def run_json_cmd_status(cmd):
 
 
 def read_account_resource(resource, environment, inst_id=""):
-    if environment.configured:
+    if environment.configured or resource == "algos":
         from r20_backend.okx_read_service import read_private_resource
         try:
             return True, read_private_resource(resource, environment, inst_id), ""
@@ -85,7 +85,6 @@ def read_account_resource(resource, environment, inst_id=""):
         "positions": "okx account positions --json",
         "orders": "okx swap orders --json",
         "bills": "okx account bills --limit 100 --json",
-        "algos": f"okx swap algo orders --instId {inst_id} --json",
     }
     return run_json_cmd_status(okx_private_command(commands[resource]))
 
@@ -690,22 +689,21 @@ def _update_cache_cycle():
         LAST_CACHE_TIME = time.time()
         return
 
-    # Parallel Phase 2: Exchange algo orders for live TP/SL protection
+    # One complete account snapshot per refresh; never N positions x 2 request types.
     if positions:
-        with ThreadPoolExecutor(max_workers=min(len(positions), 6)) as pool:
-            futures = {
-                pos["instId"]: pool.submit(
-                    read_account_resource, "algos", environment, pos["instId"]
-                )
-                for pos in positions
-            }
-            algo_results = {inst_id: f.result() for inst_id, f in futures.items()}
+        algo_ok, account_algos, algo_error = read_account_resource("algos", environment)
+        if not algo_ok:
+            source_errors.append(f"algo verification unknown: {algo_error}")
+        algo_results = {p["instId"]: (algo_ok, [o for o in (account_algos or []) if o.get("instId") == p["instId"]], algo_error) for p in positions}
 
         for position in positions:
             algo_ok, algo_orders, algo_error = algo_results.get(position["instId"], (False, [], "timeout"))
             if not algo_ok:
-                source_errors.append(f"algo {position['instId']}: {algo_error}")
-                algo_orders = []
+                position.update({"exchangeSl": None, "exchangeTp": None,
+                                 "protectionStatus": "unknown_stale", "protectionCoveragePct": 0.0,
+                                 "protectionAlgoId": ""})
+                continue  # Unknown is not a confirmed absence of protection.
+
             matching_algos = [
                 o for o in (algo_orders or [])
                 if str(o.get("state", "live")).lower() in {"live", "effective"}

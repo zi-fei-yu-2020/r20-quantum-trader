@@ -311,16 +311,14 @@ class AiFactorTraderPositionProtectionTest(unittest.TestCase):
         self.assertFalse(closed); self.assertEqual(reason,"持仓监控中"); close.assert_not_called()
 
     def test_cloud_oco_gap_is_repaired_and_verified(self):
-        responses=[
-            {"ok":True,"data":[],"stderr":"","stdout":"[]"},
-            {"ok":True,"data":{"algoId":"88"},"stderr":"","stdout":"{}"},
-            {"ok":True,"data":[{"state":"live","posSide":"long","side":"sell","reduceOnly":"true","sz":"4","tpTriggerPx":"106","slTriggerPx":"101"}],"stderr":"","stdout":"[]"},
-        ]
-        with patch.object(ai_factor_trader,"run_cmd_result",side_effect=responses) as run, patch.object(ai_factor_trader.time,"sleep"):
+        covered = [{"algoId":"88","instId":"SOL-USDT-SWAP","state":"live","posSide":"long","side":"sell","reduceOnly":"true","sz":"4","tpTriggerPx":"106","slTriggerPx":"101"}]
+        with patch.object(ai_factor_trader.algo_reader,"read_algo_orders",side_effect=[[],covered]) as read, patch.object(ai_factor_trader,"run_cmd_result",return_value={"ok":True,"data":{"algoId":"88"},"stderr":"","stdout":"{}"}) as run, patch.object(ai_factor_trader.time,"sleep"):
             ok,detail=ai_factor_trader.ensure_cloud_position_protection("SOL-USDT-SWAP","long",4,106,101)
         self.assertTrue(ok); self.assertIn("repaired and verified",detail)
-        self.assertIn("--ordType oco",run.call_args_list[1].args[0])
-        self.assertIn("--reduceOnly",run.call_args_list[1].args[0])
+        run.assert_called_once()
+        self.assertIn("--ordType oco",run.call_args.args[0])
+        self.assertIn("--reduceOnly",run.call_args.args[0])
+        self.assertTrue(read.call_args.kwargs["force"])
 
     def test_stale_order_query_failure_aborts_cleanup(self):
         with patch.object(ai_factor_trader,"run_cmd_result",return_value={"ok":False,"data":None,"stderr":"timeout","stdout":""}):
@@ -342,11 +340,11 @@ class AiFactorTraderPositionProtectionTest(unittest.TestCase):
         actions=[]
         with patch.object(ai_factor_trader,"ensure_cloud_position_protection",return_value=(False,"repair failed")), patch.object(ai_factor_trader,"close_position_confirmed",return_value=(True,"closed")) as close, patch.object(ai_factor_trader,"record_trade"), patch.object(ai_factor_trader,"add_stop_cooldown"), patch.object(ai_factor_trader,"notify_trade_close") as notify_close:
             closed,reason=ai_factor_trader.manage_position_tp_and_trailing(self._factor(102.5),position,trackers,"2026-09-02 15:00:00",actions)
-        self.assertTrue(closed); self.assertEqual(reason,"保护失效安全退出")
+        self.assertTrue(closed); self.assertEqual(reason,"保护核验安全退出")
         close.assert_called_once_with("SOL-USDT-SWAP","long",4.0)
         self.assertNotIn("SOL-USDT-SWAP_long",trackers)
         if notify_close is not None:
-            notify_close.assert_called_once_with(inst="SOL", pnl=-4.0, stage="云端保护失效退出", exit_px=102.5)
+            notify_close.assert_called_once_with(inst="SOL", pnl=-4.0, stage="云端保护核验未知退出", exit_px=102.5)
 
 
 if __name__ == "__main__":
