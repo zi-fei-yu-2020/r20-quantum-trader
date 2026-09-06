@@ -257,6 +257,8 @@ def calculate_probability_theory(
         "skewness": round(skewness_bounded, 2),
         "kurtosis": round(kurtosis_bounded, 2),
         "continuation_prob_pct": round(continuation_prob, 1),
+        "probability_calibrated": False,
+        "probability_semantics": "heuristic_direction_score_not_empirical_win_rate",
         "breakdown_prob_pct": round(breakdown_prob, 1),
         "var_95_pct": round(var_95_raw * 100.0, 2),
         "cvar_95_pct": round(cvar_95_raw * 100.0, 2),

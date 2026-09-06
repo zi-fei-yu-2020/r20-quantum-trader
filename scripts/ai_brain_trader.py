@@ -5,6 +5,14 @@ Batch ingests six crypto perpetuals into one macro-context LLM call.
 Maintains a validated live decision cache and durable Web audit history.
 """
 
+# Standalone scheduler children must not depend on an inherited PYTHONPATH.
+import sys as _sys
+from pathlib import Path as _Path
+_project_root = str(_Path(__file__).resolve().parents[1])
+if _project_root not in _sys.path:
+    _sys.path.insert(0, _project_root)
+
+
 import os
 from okx_runtime import replace_cli_prefix as okx_private_command
 import sys
@@ -15,6 +23,7 @@ import urllib.request
 import public_market as market
 import instrument_support as support
 import algo_reader
+from scripts import trade_lock, strategy_evidence
 import subprocess
 import tempfile
 from typing import Dict, Any, List, Optional, Tuple
@@ -149,6 +158,7 @@ def fetch_single_instrument_package(item: Dict[str, Any]) -> Dict[str, Any]:
     headers = {"User-Agent": "Mozilla/5.0"}
 
     pkg = {
+        "data_as_of": market.signal_as_of(),
         "instId": inst_id,
         "name": name,
         "type": item["type"],
@@ -198,7 +208,7 @@ def fetch_single_instrument_package(item: Dict[str, Any]) -> Dict[str, Any]:
 
     # 2. 15M Candles (recent 24, about 6 hours) & Technical Indicators Calculation
     try:
-        d = market.get_json(f"https://www.okx.com/api/v5/market/candles?instId={inst_id}&bar=15m&limit=24")
+        d = market.signal_json(f"https://www.okx.com/api/v5/market/candles?instId={inst_id}&bar=15m&limit=24")
         if d.get("code") == "0" and d.get("data"):
             raw_candles = d["data"]
             pkg["recent_15m"] = [[float(c[1]), float(c[2]), float(c[3]), float(c[4]), round(float(c[5]), 1)] for c in raw_candles[:12]]
@@ -256,7 +266,7 @@ def fetch_single_instrument_package(item: Dict[str, Any]) -> Dict[str, Any]:
 
     # 3. 1H Candles (recent 24, about 24 hours) & 1H ATR / 1H RSI
     try:
-        d = market.get_json(f"https://www.okx.com/api/v5/market/candles?instId={inst_id}&bar=1H&limit=24")
+        d = market.signal_json(f"https://www.okx.com/api/v5/market/candles?instId={inst_id}&bar=1H&limit=24")
         if d.get("code") == "0" and d.get("data"):
             raw_1h = d["data"]
             pkg["recent_1h"] = [[float(c[1]), float(c[2]), float(c[3]), float(c[4]), round(float(c[5]), 1)] for c in raw_1h[:12]]
@@ -297,7 +307,7 @@ def fetch_single_instrument_package(item: Dict[str, Any]) -> Dict[str, Any]:
 
     # 4. 4H Candles (recent 16, about 64 hours) & 4H Macro Structure
     try:
-        d = market.get_json(f"https://www.okx.com/api/v5/market/candles?instId={inst_id}&bar=4H&limit=16")
+        d = market.signal_json(f"https://www.okx.com/api/v5/market/candles?instId={inst_id}&bar=4H&limit=16")
         if d.get("code") == "0" and d.get("data"):
             raw_4h = d["data"]
             pkg["recent_4h"] = [[float(c[1]), float(c[2]), float(c[3]), float(c[4]), round(float(c[5]), 1)] for c in raw_4h[:8]]
@@ -351,7 +361,7 @@ def fetch_single_instrument_package(item: Dict[str, Any]) -> Dict[str, Any]:
 
         # 6. OKX ADX Trend Strength Indicator (1H)
         try:
-            indicators = market.available_indicators(inst_id)
+            indicators = market.signal_indicators(inst_id)
             pkg["adx_1h"] = float(indicators["ADX"][0]["values"].get("adx", 0.0) or 0.0)
         except Exception:
             pass
@@ -386,7 +396,7 @@ SYSTEM_PROMPT = """你是 R20 Quantum Trader 的首席 AI 交易官，负责 1H~
 3. 强化开单欲望与主动捕捉能力：
    - 严禁机械化死板地输出 WAIT！市场永远在波动，多头与空头每天都充满波段机会。
    - 拒绝“完美主义洁癖”：只要 4H/1H 趋势结构清晰，或处于明确的箱体波动区间，必须主动寻找进场点，果断给出 BUY_LONG 或 SELL_SHORT 限价决策；
-   - 置信度自信标定：只要符合四大高胜率形态之一，果断评定在 **78% ~ 88%** 区间，确保通过执行层 75% 门禁，积极开单为账户赚取 Alpha！
+   - 允许全部 WAIT；置信度只是未校准评分，不得为了通过门禁虚报高分。证据不足时明确弃权。
 
 【决策优先级：高层级永远覆盖低层级】
 P0 不可覆盖硬约束：数据有效性、交易执行层 Fail-Closed、4H 方向否决、真实价格几何、R:R、杠杆/保证金/持仓上限、云端 OCO、禁止逆势补仓及 JSON 契约。
@@ -430,8 +440,8 @@ P3 执行定位：15M K线、盘口与 Maker 限价挂单位置。P3 优化入�
    ③ 假跌破流动性掠夺后迅速收回（Liquidity Sweep & Reclaim / 诱空收网做多）；
    ④ 假突破流动性衰竭后迅速跌回（Liquidity Sweep & Fail / 诱多受挫做空）。
 3. 自信开单打分契约：
-   - 处于空仓且存在至少一个合法顺势候选时，必须在候选标的中选优输出开仓，绝不允许全体无故 WAIT！
-   - 只要形态达标且风险收益比 R:R ≥ 2.0，置信度果断给出 **78% ~ 88%**，通过 75% 门禁进场盈利！
+   - 允许全部 WAIT；置信度只是未校准评分，不得为了通过门禁虚报高分。证据不足时明确弃权。
+   - 允许全部 WAIT；置信度只是未校准评分，不得为了通过门禁虚报高分。证据不足时明确弃权。
 
 
 
@@ -448,6 +458,9 @@ P3 执行定位：15M K线、盘口与 Maker 限价挂单位置。P3 优化入�
    - “减速”不是永久禁令：在 4H/1H 顺势浪中，普通回抽优先作为限价入场定位。当 15M/1H 触及 VWAP、EMA20 或支撑颈线企稳、a 开始转正，必须果断进场。
 3. 15M 执行过滤：用于寻找精准回踩低吸点、盘口挂单位置与流动性假跌破回收确认；单根 15M K线不得单独逆大势反转，但在支撑阻力位出现吸收长下影/上影线时，是进场的极佳触发扳机。
 
+【评分语义】
+continuation_prob_pct / breakdown_prob_pct 是启发式方向评分，不是已验证胜率。不得把评分直接代入胜率期望值；仓位与净风险预算由确定性执行层控制。
+
 【开仓与价格几何】
 - 四大王牌高胜率入场形态：
   ① 顺势回踩均线/VWAP 缩量企稳（Pullback to Value）：4H 顺势主浪中，15M 缩量回踩 VWAP 或前高颈线支撑企稳，做多胜率极高；
@@ -455,7 +468,7 @@ P3 执行定位：15M K线、盘口与 Maker 限价挂单位置。P3 优化入�
   ③ 动力学与能量底/顶背离（Kinetic Divergence）：价格创微小新低/新高，但微积分速度 v 明显萎缩、加速度 a 提前转向，胜率极高；
   ④ 箱体边界极值超伸回归（Range Extremes Fade）：在宽幅震荡区间，价格触碰箱体外轨且偏离面积积分 A 达到极限，RSI 出现超买/超卖反转。
 - 置信度理性标定（破除自贬犹疑，自信开单）：
-  - 只要满足上述高胜率形态之一，且风险收益比与结构合法，置信度应果断评定在 82% ~ 90% 区间，确保顺利通过执行层 80% 质检门禁；
+   - 允许全部 WAIT；置信度只是未校准评分，不得为了通过门禁虚报高分。证据不足时明确弃权。
   - 仅在既无明确支撑阻力也无箱体边缘、价格悬在半空中的混沌期，才标定 50%~65% 并输出 WAIT；坚决杜绝在形态优良时无端打低分！
 - 顺势铁律（Fail-Closed）：4H_MACRO_BULL 大级别多头通道下 100% 严禁输出 SELL_SHORT 逆势摸顶；4H_MACRO_BEAR 大级别空头承压下 100% 严禁输出 BUY_LONG 逆势抄底！
 - 震荡过滤：箱体正中间无序乱跳时一律强制 WAIT，严禁追涨杀跌磨损手续费。
@@ -783,6 +796,7 @@ def execute_batch_ai_brain_cycle(pos_summary: str = "当前总持仓 0/6", activ
     now_bj = datetime.datetime.now(tz_bj)
     time_str = now_bj.strftime("%Y-%m-%d %H:%M:%S")
 
+    market.begin_signal_frame()
     eligible, availability = support.trading_universe(TARGET_INSTRUMENTS, active_positions_detail, market._selected().mode)
     if not eligible:
         LAST_INFERENCE_ERROR = "当前环境无已核验可交易标的，仅保留行情观察"
@@ -1018,6 +1032,10 @@ def execute_batch_ai_brain_cycle(pos_summary: str = "当前总持仓 0/6", activ
 
         # Execute Pending Orders Cancellation if AI Brain decides CANCEL
         pending_mgmt_list = brain_output.get("pending_orders_management", [])
+        strategy_evidence.best_effort(market._selected().identity, 'management_decision', {
+            'model': model_name, 'features_as_of': market.signal_as_of(), 'generated_at': time.time(),
+            'position_management': pos_mgmt_list, 'pending_management': pending_mgmt_list})
+        known_pending = {(str(o.get('instId')), str(o.get('ordId'))) for o in pending_orders_list if isinstance(o, dict)}
         if isinstance(pending_mgmt_list, list):
             for p_order in pending_mgmt_list:
                 if not isinstance(p_order, dict):
@@ -1026,11 +1044,16 @@ def execute_batch_ai_brain_cycle(pos_summary: str = "当前总持仓 0/6", activ
                 p_ord_id = str(p_order.get("ordId", ""))
                 p_inst_id = str(p_order.get("instId", ""))
                 p_reason = str(p_order.get("reason", "模型指示撤销该挂单"))
-                if p_act == "CANCEL" and p_ord_id and p_inst_id:
+                import re
+                if (p_act == "CANCEL" and (p_inst_id, p_ord_id) in known_pending
+                        and re.fullmatch(r'[A-Z0-9]+-USDT-SWAP', p_inst_id)
+                        and re.fullmatch(r'[0-9]{1,32}', p_ord_id)):
                     cxl_cmd = okx_private_command(f"okx swap cancel {p_inst_id} --ordId {p_ord_id} --json")
-                    with algo_reader.command_barrier(cxl_cmd, market._selected()):
+                    with trade_lock.writer(), algo_reader.command_barrier(cxl_cmd, market._selected()):
                         cxl_res = subprocess.run(cxl_cmd, shell=True, capture_output=True, text=True, timeout=10)
-                    print(f"[AI Brain Batch] 🛑 AI自主撤回失效/过时限价单: {p_inst_id} (ordId={p_ord_id}, 原因={p_reason})")
+                    strategy_evidence.best_effort(market._selected().identity, 'cancel_submission',
+                        {'instrument': p_inst_id, 'order_id': p_ord_id, 'transport_ok': cxl_res.returncode == 0})
+                    print(f"[AI Brain Batch] 撤单已提交，待订单状态对账: {p_inst_id} (ordId={p_ord_id}, CLI状态={cxl_res.returncode})")
 
         standard_cache = {}
         for p in packages:
@@ -1062,6 +1085,8 @@ def execute_batch_ai_brain_cycle(pos_summary: str = "当前总持仓 0/6", activ
                 "instId": inst_id,
                 "name": p["name"],
                 "timestamp": int(time.time()),
+                "data_as_of": p.get("data_as_of", market.signal_as_of()),
+                "position_basis": {"side": active_position_sides.get(inst_id), "size": next((abs(safe_float(x.get("pos", x.get("size", 0)))) for x in (active_positions_detail or []) if x.get("instId") == inst_id), 0.0)},
                 "time_str": time_str,
                 "macro_assessment": macro_summary,
                 "thought_process": {
@@ -1097,6 +1122,9 @@ def execute_batch_ai_brain_cycle(pos_summary: str = "当前总持仓 0/6", activ
                 "raw_ls_ratio": str(p.get('lsRatio')) if p.get('lsRatio') is not None else "--"
             }
 
+        import hashlib
+        strategy_evidence.record_decisions(market._selected().identity, standard_cache, packages, model_name,
+            hashlib.sha256(effective_system_prompt.encode()).hexdigest(), time.time())
         atomic_write_json(AI_DECISION_CACHE_FILE, standard_cache)
         atomic_write_json(AI_POSITION_MANAGEMENT_FILE, {
             "timestamp": int(time.time()),

@@ -28,6 +28,8 @@ class JobSpec:
 
 
 JOBS = (
+    JobSpec("position_guard", "position_guard.py", 60, 240),
+    JobSpec("evidence_sync", "evidence_sync.py", 300, 60),
     JobSpec("trader", "ai_factor_trader.py", 15 * 60, 840),
     JobSpec("factor_library", "factor_library.py", 60, 55),
     JobSpec("news", "news_sentiment_harvester.py", 10 * 60, 300),
@@ -77,6 +79,7 @@ class GatewayScheduler:
     def __init__(self, store: GatewayStore, max_workers: int = 3):
         self.store = store
         self.executor = ThreadPoolExecutor(max_workers=max_workers, thread_name_prefix="r20-job")
+        self.guard_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="r20-position-guard")
         self.running: dict[str, Future[None]] = {}
 
     def _last_at(self, name: str) -> datetime | None:
@@ -144,7 +147,7 @@ class GatewayScheduler:
             if spec.name in self.running or not self.due(spec, now, schedule):
                 continue
             self.store.set_state(f"job.last.{spec.name}", now.isoformat())
-            self.running[spec.name] = self.executor.submit(self._execute, spec)
+            self.running[spec.name] = (self.guard_executor if spec.name == "position_guard" else self.executor).submit(self._execute, spec)
             launched.append(spec.name)
         return launched
 
@@ -166,4 +169,5 @@ class GatewayScheduler:
         return {"jobs": result, "recent_runs": self.store.job_runs(30)}
 
     def shutdown(self) -> None:
+        self.guard_executor.shutdown(wait=False, cancel_futures=False)
         self.executor.shutdown(wait=False, cancel_futures=False)

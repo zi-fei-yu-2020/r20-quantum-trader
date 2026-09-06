@@ -103,7 +103,7 @@ class InstrumentSupportTests(unittest.TestCase):
             write.assert_not_called(); ticker.assert_not_called()
 
     def test_supported_order_keeps_existing_protected_order_payload(self):
-        with patch.object(trader.market, '_selected', return_value=SimpleNamespace(mode='live', simulated=False)), patch.object(trader.support, 'opening_status', return_value={'can_open': True}), patch.object(trader, 'okx_private_command', side_effect=lambda x:x), patch.object(trader, 'run_cmd_result', return_value={'ok': True, 'data': [{'ordId': '123'}]}) as write:
+        with patch.object(trader.market, '_selected', return_value=SimpleNamespace(mode='live', simulated=False, identity='test-live')), patch.object(trader.entry_gateway, 'prepare', return_value=({'size': 1}, 'r20test')), patch.object(trader.support, 'opening_status', return_value={'can_open': True}), patch.object(trader, 'okx_private_command', side_effect=lambda x:x), patch.object(trader, 'run_cmd_result', return_value={'ok': True, 'data': [{'ordId': '123'}]}) as write:
             self.assertEqual(trader.submit_protected_limit_order('BTC-USDT-SWAP', 'buy', 'long', 1, 100, 120, 90), (True, '123'))
         command = write.call_args.args[0]
         for part in ('--ordType limit', '--tpTriggerPx 120', '--slTriggerPx 90', '--sz 1'):

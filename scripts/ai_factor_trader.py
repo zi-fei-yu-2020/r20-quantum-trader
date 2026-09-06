@@ -19,16 +19,26 @@ Architecture:
 4. Dynamic Adaptive Position Sizing, Volatility-Trailing Exits & Cooldown Protection.
 """
 
+# Standalone scheduler children must not depend on an inherited PYTHONPATH.
+import sys as _sys
+from pathlib import Path as _Path
+_project_root = str(_Path(__file__).resolve().parents[1])
+if _project_root not in _sys.path:
+    _sys.path.insert(0, _project_root)
+
+
 import os
 from okx_runtime import freeze_environment as freeze_okx_environment, replace_cli_prefix as okx_private_command, unfreeze_environment as unfreeze_okx_environment, selected_environment
 import json
 import time
 import datetime
+import math
 import subprocess
 import urllib.request
 import public_market as market
 import instrument_support as support
 import algo_reader
+from scripts import trade_lock, risk_policy, entry_gateway, strategy_evidence
 import fcntl
 from typing import Tuple, Dict, Any, List, Optional
 from concurrent.futures import ThreadPoolExecutor
@@ -102,6 +112,7 @@ ASSET_CLASS_PROFILES = {
 
 MAX_CONCURRENT_POSITIONS = len(TARGET_INSTRUMENTS)
 MAX_SAME_DIRECTION_POSITIONS = 6
+LAST_ENTRY_PLAN = {}
 TAKER_FEE_RATE = 0.0005
 MAKER_FEE_RATE = 0.0002 # Limit Order Maker Fee (60% Lower Than Market Taker)
 MAX_DAILY_LOSS_USDT = 150.0
@@ -183,6 +194,11 @@ def fetch_candles_direct(inst_id: str, bar: str = "15m", limit: int = 45):
     except Exception:
         return []
 
+def fetch_signal_candles(inst_id, bar, limit):
+    try: return market.signal_candles(inst_id, bar, limit)
+    except Exception: return []
+
+
 def load_trackers():
     if os.path.exists(POSITION_TRACKER_FILE):
         try:
@@ -193,11 +209,16 @@ def load_trackers():
     return {}
 
 def save_trackers(trackers):
+    import tempfile
+    fd, temporary = tempfile.mkstemp(prefix='.position-trackers-',suffix='.tmp',dir=DATA_DIR)
     try:
-        with open(POSITION_TRACKER_FILE, "w", encoding="utf-8") as f:
-            json.dump(trackers, f, ensure_ascii=False, indent=2)
-    except Exception:
-        pass
+        with os.fdopen(fd,'w',encoding='utf-8') as handle:
+            json.dump(trackers,handle,ensure_ascii=False,indent=2,allow_nan=False)
+            handle.flush();os.fsync(handle.fileno())
+        os.replace(temporary,POSITION_TRACKER_FILE)
+    finally:
+        if os.path.exists(temporary):os.unlink(temporary)
+
 
 def load_stop_cooldowns():
     if os.path.exists(STOP_COOLDOWN_FILE):
@@ -392,7 +413,8 @@ def prune_trackers(trackers: Dict[str, Any], real_pos_dict: Dict[str, Any]) -> i
     return removed
 
 
-def submit_protected_limit_order(inst_id: str, side: str, pos_side: str, size: int, price: float, tp_px: float, sl_px: float) -> Tuple[bool, str]:
+@trade_lock.serialized
+def submit_protected_limit_order(inst_id: str, side: str, pos_side: str, size: float, price: float, tp_px: float, sl_px: float, *, risk_budget_usdt=15, decision_id=None, decision_at=None) -> Tuple[bool, str]:
     """Submit a protected limit order; acceptance is not treated as a fill."""
     # Check if we are running in simulated/demo mode and price diverged significantly from demo orderbook
     env = market._selected()
@@ -431,14 +453,24 @@ def submit_protected_limit_order(inst_id: str, side: str, pos_side: str, size: i
         except Exception:
             pass
 
+    try:
+        plan, client_id = entry_gateway.prepare(market._selected(), inst_id=inst_id, side=pos_side,
+            entry=effective_px, stop=effective_sl, take_profit=effective_tp, requested_size=size,
+            budget=risk_budget_usdt, decision_id=decision_id, decision_at=decision_at)
+    except Exception as exc:
+        return False, f"Final risk preflight rejected: {type(exc).__name__}: {exc}"
+    LAST_ENTRY_PLAN.clear(); LAST_ENTRY_PLAN.update(plan)
+    size = plan['size']
     command = okx_private_command(
-        f"okx swap place --instId {inst_id} --tdMode cross --side {side} "
+        f"okx swap place --instId {inst_id} --tdMode cross --side {side} --clOrdId {client_id} "
         f"--posSide {pos_side} --ordType limit --px {effective_px} --sz {size} "
         f"--tpTriggerPx {effective_tp} --tpOrdPx=-1 --slTriggerPx {effective_sl} --slOrdPx=-1 --json"
     )
     result = run_cmd_result(command, timeout=20)
+    strategy_evidence.best_effort(market._selected().identity, 'entry_submission',
+        {'client_id': client_id, 'plan': plan, 'transport_ok': result['ok'], 'response': result.get('data')})
     if not result["ok"]:
-        return False, result["stderr"] or result["stdout"] or "order command failed"
+        return False, "Entry outcome unknown; durable reservation retained for read-only reconciliation"
     payload = result.get("data")
     order_id = None
     if isinstance(payload, dict):
@@ -452,12 +484,14 @@ def submit_protected_limit_order(inst_id: str, side: str, pos_side: str, size: i
         order_id = payload[0].get("ordId")
     if not order_id:
         return False, "exchange accepted response without a verifiable order id"
+    strategy_evidence.finish_intent(client_id, 'acknowledged', {'order_id': str(order_id), 'size': size})
     return True, str(order_id)
 
 
 def _float_or_zero(value: Any) -> float:
     try:
-        return abs(float(value or 0.0))
+        parsed = abs(float(value or 0.0))
+        return parsed if math.isfinite(parsed) else 0.0
     except (TypeError, ValueError):
         return 0.0
 
@@ -754,7 +788,7 @@ def fetch_single_instrument_data(item, all_positions, usdt_available):
                 break
 
     # 1. Fetch 15M Candles
-    raw_15m = fetch_candles_direct(inst_id, "15m", 45)
+    raw_15m = fetch_signal_candles(inst_id, "15m", 45)
     if raw_15m:
         candles_15m = list(reversed(raw_15m))
         closes = [float(c[4]) for c in candles_15m]
@@ -800,15 +834,19 @@ def fetch_single_instrument_data(item, all_positions, usdt_available):
         # Latest 15M Candle Geometry
         last_c = candles_15m[-1]
         c_open, c_high, c_low, c_close = float(last_c[1]), float(last_c[2]), float(last_c[3]), float(last_c[4])
-        f["bidPx"] = f["price"]
-        f["askPx"] = f["price"]
+        f["signal_close"] = f["price"]
+        f["bidPx"] = 0.0
+        f["askPx"] = 0.0
+        f["quote_as_of_ms"] = 0
         # Fetch Real-time Orderbook Ticker BBO (Best Bid & Ask) for Precision Limit Placement
         try:
             d_t = market.get_json(f"https://www.okx.com/api/v5/market/ticker?instId={inst_id}")
             if d_t.get("code") == "0" and "data" in d_t and len(d_t["data"]) > 0:
                 t_item = d_t["data"][0]
-                f["bidPx"] = float(t_item.get("bidPx", f["price"]) or f["price"])
-                f["askPx"] = float(t_item.get("askPx", f["price"]) or f["price"])
+                f["quote_as_of_ms"] = int(t_item.get("ts") or 0)
+                f["price"] = float(t_item.get("last") or 0)
+                f["bidPx"] = float(t_item.get("bidPx") or 0)
+                f["askPx"] = float(t_item.get("askPx") or 0)
         except Exception:
             pass
 
@@ -826,7 +864,7 @@ def fetch_single_instrument_data(item, all_positions, usdt_available):
         f["vol_ratio"] = round(f["vol_15m"] / f["vol_ma20"], 2) if f["vol_ma20"] > 0 else 1.0
 
     # 2. Fetch 1H & 4H Trend Confluence
-    raw_1h = fetch_candles_direct(inst_id, "1H", 35)
+    raw_1h = fetch_signal_candles(inst_id, "1H", 35)
     if raw_1h:
         c_1h = list(reversed(raw_1h))
         closes_1h = [float(c[4]) for c in c_1h]
@@ -858,7 +896,7 @@ def fetch_single_instrument_data(item, all_positions, usdt_available):
         else:
             f["structure_1h"] = "CHOP"
     
-    raw_4h = fetch_candles_direct(inst_id, "4H", 25)
+    raw_4h = fetch_signal_candles(inst_id, "4H", 25)
     if raw_4h:
         c_4h = list(reversed(raw_4h))
         closes_4h = [float(c[4]) for c in c_4h]
@@ -922,6 +960,7 @@ def fetch_single_instrument_data(item, all_positions, usdt_available):
         and len(raw_4h) >= 20
         and f["price"] > 0
         and f["atr"] > 0
+        and 0 <= time.time()*1000 - f.get("quote_as_of_ms", 0) <= 15000
         and f.get("bidPx", 0) > 0
         and f.get("askPx", 0) >= f.get("bidPx", 0)
     )
@@ -954,6 +993,19 @@ def manage_position_tp_and_trailing(f, curr_pos, trackers, timestamp_full, execu
 
     now_ts = int(time.time())
     if pos_key not in trackers:
+        # Do not invent a new initial stop from current ATR for an already-held trade.
+        try:
+            rows = algo_reader.orders_for_instrument(algo_reader.read_algo_orders(market._selected(), priority='risk'), inst_id)
+            side_name = 'long' if is_long else 'short'
+            rows = [o for o in rows if _live_oco_coverage([o], side_name) > 0]
+            if _live_oco_coverage(rows, side_name) < pos_sz * .999:
+                raise ValueError('No authoritative full-position initial protection')
+            adopted_stop = (min if is_long else max)(float(o['slTriggerPx']) for o in rows)
+            adopted_tp = float(rows[0]['tpTriggerPx'])
+        except Exception:
+            closed, detail = close_position_confirmed(inst_id, 'long' if is_long else 'short', pos_sz)
+            executed_actions.append(f"[{name}] 新发现持仓缺少可确认的原始保护，安全退出确认={closed}")
+            return closed, '初始保护核验未知'
         score, action, reasons, strat_tag, strat_desc = evaluate_asset_signal(f)
         trackers[pos_key] = {
             "instId": inst_id,
@@ -967,8 +1019,9 @@ def manage_position_tp_and_trailing(f, curr_pos, trackers, timestamp_full, execu
             "currentSz": pos_sz,
             "highWaterMark": cur_px,
             "lowWaterMark": cur_px,
-            "trailingStopPx": round((entry_px - atr * profile["sl_atr_mult"]) if is_long else (entry_px + atr * profile["sl_atr_mult"]), prec),
-            "takeProfitPx": round((entry_px + max(atr * profile["tp_atr_mult"], entry_px * profile["min_profit_ratio"])) if is_long else (entry_px - max(atr * profile["tp_atr_mult"], entry_px * profile["min_profit_ratio"])), prec),
+            "trailingStopPx": adopted_stop,
+            "exchangeStopPx": adopted_stop,
+            "takeProfitPx": adopted_tp,
             "stage_desc": "持有监控中"
         }
 
@@ -1100,7 +1153,8 @@ def manage_position_tp_and_trailing(f, curr_pos, trackers, timestamp_full, execu
         elif peak_profit_px >= tier1_breakeven_trigger:
             dynamic_floor_sl = max(dynamic_floor_sl, entry_px + 0.0020 * entry_px)
             t["stage_desc"] = f"已推保本无风险 (保底止损 {dynamic_floor_sl})"
-        t["trailingStopPx"] = dynamic_floor_sl
+        t["localTrailingStopPx"] = dynamic_floor_sl
+        t["trailingStopPx"] = dynamic_floor_sl  # local fail-safe; cloud confirmation is separate
 
         # A. Hit Ratchet Floor Stop (Locked Profit Trigger)
         if cur_px <= dynamic_floor_sl and peak_profit_px >= tier1_breakeven_trigger:
@@ -1171,7 +1225,8 @@ def manage_position_tp_and_trailing(f, curr_pos, trackers, timestamp_full, execu
         elif peak_profit_px >= tier1_breakeven_trigger:
             dynamic_floor_sl = min(dynamic_floor_sl, entry_px - 0.0020 * entry_px)
             t["stage_desc"] = f"已推保本无风险 (保底止损 {dynamic_floor_sl})"
-        t["trailingStopPx"] = dynamic_floor_sl
+        t["localTrailingStopPx"] = dynamic_floor_sl
+        t["trailingStopPx"] = dynamic_floor_sl  # local fail-safe; cloud confirmation is separate
 
         # A. Hit Ratchet Floor Stop (Locked Profit Trigger)
         if cur_px >= dynamic_floor_sl and peak_profit_px >= tier1_breakeven_trigger:
@@ -1306,19 +1361,30 @@ def execute_ai_position_management(real_pos_dict, trackers, timestamp_full, exec
             if not live_algo:
                 executed_actions.append(f"[{name}] 未找到真实云端止损单，无法更新")
                 continue
-            result = run_json_cmd(okx_private_command(f"okx swap algo amend --instId {inst_id} --algoId {live_algo['algoId']} --newSlTriggerPx {new_sl} --newSlOrdPx=-1 --json"))
-            if result is not None:
-                executed_actions.append(f"[{name}] 云端止损收紧至 {new_sl}: {reason}")
+            old_sl = float(live_algo['slTriggerPx'])
+            if not risk_policy.monotonic_stop(pos_side, old_sl, new_sl, current_px):
+                executed_actions.append(f"[{name}] 拒绝放宽或重复止损: 云端 {old_sl} → 建议 {new_sl}")
+                continue
+            result = run_cmd_result(okx_private_command(f"okx swap algo amend --instId {inst_id} --algoId {live_algo['algoId']} --newSlTriggerPx {new_sl} --newSlOrdPx=-1 --json"))
+            # An uncertain/rejected write is reconciled, never repeated.
+            try:
+                fresh = algo_reader.read_algo_orders(market._selected(), priority='risk', force=True, timeout=6)
+                confirmed = next((o for o in fresh if o.get('algoId') == live_algo['algoId']), None)
+                actual = float(confirmed.get('slTriggerPx') or 0) if confirmed else 0
+                verified = actual > 0 and ((new_sl <= actual < current_px) if pos_side == 'long' else (current_px < actual <= new_sl))
+            except Exception:
+                verified = False
+            strategy_evidence.best_effort(market._selected().identity, 'stop_amendment', {
+                'instrument': inst_id, 'algo_id': live_algo['algoId'], 'old_stop': old_sl,
+                'requested_stop': new_sl, 'verified': verified, 'transport_ok': result['ok']})
+            if verified:
+                executed_actions.append(f"[{name}] 云端止损已读回确认收紧至 {actual}: {reason}")
                 tracker = trackers.get(f"{inst_id}_{pos_side}")
                 if tracker:
-                    tracker["trailingStopPx"] = new_sl
-                try:
-                    from qq_notifier import notify_sl_updated
-                    notify_sl_updated(name, pos_side, float(live_algo.get("slTriggerPx", 0)), new_sl, reason)
-                except Exception:
-                    pass
+                    tracker['trailingStopPx'] = actual
+                    tracker['cloudProtection'] = {'verifiedAt': timestamp_full, 'detail': 'stop amendment read-back confirmed'}
             else:
-                executed_actions.append(f"[{name}] 云端止损更新失败，原保护单保持不变")
+                executed_actions.append(f"[{name}] 止损改单结果未知，未重复改单，未推进本地确认状态")
 
 # =============================================================================
 # 🧠 R20 Quantum Trader v6.8.1 Multi-Factor Scoring & Strategy Setup Classifier
@@ -1579,6 +1645,7 @@ def single_trader_cycle(func):
 # Master Portfolio Execution Loop
 # =============================================================================
 @single_trader_cycle
+@trade_lock.serialized
 def execute_portfolio():
     tz_bj = datetime.timezone(datetime.timedelta(hours=8))
     now_dt = datetime.datetime.now(tz_bj)
@@ -1659,6 +1726,7 @@ def execute_portfolio():
                 usdt_available = float(d.get("availBal", 0.0))
                 break
 
+    market.begin_signal_frame()
     # 2. Parallel fetch for the configured crypto universe
     with ThreadPoolExecutor(max_workers=len(TARGET_INSTRUMENTS)) as executor:
         all_factors = list(executor.map(lambda item: fetch_single_instrument_data(item, all_positions, usdt_available), TARGET_INSTRUMENTS))
@@ -1692,7 +1760,10 @@ def execute_portfolio():
                 tracker = trackers.get(f"{f['instId']}_{position.get('side', '')}", {})
                 position_payload["trailingStopPx"] = tracker.get("trailingStopPx")
                 active_pos_list.append(position_payload)
-            brain_cache = execute_batch_ai_brain_cycle(pos_desc, active_pos_list, usdt_available=usdt_available) or {}
+            with trade_lock.inference_window():
+                brain_cache = execute_batch_ai_brain_cycle(pos_desc, active_pos_list, usdt_available=usdt_available) or {}
+            # The independent guard may have changed positions while the model ran.
+            trackers = load_trackers()
             if brain_cache:
                 refreshed_ok, refreshed_positions, refreshed_error = query_positions()
                 if not refreshed_ok:
@@ -1702,6 +1773,12 @@ def execute_portfolio():
                         p.get("instId"): p for p in refreshed_positions
                         if float(p.get("pos", 0) or 0) > 0
                     }
+                    all_positions = refreshed_positions
+                    for item in all_factors:
+                        raw = refreshed_pos_dict.get(item['instId'])
+                        item['position'] = ({**raw, 'side': raw.get('posSide'), 'pos': float(raw['pos']),
+                                             'avgPx': float(raw.get('avgPx') or 0), 'upl': float(raw.get('upl') or 0),
+                                             'uplRatio': float(raw.get('uplRatio') or 0)} if raw else None)
                     execute_ai_position_management(refreshed_pos_dict, trackers, timestamp_full, executed_actions)
                     save_trackers(trackers)
             else:
@@ -1738,7 +1815,7 @@ def execute_portfolio():
             sl_dist = atr * sl_mult
 
             # Gate 1: LLM AI Brain Full Execution Authority
-            # When AI Brain is active, AI Brain is the SOLE decider for action, leverage, margin, and TP/SL.
+            # The model proposes direction/geometry. Final price, quantity, account risk and exchange leverage are revalidated by entry_gateway.
             ai_info = brain_cache.get(inst_id) if isinstance(brain_cache, dict) else None
             if not ai_info or "decision" not in ai_info:
                 print(f"[AI Brain 全权拦截] {f['name']} 本轮无有效新鲜 AI 决策，禁止开仓")
@@ -1765,7 +1842,7 @@ def execute_portfolio():
                 strat_desc = f"AI大脑判定当前无高确定性机会({ai_reason})"
                 continue
 
-            # Dynamic Equal-Risk Position Size with AI Custom Margin Allocation
+            # Requested quantity only; final quantity is floored by the deterministic risk gateway.
             actual_sz = f["sz"]
             ai_margin = float(ai_decision.get("margin_usdt", 0.0) or 0.0)
             ai_lever = float(ai_decision.get("leverage", 3) or 3)
@@ -1848,13 +1925,14 @@ def execute_portfolio():
                     if tp_px <= limit_px:
                         tp_px = round(limit_px + max(tp_dist, f["price"] * 0.024), prec)
 
-                    accepted, order_ref = submit_protected_limit_order(inst_id, "buy", "long", actual_sz, limit_px, tp_px, sl_px)
+                    accepted, order_ref = submit_protected_limit_order(inst_id, "buy", "long", actual_sz, limit_px, tp_px, sl_px, risk_budget_usdt=f["risk_per_trade_usd"], decision_id=ai_info.get("decision_id"), decision_at=ai_info.get("data_as_of"))
                     if accepted:
+                        actual_sz = LAST_ENTRY_PLAN['size']
                         if is_scale_in:
                             tracker = trackers.get(f"{inst_id}_long", {})
                             tracker["scale_count"] = tracker.get("scale_count", 0) + 1
                             save_trackers(trackers)
-                            executed_actions.append(f"[{f['name']}] 🚀 AI顺势浮盈金字塔加多挂单已提交 {actual_sz}张@{limit_px} (order={order_ref}, TP={tp_px}, SL={sl_px})")
+                            executed_actions.append(f"[{f['name']}] 🚀 AI顺势浮盈金字塔加多挂单已提交（数量经最终风险预算裁剪）@{limit_px} (order={order_ref}, TP={tp_px}, SL={sl_px})")
                             if notify_trade_open:
                                 notify_trade_open(
                                     inst=f["name"],
@@ -1865,10 +1943,10 @@ def execute_portfolio():
                                     reason=str(ai_reason),
                                     tp_px=tp_px,
                                     sl_px=sl_px,
-                                    leverage=3,
+                                    leverage=LAST_ENTRY_PLAN.get("leverage", 3),
                                 )
                         else:
-                            executed_actions.append(f"[{f['name']}] AI限价多单已提交待成交 {actual_sz}张@{limit_px} (order={order_ref}, TP={tp_px}, SL={sl_px})")
+                            executed_actions.append(f"[{f['name']}] AI限价多单已提交待成交（数量经最终风险预算裁剪）@{limit_px} (order={order_ref}, TP={tp_px}, SL={sl_px})")
                             pending_inst_ids.add(inst_id)
                             reserved_slot_count += 1
                             reserved_long_count += 1
@@ -1882,7 +1960,7 @@ def execute_portfolio():
                                     reason=str(ai_reason),
                                     tp_px=tp_px,
                                     sl_px=sl_px,
-                                    leverage=3,
+                                    leverage=LAST_ENTRY_PLAN.get("leverage", 3),
                                 )
                     else:
                         executed_actions.append(f"[{f['name']}] AI限价多单提交失败: {order_ref}")
@@ -1946,13 +2024,14 @@ def execute_portfolio():
                     if tp_px >= limit_px:
                         tp_px = round(limit_px - max(tp_dist, f["price"] * 0.024), prec)
 
-                    accepted, order_ref = submit_protected_limit_order(inst_id, "sell", "short", actual_sz, limit_px, tp_px, sl_px)
+                    accepted, order_ref = submit_protected_limit_order(inst_id, "sell", "short", actual_sz, limit_px, tp_px, sl_px, risk_budget_usdt=f["risk_per_trade_usd"], decision_id=ai_info.get("decision_id"), decision_at=ai_info.get("data_as_of"))
                     if accepted:
+                        actual_sz = LAST_ENTRY_PLAN['size']
                         if is_scale_in:
                             tracker = trackers.get(f"{inst_id}_short", {})
                             tracker["scale_count"] = tracker.get("scale_count", 0) + 1
                             save_trackers(trackers)
-                            executed_actions.append(f"[{f['name']}] 🌪️ AI顺势浮盈金字塔加空挂单已提交 {actual_sz}张@{limit_px} (order={order_ref}, TP={tp_px}, SL={sl_px})")
+                            executed_actions.append(f"[{f['name']}] 🌪️ AI顺势浮盈金字塔加空挂单已提交（数量经最终风险预算裁剪）@{limit_px} (order={order_ref}, TP={tp_px}, SL={sl_px})")
                             if notify_trade_open:
                                 notify_trade_open(
                                     inst=f["name"],
@@ -1963,10 +2042,10 @@ def execute_portfolio():
                                     reason=str(ai_reason),
                                     tp_px=tp_px,
                                     sl_px=sl_px,
-                                    leverage=3,
+                                    leverage=LAST_ENTRY_PLAN.get("leverage", 3),
                                 )
                         else:
-                            executed_actions.append(f"[{f['name']}] AI限价空单已提交待成交 {actual_sz}张@{limit_px} (order={order_ref}, TP={tp_px}, SL={sl_px})")
+                            executed_actions.append(f"[{f['name']}] AI限价空单已提交待成交（数量经最终风险预算裁剪）@{limit_px} (order={order_ref}, TP={tp_px}, SL={sl_px})")
                             pending_inst_ids.add(inst_id)
                             reserved_slot_count += 1
                             reserved_short_count += 1
@@ -1980,7 +2059,7 @@ def execute_portfolio():
                                     reason=str(ai_reason),
                                     tp_px=tp_px,
                                     sl_px=sl_px,
-                                    leverage=3,
+                                    leverage=LAST_ENTRY_PLAN.get("leverage", 3),
                                 )
                     else:
                         executed_actions.append(f"[{f['name']}] AI限价空单提交失败: {order_ref}")

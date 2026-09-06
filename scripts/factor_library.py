@@ -9,6 +9,14 @@ Calculates and normalizes 5 core factor pillars for crypto perpetuals:
 5. Smart Money & Derivatives (Top100 Weighted Long Ratio, 24H Net Flow, Funding Rate, OI)
 """
 
+# Standalone scheduler children must not depend on an inherited PYTHONPATH.
+import sys as _sys
+from pathlib import Path as _Path
+_project_root = str(_Path(__file__).resolve().parents[1])
+if _project_root not in _sys.path:
+    _sys.path.insert(0, _project_root)
+
+
 import os
 import sys
 import json
@@ -168,7 +176,7 @@ def compute_instrument_factors(item: Dict[str, Any], smart_money_pool: Dict[str,
 
     # 3. 15M Candles -> ATR, RSI, VWAP Bias, Vol Ratio, OBV
     try:
-        d = market.get_json(f"https://www.okx.com/api/v5/market/candles?instId={inst_id}&bar=15m&limit=24")
+        d = market.signal_json(f"https://www.okx.com/api/v5/market/candles?instId={inst_id}&bar=15m&limit=24")
         if d.get("code") == "0" and d.get("data") and len(d["data"]) >= 15:
             raw_candles = d["data"]
             closes = [safe_float(c[4]) for c in reversed(raw_candles)]
@@ -256,7 +264,7 @@ def compute_instrument_factors(item: Dict[str, Any], smart_money_pool: Dict[str,
 
     # 3.5. 1H Candles -> 1H ATR & 1H RSI
     try:
-        d = market.get_json(f"https://www.okx.com/api/v5/market/candles?instId={inst_id}&bar=1H&limit=24")
+        d = market.signal_json(f"https://www.okx.com/api/v5/market/candles?instId={inst_id}&bar=1H&limit=24")
         if d.get("code") == "0" and d.get("data") and len(d["data"]) >= 15:
             raw_1h = d["data"]
             closes_1h = [safe_float(c[4]) for c in reversed(raw_1h)]
@@ -277,7 +285,7 @@ def compute_instrument_factors(item: Dict[str, Any], smart_money_pool: Dict[str,
 
     # Same official indicator service and CLI defaults, batched into one read.
     try:
-        indicators = market.available_indicators(inst_id)
+        indicators = market.signal_indicators(inst_id)
         for code, section, key, field in [
             ("ADX", "trend_momentum", "adx_1h", "adx"),
             ("KDJ", "trend_momentum", "kdj_j", "j"),
@@ -447,6 +455,7 @@ def compute_instrument_factors(item: Dict[str, Any], smart_money_pool: Dict[str,
     return factors
 
 def update_factor_library() -> Dict[str, Any]:
+    market.begin_signal_frame()
     """Single-flight refresh; a reused snapshot keeps its original timestamps."""
     started = time.time()
     deadline = time.monotonic() + 45  # Fits the scheduler's 55-second budget.

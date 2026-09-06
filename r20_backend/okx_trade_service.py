@@ -103,7 +103,8 @@ def _request(method: str, path: str, params=None, env=None, timeout: int = 20):
     selected = env or selected_environment()
     if method.upper() != "GET" and path.startswith("/api/v5/trade/"):
         from scripts.algo_reader import algo_mutation
-        with algo_mutation(selected):
+        from scripts.trade_lock import writer
+        with writer(), algo_mutation(selected):
             return _request_untracked(method, path, params, selected, timeout)
     return _request_untracked(method, path, params, selected, timeout)
 

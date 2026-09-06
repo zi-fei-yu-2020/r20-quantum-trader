@@ -1416,6 +1416,16 @@ def admin_test_interceptors(payload: InterceptorTestRequest, x_r20_session: str 
     return {"deleted": True, "provider_id": provider_id, "model_id": model_id}
 
 
+@app.get("/api/v1/admin/strategy/status")
+def admin_strategy_status(x_r20_admin_token: str | None = Header(default=None)) -> dict[str, Any]:
+    require_admin_header(x_r20_admin_token)
+    from r20_backend.strategy_status import strategy_status
+    try:
+        return strategy_status()
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail="策略风险状态暂不可核验") from exc
+
+
 @app.get("/api/v1/admin/okx/account-snapshot")
 def admin_okx_account_snapshot(x_r20_admin_token: str | None = Header(default=None)) -> dict[str, Any]:
     require_admin_header(x_r20_admin_token)

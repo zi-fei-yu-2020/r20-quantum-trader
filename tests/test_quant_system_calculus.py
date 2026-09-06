@@ -184,7 +184,7 @@ class FactorLibraryIntegrationTest(unittest.TestCase):
             if "/ticker?" in url:
                 data = [{"last": "60240", "bidPx": "60239", "askPx": "60241", "open24h": "60000"}]
             elif "/candles?" in url:
-                data = candles
+                data = candles[::4] if "bar=1H" in url else candles
             elif "/books?" in url:
                 data = [{"bids": [["60239", "20"]], "asks": [["60241", "10"]]}]
             elif "/aigc/mcp/indicators" in url:
@@ -204,7 +204,8 @@ class FactorLibraryIntegrationTest(unittest.TestCase):
             data = [{"bids": [["60239", "20"]], "asks": [["60241", "10"]]}] if "orderbook" in command else []
             return SimpleNamespace(returncode=0, stdout=json.dumps(data), stderr="")
 
-        with patch.object(factor_library.urllib.request, "urlopen", side_effect=response) as http, \
+        with patch.object(factor_library.market, "signal_as_of", return_value=(1700000000000 + 24*900000)/1000), \
+             patch.object(factor_library.urllib.request, "urlopen", side_effect=response) as http, \
              patch.object(factor_library.subprocess, "run", side_effect=cli_response) as cli:
             factors = factor_library.compute_instrument_factors(item, {})
         self.assertGreater(http.call_count, 0)

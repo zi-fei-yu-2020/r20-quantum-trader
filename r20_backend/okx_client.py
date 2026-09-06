@@ -52,7 +52,8 @@ class OKXClient:
         selected = OKXEnvironment(settings.okx_environment, settings.okx_api_key,
                                   settings.okx_secret_key, settings.okx_passphrase, self.base_url)
         if method.upper() != "GET" and path.startswith("/api/v5/trade/"):
-            with algo_mutation(selected):
+            from scripts.trade_lock import writer
+            with writer(), algo_mutation(selected):
                 return self._send_once(selected, method, path, params)
         return self._send_once(selected, method, path, params)
 

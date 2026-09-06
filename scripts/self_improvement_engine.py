@@ -6,6 +6,14 @@ Eliminates rigid cooldown bans in favor of dynamic volatility-adjusted threshold
 asymmetric Kelly bet-sizing, and LLM cognitive post-mortem lessons.
 """
 
+# Standalone scheduler children must not depend on an inherited PYTHONPATH.
+import sys as _sys
+from pathlib import Path as _Path
+_project_root = str(_Path(__file__).resolve().parents[1])
+if _project_root not in _sys.path:
+    _sys.path.insert(0, _project_root)
+
+
 import os
 import sys
 import json
@@ -128,7 +136,7 @@ def load_closed_trades():
             with open(LEDGER_JSON_FILE, "r", encoding="utf-8") as f:
                 t_list = json.load(f)
                 for t in t_list:
-                    if t.get("status") == "holding":
+                    if t.get("status") != "closed":
                         continue
                     
                     c_time = str(t.get("close_time") or t.get("time") or "")
@@ -139,7 +147,7 @@ def load_closed_trades():
                     if inst not in TARGET_INSTRUMENTS:
                         continue
                     pnl = float(t.get("pnl", 0.0) or 0.0)
-                    gross = float(t.get("gross_pnl", pnl) or pnl)
+                    gross = float(t["gross_pnl"]) if t.get("gross_pnl") is not None else pnl
                     fee = abs(float(t.get("fee", 0.0) or 0.0))
                     strat = str(t.get("strategy") or "⚡ 趋势")
                     reason = str(t.get("exit_reason") or t.get("remark") or "")
@@ -405,21 +413,22 @@ def run_self_evolution(force: bool = False):
         change_status, llm_review.get("ai_long_term_memory", []), existing_core_lessons
     )
 
-    # Evolution Shield Audit Gate: Filter out poison / biased / single-event lessons
+    # New evidence never self-authorizes a production rule change.
+    candidates = []
     try:
-        from scripts.evolution_shield import audit_proposed_lesson, load_structured_memory, save_structured_memory
-        current_structured = load_structured_memory()
-        shielded_memory = []
-        for proposed_text in long_term_memory:
-            passed, reason = audit_proposed_lesson(proposed_text, sample_size=max(total_trades, 3))
-            if passed:
-                shielded_memory.append(proposed_text)
-            else:
-                log_msg(f"🛡️ [Evolution Shield] 阻断毒心法写入长期记忆: {reason} | 违规内容: {proposed_text[:50]}...")
-        if shielded_memory:
-            long_term_memory = shielded_memory
+        from scripts.evolution_shield import audit_proposed_lesson
+        for proposed_text in long_term_memory if not preserve_existing_memory else []:
+            passed, reason = audit_proposed_lesson(proposed_text, sample_size=total_trades)
+            candidates.append({'text': proposed_text, 'audit_passed': passed, 'audit_reason': reason,
+                'supporting_trade_ids': [], 'sample_size': total_trades, 'status': 'pending_evidence_review',
+                'ledger_revision': ledger_revision})
     except Exception as exc:
-        log_msg(f"Evolution shield audit warning: {exc}")
+        log_msg(f"Evolution audit unavailable; existing memory retained: {type(exc).__name__}")
+        candidates = []
+    atomic_write_json(os.path.join(DATA_DIR, 'memory_candidates.json'), {'updated_at': timestamp_str, 'candidates': candidates})
+    long_term_memory = existing_core_lessons
+    preserve_existing_memory = True
+    change_status = 'NO_CHANGE'
 
     # 3. Save Long-Term Memory (Both JSON and Human/LLM-readable Markdown)
     memory_payload = {
@@ -465,11 +474,12 @@ def run_self_evolution(force: bool = False):
         md_content += f"- 💡 [{timestamp_str}] {clean_ins}\n"
 
     try:
-        tmp_md = AI_MEMORY_MD_FILE + ".tmp"
+        review_md_file = os.path.join(DATA_DIR, "self_improvement_review.md")
+        tmp_md = review_md_file + ".tmp"
         with open(tmp_md, "w", encoding="utf-8") as f:
             f.write(md_content)
-        os.replace(tmp_md, AI_MEMORY_MD_FILE)
-        log_msg(f"📝 长期记忆已同步更新至 Markdown 文件: {AI_MEMORY_MD_FILE}")
+        os.replace(tmp_md, review_md_file)
+        log_msg(f"📝 复盘报告已写入 {review_md_file}；运行记忆保持不变")
     except Exception as e:
         log_msg(f"Markdown 记忆写入异常: {e}")
 

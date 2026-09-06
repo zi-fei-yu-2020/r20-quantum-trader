@@ -37,6 +37,10 @@ def from_okx_instrument(raw: dict[str, Any]) -> dict[str, Any]:
         "ctVal": float(raw.get("ctVal") or 1.0),
         "tickSz": tick_size,
         "minSz": str(raw.get("minSz") or "1"),
+        "lotSz": str(raw.get("lotSz") or raw.get("minSz") or "1"),
+        "ctType": raw.get("ctType", ""),
+        "ctMult": raw.get("ctMult") or "1",
+        "settleCcy": raw.get("settleCcy", ""),
         "risk_per_trade_usd": 15.0,
     }
 

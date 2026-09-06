@@ -5,7 +5,15 @@ Directly reads OKX official `account positions-history` & `account positions` AP
 Eliminates bills heuristic split-error, accurately records real position-level trades!
 """
 
-from okx_runtime import replace_cli_prefix as okx_private_command
+# Standalone scheduler children must not depend on an inherited PYTHONPATH.
+import sys as _sys
+from pathlib import Path as _Path
+_project_root = str(_Path(__file__).resolve().parents[1])
+if _project_root not in _sys.path:
+    _sys.path.insert(0, _project_root)
+
+
+from okx_runtime import selected_environment, replace_cli_prefix as okx_private_command
 import subprocess
 import json
 import os
@@ -28,6 +36,16 @@ def get_ct_val(inst_name):
             return item["ctVal"]
     return 1.0
 
+def read_cli_list(command):
+    result = subprocess.run(command, shell=True, capture_output=True, text=True, timeout=20)
+    if result.returncode != 0 or not result.stdout.strip():
+        raise RuntimeError('Ledger source unavailable; existing ledger is preserved')
+    rows = json.loads(result.stdout)
+    if not isinstance(rows, list) or any(not isinstance(r, dict) for r in rows):
+        raise RuntimeError('Ledger source malformed; existing ledger is preserved')
+    return rows
+
+
 def build_lifecycle_ledger():
     reset_time = "1970-01-01 00:00:00"
     if os.path.exists(INITIAL_STATE_FILE):
@@ -39,11 +57,13 @@ def build_lifecycle_ledger():
             pass
 
     existing_closed_ids = set()
+    existing_closed_rows = []
     if os.path.exists(LEDGER_JSON_FILE):
         try:
             with open(LEDGER_JSON_FILE, "r", encoding="utf-8") as f:
                 old_trades = json.load(f)
-                existing_closed_ids = {t["id"] for t in old_trades if t.get("status") == "closed"}
+                existing_closed_rows = [t for t in old_trades if t.get("status") == "closed" and t.get("id") and str(t.get("close_time", "")) >= reset_time]
+                existing_closed_ids = {t["id"] for t in existing_closed_rows}
         except Exception:
             pass
 
@@ -58,15 +78,17 @@ def build_lifecycle_ledger():
     tz_bj = datetime.timezone(datetime.timedelta(hours=8))
 
     # 1. Fetch OKX Official Positions History (Official position-level closed trades)
-    res_hist = subprocess.run(okx_private_command("okx account positions-history --limit 100 --json"), shell=True, capture_output=True, text=True)
-    pos_history = json.loads(res_hist.stdout) if res_hist.stdout else []
+    pos_history = read_cli_list(okx_private_command("okx account positions-history --limit 100 --json"))
+
+    # Archive authoritative position receipts without inventing fill-level fee allocation.
+    from scripts import strategy_evidence
+    for receipt in pos_history:
+        strategy_evidence.best_effort(selected_environment().identity, "position_receipt", receipt)
 
     # 2. Fetch OKX Current Live Positions (Holding trades)
-    res_pos = subprocess.run(okx_private_command("okx account positions --json"), shell=True, capture_output=True, text=True)
-    pos_data = json.loads(res_pos.stdout) if res_pos.stdout else []
+    pos_data = read_cli_list(okx_private_command("okx account positions --json"))
 
-    res_orders = subprocess.run(okx_private_command("okx swap orders --history --limit 100 --json"), shell=True, capture_output=True, text=True)
-    orders_history = json.loads(res_orders.stdout) if res_orders.stdout else []
+    orders_history = read_cli_list(okx_private_command("okx swap orders --history --limit 100 --json"))
     close_orders = [o for o in orders_history if str(o.get('reduceOnly', '')).lower() == 'true' and o.get('state') == 'filled']
 
     trades_lifecycle = []
@@ -154,7 +176,9 @@ def build_lifecycle_ledger():
         close_px = float(h.get("closeAvgPx", 0) or 0)
         gross_pnl = float(h.get("pnl", 0) or 0)
         fee = float(h.get("fee", 0) or 0)
-        net_pnl = round(gross_pnl + fee, 2)
+        funding_fee = float(h.get("fundingFee", 0) or 0)
+        realized = h.get("realizedPnl")
+        net_pnl = round(float(realized) if realized not in (None, "") else gross_pnl + fee + funding_fee, 2)
         lever = int(float(h.get("lever", "3") or 3))
         
         # Calculate Margin & Real Position Size
@@ -232,8 +256,11 @@ def build_lifecycle_ledger():
             "close_time": close_time,
             "close_px": round(close_px, 4),
             "gross_pnl": round(gross_pnl, 2),
-            "open_fee": round(fee / 2.0, 4),
-            "close_fee": round(fee / 2.0, 4),
+            "open_fee": None,
+            "close_fee": None,
+            "funding_fee": funding_fee,
+            "accounting_basis": "exchange_realized_pnl" if realized not in (None, "") else "gross_plus_fee_plus_funding",
+            "fee_allocation": "unknown_until_fill_reconciliation",
             "fee": round(fee, 2),
             "pnl": net_pnl,
             "net_pnl": net_pnl,
@@ -244,6 +271,8 @@ def build_lifecycle_ledger():
             "exit_reason": exit_reason
         })
 
+    fresh_ids = {t['id'] for t in trades_lifecycle}
+    trades_lifecycle.extend(t for t in existing_closed_rows if t['id'] not in fresh_ids)
     fd, tmp_path = tempfile.mkstemp(prefix=".ledger-", suffix=".tmp", dir=DATA_DIR)
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as f:

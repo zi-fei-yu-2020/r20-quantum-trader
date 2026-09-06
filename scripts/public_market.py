@@ -311,11 +311,11 @@ def indicator_values(inst_id, bar="1H", *, backtest_time=None):
         raise
 
 
-def available_indicators(inst_id, bar="1H"):
+def available_indicators(inst_id, bar="1H", *, backtest_time=None):
     # Match the old independent CLI reads: one missing indicator must not discard
     # the other valid indicators. Partial batches remain uncached and observable.
     try:
-        return indicator_values(inst_id, bar)
+        return indicator_values(inst_id, bar) if backtest_time is None else indicator_values(inst_id, bar, backtest_time=backtest_time)
     except IncompleteIndicators as exc:
         return exc.available
 
@@ -360,3 +360,34 @@ def smart_money_overview(ccys):
     except Exception:
         _failure()
         raise
+
+
+_SIGNAL_AS_OF = None
+
+def begin_signal_frame(as_of=None):
+    global _SIGNAL_AS_OF
+    _SIGNAL_AS_OF = float(time.time() if as_of is None else as_of)
+    return _SIGNAL_AS_OF
+
+def signal_as_of():
+    return _SIGNAL_AS_OF if _SIGNAL_AS_OF is not None else time.time()
+
+def signal_json(url, timeout=10.0):
+    from scripts.signal_data import closed_candles
+    value = get_json(url, timeout)
+    parsed=urlsplit(url)
+    if not parsed.path.endswith('/candles'): return value
+    params=dict(parse_qsl(parsed.query))
+    return {**value, 'data': closed_candles(value['data'],params.get('bar','1m'),
+        as_of_ms=int(signal_as_of()*1000),limit=int(params.get('limit','100'))),
+        'as_of_ms':int(signal_as_of()*1000),'candle_contract':'closed-v1'}
+
+def signal_candles(inst_id, bar, limit):
+    return signal_json(BASE_URL + '/api/v5/market/candles?' + urlencode({'instId':inst_id,'bar':bar,'limit':limit}))['data']
+
+
+def signal_indicators(inst_id, bar='1H'):
+    # Anchor at a known CLOSED bar open. Even inclusive endpoint semantics cannot
+    # admit the current unfinished bar. This can be conservatively one bar lagged.
+    rows=signal_candles(inst_id,bar,2)
+    return available_indicators(inst_id,bar,backtest_time=int(rows[0][0]))
