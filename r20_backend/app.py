@@ -49,6 +49,7 @@ from r20_gateway.secrets import delete_secrets, save_secrets, status as secret_s
 from r20_gateway.store import GatewayStore
 from r20_gateway.supervisor import start_supervisor as start_gateway_supervisor, stop_supervisor as stop_gateway_supervisor
 from scripts.instrument_pool import from_okx_instrument, load_instruments, save_instruments
+from scripts.instrument_support import pool_support, opening_status
 from r20_backend.llm_manager import (
     load_llm_config,
     get_active_llm_runtime,
@@ -1027,6 +1028,7 @@ def update_admin_config(payload: AdminConfigUpdate, x_r20_admin_token: str | Non
     audit_record("config.update", "success", {"fields": sorted(data.keys())})
     return {
         "updated": True,
+        "instrument_support": pool_support(load_instruments(), settings.okx_environment) if selected_mode else None,
         "restart_note": "Long-running strategy processes read updated .env on their next execution cycle.",
         "manual_close_enabled": settings.manual_close_enabled,
     }
@@ -1453,10 +1455,24 @@ def admin_instruments(x_r20_admin_token: str | None = Header(default=None)) -> d
     require_admin_header(x_r20_admin_token)
     trackers = read_json("position_trackers.json", {})
     active = set(trackers.keys()) if isinstance(trackers, dict) else set()
+    pool = load_instruments()
+    support = pool_support(pool, settings.okx_environment)
     return {
-        "instruments": [{**item, "protected": item["instId"] == "BTC-USDT-SWAP", "has_tracker": item["instId"] in active or item["name"] in active} for item in load_instruments()],
+        "environment": settings.okx_environment,
+        "support_summary": support,
+        "instruments": [{**item, "protected": item["instId"] == "BTC-USDT-SWAP", "has_tracker": item["instId"] in active or item["name"] in active, "environment_support": support["items"][item["instId"]]} for item in pool],
         "limits": {"minimum": 1, "maximum": 6, "btc_required": True},
     }
+
+
+@app.get("/api/v1/admin/instruments/support")
+def admin_instrument_support(environment: str | None = None, x_r20_admin_token: str | None = Header(default=None)) -> dict[str, Any]:
+    require_admin_header(x_r20_admin_token)
+    refresh_settings()
+    mode = environment or settings.okx_environment
+    if mode not in {"demo", "live"}:
+        raise HTTPException(status_code=400, detail="交易环境必须为 demo 或 live")
+    return pool_support(load_instruments(), mode, refresh=True)
 
 
 @app.post("/api/v1/admin/instruments")
@@ -1467,6 +1483,9 @@ def add_admin_instrument(payload: InstrumentAddRequest, x_r20_admin_token: str |
     current = load_instruments()
     if any(item["instId"] == inst_id for item in current):
         raise HTTPException(status_code=409, detail="该币种已在交易池中")
+    availability = opening_status(inst_id, settings.okx_environment)
+    if not availability["can_open"]:
+        raise HTTPException(status_code=503 if availability["status"] == "unknown" else 400, detail=availability["message"])
     if len(current) >= 6:
         raise HTTPException(status_code=409, detail="交易池最多允许 6 个币种；请先删除一个无持仓币种")
     try:

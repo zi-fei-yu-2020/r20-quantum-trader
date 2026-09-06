@@ -1417,6 +1417,9 @@ def monitoring_snapshot():
         }
     # Copy only envelopes; never mutate the cached snapshot while serving it.
     data = dict(cached)
+    from scripts.instrument_pool import load_instruments
+    from scripts.instrument_support import pool_support
+    data["instrument_support"] = pool_support(load_instruments(), environment.mode)
     health = dict(cached.get("data_health") or {})
     health["cache_age_seconds"] = round(age, 1)
     health["refreshing"] = CACHE_UPDATE_LOCK.locked()

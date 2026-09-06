@@ -1,8 +1,10 @@
 <script setup lang="ts">
 import AppCard from './ui/AppCard.vue'
+import InstrumentSupportNotice from './InstrumentSupportNotice.vue'
+import { canOpen } from '../utils/instrumentSupport'
 import EmptyState from './ui/EmptyState.vue'
 
-import { ref } from 'vue'
+import { ref, computed } from 'vue'
 import { useDashboardStore } from '../stores/dashboard'
 import { TrendingUp, TrendingDown, ArrowUpRight, Compass, Activity } from 'lucide-vue-next'
 import FactorDetailModal from './FactorDetailModal.vue'
@@ -10,6 +12,7 @@ import FactorDetailModal from './FactorDetailModal.vue'
 const store = useDashboardStore()
 const selectedInstrument = ref<any | null>(null)
 const drawerVisible = ref(false)
+const detailInstrument = computed(() => store.factors.find(item => item.instId === selectedInstrument.value?.instId) || selectedInstrument.value)
 
 function openDetail(item: any) {
   selectedInstrument.value = item
@@ -164,6 +167,7 @@ function getActionLabel(action?: string) {
             </div>
           </div>
 
+          <InstrumentSupportNotice class="mt-2" :support="item.environment_support" compact />
           <!-- Calculus Telemetry Grid -->
           <div
             class="grid grid-cols-4 gap-1 my-2 py-1.5 px-2 rounded-lg border text-[10px] font-mono"
@@ -198,7 +202,7 @@ function getActionLabel(action?: string) {
             <div>
               <div class="text-[8px] uppercase" style="color: var(--text-faint)">ADX</div>
               <div class="font-bold num-tabular truncate" style="color: var(--color-brand)">
-                {{ item.adx_1h ?? '--' }}
+                {{ canOpen(item.environment_support) ? (item.adx_1h ?? '--') : '--' }}
               </div>
             </div>
           </div>
@@ -211,13 +215,13 @@ function getActionLabel(action?: string) {
             <span
               >聪明钱:
               <strong class="num-tabular" style="color: var(--text-main)"
-                >{{ item.smart_money?.weighted_long_pct ?? 50 }}%多</strong
+                >{{ canOpen(item.environment_support) ? `${item.smart_money?.weighted_long_pct ?? 50}%多` : '--' }}</strong
               ></span
             >
             <span
               >净流:
               <strong class="num-tabular" style="color: var(--text-main)">{{
-                item.smart_money?.net_flow_usdt ?? '0 U'
+                canOpen(item.environment_support) ? (item.smart_money?.net_flow_usdt ?? '0 U') : '--'
               }}</strong></span
             >
           </div>
@@ -228,9 +232,9 @@ function getActionLabel(action?: string) {
           <div class="flex items-center justify-between">
             <span
               class="px-2 py-0.5 rounded text-[10px] font-bold font-mono border"
-              :style="getActionStyle(item.decision?.action || item.action)"
+              :style="getActionStyle(canOpen(item.environment_support) ? (item.decision?.action || item.action) : 'WAIT')"
             >
-              {{ getActionLabel(item.decision?.action || item.action) }}
+              {{ canOpen(item.environment_support) ? getActionLabel(item.decision?.action || item.action) : '仅观察 · 不参与交易' }}
             </span>
             <div
               class="flex items-center space-x-1 text-xs font-mono font-bold"
@@ -238,7 +242,7 @@ function getActionLabel(action?: string) {
             >
               <span class="text-[10px]" style="color: var(--text-faint)">置信:</span>
               <span class="num-tabular" style="color: var(--text-main)"
-                >{{ item.decision?.confidence || item.confidence || 0 }}%</span
+                >{{ canOpen(item.environment_support) ? `${item.decision?.confidence || item.confidence || 0}%` : '--' }}</span
               >
               <ArrowUpRight
                 class="w-3.5 h-3.5 opacity-60 group-hover:opacity-100 transition-opacity"
@@ -253,7 +257,7 @@ function getActionLabel(action?: string) {
     <FactorDetailModal
       v-if="drawerVisible && selectedInstrument"
       :visible="drawerVisible"
-      :instrument="selectedInstrument"
+      :instrument="detailInstrument"
       :full-prompt-text="store.data?.ai_last_prompt || ''"
       @close="drawerVisible = false"
     />

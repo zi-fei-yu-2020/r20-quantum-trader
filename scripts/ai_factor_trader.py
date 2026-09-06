@@ -27,6 +27,7 @@ import datetime
 import subprocess
 import urllib.request
 import public_market as market
+import instrument_support as support
 import fcntl
 from typing import Tuple, Dict, Any, List, Optional
 from concurrent.futures import ThreadPoolExecutor
@@ -391,7 +392,10 @@ def prune_trackers(trackers: Dict[str, Any], real_pos_dict: Dict[str, Any]) -> i
 def submit_protected_limit_order(inst_id: str, side: str, pos_side: str, size: int, price: float, tp_px: float, sl_px: float) -> Tuple[bool, str]:
     """Submit a protected limit order; acceptance is not treated as a fill."""
     # Check if we are running in simulated/demo mode and price diverged significantly from demo orderbook
-    env = selected_environment()
+    env = market._selected()
+    availability = support.opening_status(inst_id, env.mode)
+    if not availability["can_open"]:
+        return False, availability["message"]
     effective_px = price
     effective_tp = tp_px
     effective_sl = sl_px
@@ -1684,7 +1688,12 @@ def execute_portfolio():
             print(f"[AI Brain Batch Scan Warning] {e}")
 
     if not cb_active:
+        availability = support.pool_support(TARGET_INSTRUMENTS, market._selected().mode, refresh=True)
         for f in all_factors:
+            state = availability["items"][f["instId"]]
+            if not state["can_open"]:
+                executed_actions.append(f"[{f['name']}] {state['label']}，仅观察，跳过开仓/加仓")
+                continue
             asset_type = f.get("type", "crypto")
             if not is_tradfi_market_liquid(asset_type):
                 continue

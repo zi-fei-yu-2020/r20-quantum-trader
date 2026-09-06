@@ -2,6 +2,8 @@
 import { useClipboard } from '../composables/useClipboard'
 const { copyText } = useClipboard()
 import AppDialog from './ui/AppDialog.vue'
+import InstrumentSupportNotice from './InstrumentSupportNotice.vue'
+import { canOpen } from '../utils/instrumentSupport'
 
 import { ref } from 'vue'
 import { X, Cpu, FileText, CheckCircle2, ShieldAlert, Zap, TrendingUp } from 'lucide-vue-next'
@@ -92,6 +94,7 @@ async function copyPrompt() {
         </button>
       </div>
 
+      <InstrumentSupportNotice class="m-4 mb-0" :support="instrument?.environment_support" />
       <!-- Segmented View Selector -->
       <div
         class="flex border-b px-4 pt-2 shrink-0 gap-2 font-mono text-xs"
@@ -128,7 +131,7 @@ async function copyPrompt() {
         <!-- TAB 1: 五重数学与微积分动能推演 -->
         <div v-if="activeTab === 'reasoning'" class="space-y-3">
           <!-- Decision Summary Banner -->
-          <div
+          <div v-if="canOpen(instrument?.environment_support)"
             class="rounded-xl border p-3.5"
             style="background-color: var(--bg-card-subtle); border-color: var(--border-subtle)"
           >

@@ -13,6 +13,7 @@ import time
 import datetime
 import urllib.request
 import public_market as market
+import instrument_support as support
 import subprocess
 import tempfile
 from typing import Dict, Any, List, Optional, Tuple
@@ -495,6 +496,9 @@ def construct_full_market_prompt(packages: List[Dict[str, Any]], pos_summary: st
     now_bj_str = current_time_str or datetime.datetime.now(tz_bj).strftime("%Y-%m-%d %H:%M:%S (北京时间)")
     market_lines = []
     for p in packages:
+        capability = p.get("environment_support")
+        if capability and not capability["can_open"]:
+            market_lines.append(f"【{p['instId']} 环境限制】{capability['label']}：只允许处理已有仓位，不得开仓或加仓。")
         k15 = p.get("recent_15m", [])
         k1h = p.get("recent_1h", [])
         k4h = p.get("recent_4h", [])
@@ -768,6 +772,7 @@ def validate_and_filter_decision(p: Dict[str, Any], d_item: Dict[str, Any], acti
 @single_brain_cycle
 def execute_batch_ai_brain_cycle(pos_summary: str = "当前总持仓 0/6", active_positions_detail: List[Dict[str, Any]] = None, usdt_available: float = 0.0) -> Optional[Dict[str, Any]]:
     """Fetch all six crypto symbols, call the LLM once, then persist an auditable result."""
+    global LAST_INFERENCE_ERROR
     base_url, api_key = get_cpa_client_config()
     if not api_key:
         print("[AI Brain Batch] Error: CPA API Key not found")
@@ -777,9 +782,15 @@ def execute_batch_ai_brain_cycle(pos_summary: str = "当前总持仓 0/6", activ
     now_bj = datetime.datetime.now(tz_bj)
     time_str = now_bj.strftime("%Y-%m-%d %H:%M:%S")
 
-    print(f"[AI Brain Batch] 并行获取 {len(TARGET_INSTRUMENTS)} 币种原生行情、技术指标与顶级聪明钱数据...")
+    eligible, availability = support.trading_universe(TARGET_INSTRUMENTS, active_positions_detail, market._selected().mode)
+    if not eligible:
+        LAST_INFERENCE_ERROR = "当前环境无已核验可交易标的，仅保留行情观察"
+        return None
+    print(f"[AI Brain Batch] 并行获取 {len(eligible)} 个交易/持仓管理标的；其余标的仅作行情观察")
     with ThreadPoolExecutor(max_workers=8) as executor:
-        packages = list(executor.map(fetch_single_instrument_package, TARGET_INSTRUMENTS))
+        packages = list(executor.map(fetch_single_instrument_package, eligible))
+    for package in packages:
+        package["environment_support"] = availability["items"][package["instId"]]
 
     # Fetch OKX Smart Money Signals
     try:
@@ -1129,11 +1140,10 @@ def execute_batch_ai_brain_cycle(pos_summary: str = "当前总持仓 0/6", activ
 
         latency = round(time.time() - t0, 2)
         telemetry.finish("success", raw_res, output_chars=len(content))
-        print(f"[AI Brain Batch] ✅ 6 币种全景决策完成 (耗时 {latency}s, 宏观基调: {macro_summary})")
+        print(f"[AI Brain Batch] ✅ {len(packages)} 标的全景决策完成 (耗时 {latency}s, 宏观基调: {macro_summary})")
         return standard_cache
 
     except Exception as e:
-        global LAST_INFERENCE_ERROR
         code = getattr(e, "status_code", None) or getattr(e, "code", None)
         attempts = getattr(e, "attempts", None)
         LAST_INFERENCE_ERROR = f"模型接口 HTTP {code}" if code else type(e).__name__

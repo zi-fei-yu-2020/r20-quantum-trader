@@ -61,7 +61,25 @@ export interface PendingOrderItem {
   slTriggerPx?: string
 }
 
+export interface InstrumentSupport {
+  instId: string
+  environment: 'demo' | 'live'
+  status: 'supported' | 'unsupported' | 'unavailable' | 'unknown'
+  can_open: boolean
+  label: string
+  message: string
+  checked_at: number | null
+}
+export interface InstrumentSupportSummary {
+  environment: 'demo' | 'live'
+  status: 'verified' | 'unknown'
+  checked_at: number | null
+  items: Record<string, InstrumentSupport>
+  supported_count: number
+  observation_count: number
+}
 export interface InstrumentFactor {
+  environment_support?: InstrumentSupport
   instId: string
   name: string
   type: string
@@ -119,6 +137,7 @@ export interface LLMRuntime {
 }
 
 export interface DashboardResponse {
+  instrument_support?: InstrumentSupportSummary
   timestamp: string
   is_stale?: boolean
   okx_environment?: 'demo' | 'live'

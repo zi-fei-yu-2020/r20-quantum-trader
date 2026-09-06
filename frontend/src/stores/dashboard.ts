@@ -1,5 +1,6 @@
 import { defineStore } from 'pinia'
 import { dashboardIsStale } from '../utils/dashboardHealth'
+import { instrumentSupport } from '../utils/instrumentSupport'
 import { createSingleFlight } from '../utils/singleFlight'
 import { ref, computed } from 'vue'
 import type { DashboardResponse, InstrumentFactor, PositionItem, PendingOrderItem } from '../types/dashboard'
@@ -33,6 +34,7 @@ export const useDashboardStore = defineStore('dashboard', () => {
       const trend = lib.trend_momentum || {}
       return {
         ...f,
+        environment_support: instrumentSupport(f.instId, data.value?.instrument_support, data.value?.okx_environment),
         adx_1h: f.adx_1h ?? trend.adx_1h,
         calculus: {
           velocity_1h: calc.velocity,

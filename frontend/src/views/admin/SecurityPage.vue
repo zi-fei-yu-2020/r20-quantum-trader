@@ -1,6 +1,9 @@
 <script setup lang="ts">
 import AppField from '../../components/ui/AppField.vue'
 import AppCard from '../../components/ui/AppCard.vue'
+import AppButton from '../../components/ui/AppButton.vue'
+import InstrumentSupportNotice from '../../components/InstrumentSupportNotice.vue'
+import type { InstrumentSupportSummary } from '../../types/dashboard'
 import LoadingState from '../../components/ui/LoadingState.vue'
 
 import AppDialog from '../../components/ui/AppDialog.vue'
@@ -51,6 +54,24 @@ const savingCapital = ref(false)
 const instruments = ref<any[]>([])
 const instLimits = ref<any>({ minimum: 1, maximum: 6 })
 const newInstId = ref('')
+const appliedEnvironment = ref<'demo' | 'live'>('demo')
+const supportSummary = ref<InstrumentSupportSummary | null>(null)
+const supportLoading = ref(false)
+let supportGeneration = 0
+async function refreshInstrumentSupport() {
+  const generation = ++supportGeneration
+  const environment = appliedEnvironment.value
+  supportLoading.value = true
+  try {
+    const summary = await api<InstrumentSupportSummary>(`/api/v1/admin/instruments/support?environment=${environment}`)
+    if (generation !== supportGeneration || environment !== appliedEnvironment.value) return
+    supportSummary.value = summary
+    instruments.value = instruments.value.map(item => ({ ...item, environment_support: summary.items[item.instId] }))
+  } catch (e: any) {
+    if (generation === supportGeneration) bannerMsg.value = { text: `合约支持状态核验失败：${e.message}`, type: 'warn' }
+  } finally { if (generation === supportGeneration) supportLoading.value = false }
+}
+
 
 // ---- positions & close ----
 const snapshot = ref<any>(null)
@@ -99,6 +120,9 @@ async function loadAll() {
     manualClose.value = !!cfg.editable?.manual_close_enabled
     instruments.value = inst.instruments || []
     instLimits.value = inst.limits || instLimits.value
+    appliedEnvironment.value = inst.environment || cfg.editable.okx_environment
+    supportSummary.value = inst.support_summary || null
+    void refreshInstrumentSupport()
   } catch (e: any) {
     bannerMsg.value = { text: `加载失败：${e.message}`, type: 'err' }
   } finally {
@@ -214,6 +238,17 @@ async function saveEnvironment() {
     }
   }
   try {
+    if (environment !== appliedEnvironment.value) {
+      const preview = await api<InstrumentSupportSummary>(`/api/v1/admin/instruments/support?environment=${environment}`)
+      const blocked = Object.values(preview.items).filter(item => !item.can_open)
+      if (blocked.length) {
+        const accepted = await confirm(
+          `切换到${environment === 'demo' ? '模拟盘' : '实盘'}后，以下标的不能作为已核验交易候选：\n${blocked.map(item => `${item.instId}：${item.label}`).join('\n')}\n\n它们会保留在列表中，仅供行情观察，暂停新开仓/加仓；此支持检查不拦截当前环境的持仓保护操作；切换环境不会自动平掉另一环境的仓位，请另行确认。不会自动切换数据源或删除标的。`,
+          { title: '切换环境：标的支持情况', confirmLabel: '确认保存并保留观察标的', danger: environment === 'live' },
+        )
+        if (!accepted) return
+      }
+    }
     const body: any = { okx_environment: environment }
     if (keys.value.live_key) body.okx_live_api_key = keys.value.live_key
     if (keys.value.live_secret) body.okx_live_secret_key = keys.value.live_secret
@@ -302,6 +337,7 @@ async function addInstrument() {
     newInstId.value = ''
     const inst = await api('/api/v1/admin/instruments')
     instruments.value = inst.instruments || []
+    void refreshInstrumentSupport()
   } catch (e: any) {
     bannerMsg.value = { text: `添加失败：${e.message}`, type: 'err' }
   }
@@ -329,6 +365,7 @@ async function removeInstrument(item: any) {
     }
     const inst = await api('/api/v1/admin/instruments')
     instruments.value = inst.instruments || []
+    void refreshInstrumentSupport()
   } catch (e: any) {
     bannerMsg.value = { text: `删除失败：${e.message}`, type: 'err' }
   }
@@ -393,7 +430,7 @@ async function confirmClose() {
 
 onMounted(loadAll)
 
-const { prompt } = useDialogs()
+const { prompt, confirm } = useDialogs()
 </script>
 
 <template>
@@ -954,7 +991,7 @@ const { prompt } = useDialogs()
         style="background-color: var(--bg-card); border-color: var(--border-subtle)"
       >
         <div
-          class="px-4 py-3 border-b flex items-center justify-between"
+          class="px-4 py-3 border-b flex flex-wrap gap-3 items-center justify-between"
           style="border-color: var(--border-subtle); background-color: var(--bg-card-subtle)"
         >
           <div class="flex items-center space-x-2">
@@ -988,6 +1025,15 @@ const { prompt } = useDialogs()
             </button>
           </div>
         </div>
+        <div class="px-4 py-3 flex flex-wrap items-center justify-between gap-3 border-b" style="border-color: var(--border-subtle)">
+          <div class="text-sm leading-relaxed" style="color: var(--text-muted)" aria-live="polite">
+            <strong style="color: var(--text-main)">当前生效：{{ appliedEnvironment === 'demo' ? '模拟盘' : '实盘' }}</strong>
+            <span v-if="supportLoading"> · 正在核验合约目录…</span>
+            <span v-else-if="supportSummary"> · {{ supportSummary.supported_count }} 个已核验支持 · {{ supportSummary.observation_count }} 个仅观察/待确认</span>
+            <p class="text-xs mt-1">能看到行情不代表当前环境支持交易。不支持或待确认的标的不参与新开仓/加仓，当前环境已有持仓管理不受此检查阻断。</p>
+          </div>
+          <AppButton :loading="supportLoading" title="刷新支持状态；60 秒内的合约目录结果可复用" @click="refreshInstrumentSupport">重新核验</AppButton>
+        </div>
         <div class="overflow-x-auto">
           <table class="w-full text-left text-sm font-sans whitespace-nowrap">
             <thead>
@@ -1002,6 +1048,7 @@ const { prompt } = useDialogs()
                 <th class="py-2.5 px-4">合约代码</th>
                 <th class="py-2.5 px-3">名称</th>
                 <th class="py-2.5 px-3">类型</th>
+                <th class="py-2.5 px-3">当前环境支持情况</th>
                 <th class="py-2.5 px-3">风控状态</th>
                 <th class="py-2.5 px-4 text-right">操作</th>
               </tr>
@@ -1020,6 +1067,7 @@ const { prompt } = useDialogs()
                 <td class="py-2.5 px-3 num-tabular" style="color: var(--text-faint)">
                   {{ item.ctType || 'SWAP' }}
                 </td>
+                <td class="py-2.5 px-3 min-w-56 max-w-80 whitespace-normal"><InstrumentSupportNotice :support="item.environment_support" compact /></td>
                 <td class="py-2.5 px-3">
                   <span
                     v-if="item.protected"
