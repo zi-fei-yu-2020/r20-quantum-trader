@@ -1,3 +1,4 @@
+import { resolveMacroAnalysis, macroStatusLabel } from '../utils/macroAnalysis'
 import { defineStore } from 'pinia'
 import { dashboardIsStale } from '../utils/dashboardHealth'
 import { instrumentSupport } from '../utils/instrumentSupport'
@@ -64,7 +65,9 @@ export const useDashboardStore = defineStore('dashboard', () => {
       }
     })
   })
-  const macroAssessment = computed(() => data.value?.macro_assessment || '尚无模型分析结果，请检查策略任务是否已运行。')
+  const macroAnalysis = computed(() => resolveMacroAnalysis(data.value))
+  const macroAssessment = computed(() => macroAnalysis.value.text || macroAnalysis.value.message)
+  const macroLabel = computed(() => macroStatusLabel(macroAnalysis.value.status))
   const llmRuntime = computed(() => data.value?.llm_runtime || {
     model: 'gemini-3.8-flash-high',
     provider_name: 'Google Gemini',
@@ -140,6 +143,8 @@ export const useDashboardStore = defineStore('dashboard', () => {
     pendingOrders,
     factors,
     macroAssessment,
+    macroAnalysis,
+    macroLabel,
     llmRuntime,
     logs,
     isStale,

@@ -30,6 +30,7 @@ class JobSpec:
 JOBS = (
     JobSpec("position_guard", "position_guard.py", 60, 240),
     JobSpec("evidence_sync", "evidence_sync.py", 300, 60),
+    JobSpec("ledger_sync", "ledger_monitor.py", 60, 50),
     JobSpec("trader", "ai_factor_trader.py", 15 * 60, 840),
     JobSpec("factor_library", "factor_library.py", 60, 55),
     JobSpec("news", "news_sentiment_harvester.py", 10 * 60, 300),
@@ -80,6 +81,7 @@ class GatewayScheduler:
         self.store = store
         self.executor = ThreadPoolExecutor(max_workers=max_workers, thread_name_prefix="r20-job")
         self.guard_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="r20-position-guard")
+        self.ledger_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="r20-ledger-sync")
         self.running: dict[str, Future[None]] = {}
 
     def _last_at(self, name: str) -> datetime | None:
@@ -107,6 +109,9 @@ class GatewayScheduler:
 
     def due(self, spec: JobSpec, now: datetime, schedule: dict[str, Any]) -> bool:
         last = self._last_at(spec.name)
+        if spec.name == "ledger_sync":
+            from scripts.ledger_monitor import should_run
+            return should_run(last.timestamp() if last else 0, now.timestamp())
         if spec.interval_seconds:
             if spec.name == "trader":
                 slot = int(now.timestamp()) // spec.interval_seconds
@@ -147,7 +152,8 @@ class GatewayScheduler:
             if spec.name in self.running or not self.due(spec, now, schedule):
                 continue
             self.store.set_state(f"job.last.{spec.name}", now.isoformat())
-            self.running[spec.name] = (self.guard_executor if spec.name == "position_guard" else self.executor).submit(self._execute, spec)
+            executor = self.guard_executor if spec.name == "position_guard" else self.ledger_executor if spec.name == "ledger_sync" else self.executor
+            self.running[spec.name] = executor.submit(self._execute, spec)
             launched.append(spec.name)
         return launched
 
@@ -170,4 +176,5 @@ class GatewayScheduler:
 
     def shutdown(self) -> None:
         self.guard_executor.shutdown(wait=False, cancel_futures=False)
+        self.ledger_executor.shutdown(wait=False, cancel_futures=False)
         self.executor.shutdown(wait=False, cancel_futures=False)

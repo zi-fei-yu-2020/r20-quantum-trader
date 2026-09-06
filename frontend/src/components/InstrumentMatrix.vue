@@ -66,7 +66,7 @@ function getActionLabel(action?: string) {
         <Compass class="w-3.5 h-3.5" />
       </div>
       <div class="flex-1 min-w-0">
-        <div class="flex items-center justify-between">
+        <div class="flex flex-wrap items-center justify-between gap-x-2 gap-y-1">
           <span
             class="text-[11px] font-bold font-mono uppercase tracking-wider"
             style="color: var(--color-brand)"
@@ -74,15 +74,19 @@ function getActionLabel(action?: string) {
             宏观多周期推演基调
           </span>
           <span class="text-[10px] font-mono" style="color: var(--text-faint)">
-            {{ store.data?.timestamp ? String(store.data.timestamp).slice(11, 19) : '' }}
+            {{ store.macroLabel }} · {{ store.macroAnalysis.analyzed_at ? store.macroAnalysis.analyzed_at.slice(11, 19) : '尚未生成' }}
           </span>
         </div>
         <p
-          class="text-[11px] font-sans mt-0.5 leading-relaxed line-clamp-2"
+          class="text-[11px] font-sans mt-0.5 leading-relaxed break-words"
+          role="status" aria-live="polite" aria-atomic="true"
           style="color: var(--text-muted)"
           :title="store.macroAssessment"
         >
           {{ store.macroAssessment }}
+        </p>
+        <p v-if="store.macroAnalysis.text && store.macroAnalysis.message" class="text-[10px] mt-1 break-words" style="color: var(--text-faint)">
+          {{ store.macroAnalysis.message }}
         </p>
       </div>
     </AppCard>

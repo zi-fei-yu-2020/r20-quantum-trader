@@ -353,6 +353,12 @@ def _inject_local_data_into_stale(stale, positions, timestamp_full):
         except Exception:
             pass
 
+    from r20_backend.macro_status import fields as macro_fields
+    from scripts import ledger_monitor
+    from scripts.okx_runtime import selected_environment
+    stale.update(macro_fields(DATA_DIR, history=stale.get('ai_brain_history', []), state=state_data))
+    stale['trades']=ledger_monitor.project_rows(stale.get('trades', []), selected_environment().identity)
+    stale['ledger_sync']=ledger_monitor.load('ledger_sync_status.json', {})
     return stale
 
 
@@ -1133,7 +1139,12 @@ def _update_cache_cycle():
     total_b, used_b, free_b = shutil.disk_usage("/")
     disk_free_gb = round(free_b / (1024 ** 3), 1)
 
+    from r20_backend.macro_status import fields as macro_fields
+    from scripts import ledger_monitor
+    trades_table = ledger_monitor.project_rows(trades_table, environment.identity)
     CACHE_DATA = {
+        **macro_fields(DATA_DIR, ai_decisions, ai_history_list, state=state_data),
+        "ledger_sync": ledger_monitor.load("ledger_sync_status.json", {}),
         "timestamp": timestamp_full,
         "okx_environment": environment.mode,
         "account_source_id": environment.identity,

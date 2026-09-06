@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import AppCard from './ui/AppCard.vue'
 import AppTable from './ui/AppTable.vue'
+import { isSettlementPending } from '../utils/tradeSettlement'
 
 import { ref, computed } from 'vue'
 import { useDashboardStore } from '../stores/dashboard'
@@ -255,10 +256,12 @@ function clean(v: any, fallback = '--'): string {
                   {{ t.status === 'holding' ? '盯盘中' : formatPx(t.close_px) }}
                 </span>
                 <span class="text-[10px] ml-1 num-tabular" style="color: var(--text-faint)">
-                  ({{ t.status === 'holding' ? '--' : (t.close_time || '--').substring(5, 19) }})
+                  ({{ isSettlementPending(t) ? '等待结算时间' : t.status === 'holding' ? '--' : (t.close_time || '--').substring(5, 19) }})
                 </span>
               </td>
               <td class="py-3 px-3 text-right">
+                <span v-if="isSettlementPending(t)" class="text-xs" style="color: var(--text-muted)">-- · 结算同步中</span>
+                <template v-else>
                 <span
                   class="font-bold text-sm num-tabular"
                   :style="{ color: getPnl(t) >= 0 ? 'var(--color-up)' : 'var(--color-down)' }"
@@ -271,9 +274,10 @@ function clean(v: any, fallback = '--'): string {
                 >
                   ({{ getRoi(t) >= 0 ? '+' : '' }}{{ getRoi(t).toFixed(1) }}%)
                 </span>
+                </template>
               </td>
               <td class="py-3 px-3 text-center num-tabular" style="color: var(--text-muted)">
-                {{ clean(t.hold_duration, '--') }}
+                {{ clean(t.hold_duration || t.duration, '--') }}
               </td>
               <td class="py-3 px-4 text-xs" style="color: var(--text-muted)">
                 <span
@@ -286,7 +290,7 @@ function clean(v: any, fallback = '--'): string {
                     color: t.status === 'holding' ? 'var(--color-brand)' : 'var(--text-muted)',
                   }"
                 >
-                  {{ t.status === 'holding' ? '在途' : '已平' }}
+                  {{ t.status === 'holding' ? '在途' : isSettlementPending(t) ? '已平·待结算' : '已平' }}
                 </span>
                 <span class="trade-ledger__reason">{{ clean(t.exit_reason, '持仓中') }}</span>
               </td>

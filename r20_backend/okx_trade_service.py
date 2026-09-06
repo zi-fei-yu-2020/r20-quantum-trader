@@ -167,11 +167,18 @@ def fast_close_confirmed(close_token: str, confirmation: str) -> dict[str, Any]:
     if cancel_failures:
         raise RuntimeError("平仓前存在无法撤销的同仓位委托：" + "; ".join(cancel_failures))
     close_side = intent["posSide"] if intent["posSide"] in {"long", "short"} else "net"
-    close_result=_request("POST","/api/v5/trade/close-position",{"instId":intent["instId"],"mgnMode":str(target.get("mgnMode") or "cross"),"posSide":close_side,"autoCxl":True,"clOrdId":f"r20close{int(time.time())}"},env)
+    client_id=f"r20close{int(time.time())}"
+    close_result=_request("POST","/api/v5/trade/close-position",{"instId":intent["instId"],"mgnMode":str(target.get("mgnMode") or "cross"),"posSide":close_side,"autoCxl":True,"clOrdId":client_id},env)
     remaining=actual
     for _ in range(10):
         time.sleep(.7); current=_position_match(_request("GET","/api/v5/account/positions",{"instType":"SWAP","instId":intent["instId"]},env),intent)
         remaining=abs(float(current.get("pos",0) or 0)) if current else 0.0
         if remaining<=tolerance: break
     if remaining>tolerance: raise RuntimeError(f"平仓请求已受理但仓位未确认归零，剩余 {remaining}；请刷新，禁止重复点击")
-    return {"status":"confirmed_closed","environment":env.mode,"instId":intent["instId"],"posSide":intent["posSide"],"closed_size":actual,"canceled_entry_orders":canceled,"close_result":close_result}
+    try:
+        from scripts.ledger_monitor import note_confirmed_close
+        note_confirmed_close(env,target,close_result,client_id)
+        ledger_refresh='requested'
+    except Exception:
+        ledger_refresh='deferred'  # Never turn a successful close into a retryable close error.
+    return {"status":"confirmed_closed","ledger_refresh":ledger_refresh,"environment":env.mode,"instId":intent["instId"],"posSide":intent["posSide"],"closed_size":actual,"canceled_entry_orders":canceled,"close_result":close_result}
