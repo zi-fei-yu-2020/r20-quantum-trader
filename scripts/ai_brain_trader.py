@@ -349,7 +349,7 @@ def fetch_single_instrument_package(item: Dict[str, Any]) -> Dict[str, Any]:
 
         # 6. OKX ADX Trend Strength Indicator (1H)
         try:
-            indicators = market.indicator_values(inst_id)
+            indicators = market.available_indicators(inst_id)
             pkg["adx_1h"] = float(indicators["ADX"][0]["values"].get("adx", 0.0) or 0.0)
         except Exception:
             pass

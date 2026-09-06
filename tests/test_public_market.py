@@ -166,6 +166,19 @@ class PublicMarketTests(unittest.TestCase):
             with self.assertRaises(market.MarketDataError): market.indicator_values('BTC-USDT-SWAP')
         self.assertEqual(list(market.CACHE_DIR.glob('*.json')), [])
 
+    def test_one_missing_indicator_preserves_others_without_caching_partial_batch(self):
+        fixture = indicator_response()
+        fixture['data'][0]['data'][0]['timeframes']['1H']['indicators']['CMF'] = []
+        @market.observe_collection
+        def collect():
+            return {'indicators': market.available_indicators('BTC-USDT-SWAP')}
+        with patch.object(market, '_wire', return_value=fixture):
+            result = collect()
+        self.assertEqual(result['indicators']['ADX'][0]['values']['adx'], '24.3')
+        self.assertNotIn('CMF', result['indicators'])
+        self.assertEqual(result['collection_quality']['status'], 'partial')
+        self.assertEqual(list(market.CACHE_DIR.glob('*.json')), [])
+
     def test_read_failure_is_explicit_in_collection_quality(self):
         @market.observe_collection
         def collect():

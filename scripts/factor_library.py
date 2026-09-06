@@ -277,14 +277,15 @@ def compute_instrument_factors(item: Dict[str, Any], smart_money_pool: Dict[str,
 
     # Same official indicator service and CLI defaults, batched into one read.
     try:
-        indicators = market.indicator_values(inst_id)
+        indicators = market.available_indicators(inst_id)
         for code, section, key, field in [
             ("ADX", "trend_momentum", "adx_1h", "adx"),
             ("KDJ", "trend_momentum", "kdj_j", "j"),
             ("BBWIDTH", "volatility_channel", "bb_width_1h", "bbWidth"),
             ("CMF", "volume_money_flow", "cmf_1h", "cmf"),
         ]:
-            factors[section][key] = safe_float(indicators[code][0]["values"][field])
+            if code in indicators:
+                factors[section][key] = safe_float(indicators[code][0]["values"][field])
     except Exception:
         pass
 

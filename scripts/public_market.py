@@ -46,6 +46,12 @@ class MarketDataError(RuntimeError):
     pass
 
 
+class IncompleteIndicators(MarketDataError):
+    def __init__(self, available):
+        self.available = available
+        super().__init__("Incomplete OKX indicator response")
+
+
 def run_with_deadline(deadline, function, *args, **kwargs):
     token = _DEADLINE.set(deadline)
     try:
@@ -289,14 +295,29 @@ def indicator_values(inst_id, bar="1H", *, backtest_time=None):
             value = _wire(INDICATOR_PATH, {}, body, deadline, simulated=simulated)
             result = value["data"][0]["data"][0]["timeframes"][bar]["indicators"]
             fields = {"ADX": "adx", "KDJ": "j", "BBWIDTH": "bbWidth", "CMF": "cmf"}
+            available = {}
             for code, field in fields.items():
-                if not result.get(code) or not math.isfinite(float(result[code][0]["values"][field])):
-                    raise MarketDataError("Incomplete OKX indicator response")
+                try:
+                    if result.get(code) and math.isfinite(float(result[code][0]["values"][field])):
+                        available[code] = result[code]
+                except (KeyError, TypeError, ValueError, IndexError):
+                    pass
+            if len(available) != len(fields):
+                raise IncompleteIndicators(available)
             return result
         return cached_value(("public-indicators", simulated, body), 10.0, load, deadline, boundary_seconds=boundary)
     except Exception:
         _failure()
         raise
+
+
+def available_indicators(inst_id, bar="1H"):
+    # Match the old independent CLI reads: one missing indicator must not discard
+    # the other valid indicators. Partial batches remain uncached and observable.
+    try:
+        return indicator_values(inst_id, bar)
+    except IncompleteIndicators as exc:
+        return exc.available
 
 
 def _selected():
