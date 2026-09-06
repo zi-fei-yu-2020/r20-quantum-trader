@@ -10,6 +10,7 @@ from typing import Any
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 from .config import settings
+from scripts.public_market import get_json as public_json
 
 
 class OKXClient:
@@ -46,16 +47,16 @@ class OKXClient:
         return payload.get("data", payload)
 
     def ticker(self, inst_id: str) -> Any:
-        return self._request("GET", "/api/v5/market/ticker", {"instId": inst_id})
+        return public_json(f"{self.base_url}/api/v5/market/ticker?" + urlencode({"instId": inst_id}), simulated=settings.okx_simulated)["data"]
 
     def candles(self, inst_id: str, bar: str = "1H", limit: int = 100) -> Any:
-        return self._request("GET", "/api/v5/market/candles", {"instId": inst_id, "bar": bar, "limit": limit})
+        return public_json(f"{self.base_url}/api/v5/market/candles?" + urlencode({"instId": inst_id, "bar": bar, "limit": limit}), simulated=settings.okx_simulated)["data"]
 
     def instruments(self, inst_type: str = "SWAP", inst_id: str | None = None) -> Any:
         params = {"instType": inst_type}
         if inst_id:
             params["instId"] = inst_id
-        return self._request("GET", "/api/v5/public/instruments", params)
+        return public_json(f"{self.base_url}/api/v5/public/instruments?" + urlencode(params), simulated=settings.okx_simulated)["data"]
 
     def balance(self) -> Any:
         return self._request("GET", "/api/v5/account/balance")

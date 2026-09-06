@@ -26,6 +26,7 @@ import time
 import datetime
 import subprocess
 import urllib.request
+import public_market as market
 import fcntl
 from typing import Tuple, Dict, Any, List, Optional
 from concurrent.futures import ThreadPoolExecutor
@@ -172,20 +173,11 @@ def run_json_cmd(cmd, timeout=15):
         return None
 
 def fetch_candles_direct(inst_id: str, bar: str = "15m", limit: int = 45):
-    """Direct fetch from OKX Official Market REST API with fallback"""
+    """Public REST + bounded shared cache; never fall back to spawning Node."""
     try:
-        url = f"https://www.okx.com/api/v5/market/candles?instId={inst_id}&bar={bar}&limit={limit}"
-        req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
-        with urllib.request.urlopen(req, timeout=4) as response:
-            data = json.loads(response.read().decode("utf-8"))
-            if data.get("code") == "0" and "data" in data:
-                return data["data"]
+        return market.candles(inst_id, bar, limit)
     except Exception:
-        pass
-    res = run_json_cmd(f"okx market candles {inst_id} --bar {bar} --limit {limit} --json")
-    if res and isinstance(res, list):
-        return res
-    return []
+        return []
 
 def load_trackers():
     if os.path.exists(POSITION_TRACKER_FILE):
@@ -793,13 +785,11 @@ def fetch_single_instrument_data(item, all_positions, usdt_available):
         f["askPx"] = f["price"]
         # Fetch Real-time Orderbook Ticker BBO (Best Bid & Ask) for Precision Limit Placement
         try:
-            req_t = urllib.request.Request(f"https://www.okx.com/api/v5/market/ticker?instId={inst_id}", headers={"User-Agent": "Mozilla/5.0"})
-            with urllib.request.urlopen(req_t, timeout=3) as response_t:
-                d_t = json.loads(response_t.read().decode("utf-8"))
-                if d_t.get("code") == "0" and "data" in d_t and len(d_t["data"]) > 0:
-                    t_item = d_t["data"][0]
-                    f["bidPx"] = float(t_item.get("bidPx", f["price"]) or f["price"])
-                    f["askPx"] = float(t_item.get("askPx", f["price"]) or f["price"])
+            d_t = market.get_json(f"https://www.okx.com/api/v5/market/ticker?instId={inst_id}")
+            if d_t.get("code") == "0" and "data" in d_t and len(d_t["data"]) > 0:
+                t_item = d_t["data"][0]
+                f["bidPx"] = float(t_item.get("bidPx", f["price"]) or f["price"])
+                f["askPx"] = float(t_item.get("askPx", f["price"]) or f["price"])
         except Exception:
             pass
 

@@ -185,6 +185,13 @@ class FactorLibraryIntegrationTest(unittest.TestCase):
                 data = [{"last": "60240", "bidPx": "60239", "askPx": "60241", "open24h": "60000"}]
             elif "/candles?" in url:
                 data = candles
+            elif "/books?" in url:
+                data = [{"bids": [["60239", "20"]], "asks": [["60241", "10"]]}]
+            elif "/aigc/mcp/indicators" in url:
+                data = [{"data": [{"timeframes": {"1H": {"indicators": {
+                    "ADX": [{"values": {"adx": "24.3"}}], "KDJ": [{"values": {"j": "55"}}],
+                    "BBWIDTH": [{"values": {"bbWidth": "1.4"}}], "CMF": [{"values": {"cmf": "0.12"}}],
+                }}}}]}]
             elif "/funding-rate?" in url:
                 data = [{"fundingRate": "0.0001"}]
             elif "/open-interest?" in url:
@@ -201,7 +208,9 @@ class FactorLibraryIntegrationTest(unittest.TestCase):
              patch.object(factor_library.subprocess, "run", side_effect=cli_response) as cli:
             factors = factor_library.compute_instrument_factors(item, {})
         self.assertGreater(http.call_count, 0)
-        self.assertGreater(cli.call_count, 0)
+        self.assertEqual(cli.call_count, 0)
+        self.assertEqual(factors["trend_momentum"]["adx_1h"], 24.3)
+        self.assertEqual(factors["volatility_channel"]["bb_width_1h"], 1.4)
         self.assertEqual(factors["price"], 60240)
         self.assertEqual(factors["microstructure"]["bid_ask_depth_ratio"], 2.0)
         self.assertIn("calculus_dynamics", factors)

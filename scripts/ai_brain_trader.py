@@ -12,6 +12,7 @@ import json
 import time
 import datetime
 import urllib.request
+import public_market as market
 import subprocess
 import tempfile
 from typing import Dict, Any, List, Optional, Tuple
@@ -182,196 +183,174 @@ def fetch_single_instrument_package(item: Dict[str, Any]) -> Dict[str, Any]:
 
     # 1. Ticker
     try:
-        req = urllib.request.Request(f"https://www.okx.com/api/v5/market/ticker?instId={inst_id}", headers=headers)
-        with urllib.request.urlopen(req, timeout=3) as resp:
-            d = json.loads(resp.read().decode("utf-8"))
-            if d.get("code") == "0" and d.get("data"):
-                t = d["data"][0]
-                pkg["price"] = float(t.get("last", 0))
-                pkg["bidPx"] = float(t.get("bidPx", pkg["price"]) or pkg["price"])
-                pkg["askPx"] = float(t.get("askPx", pkg["price"]) or pkg["price"])
-                op = float(t.get("open24h", 0) or 0)
-                pkg["chg24h"] = round(((pkg["price"] - op) / op * 100) if op > 0 else 0, 2)
+        d = market.get_json(f"https://www.okx.com/api/v5/market/ticker?instId={inst_id}")
+        if d.get("code") == "0" and d.get("data"):
+            t = d["data"][0]
+            pkg["price"] = float(t.get("last", 0))
+            pkg["bidPx"] = float(t.get("bidPx", pkg["price"]) or pkg["price"])
+            pkg["askPx"] = float(t.get("askPx", pkg["price"]) or pkg["price"])
+            op = float(t.get("open24h", 0) or 0)
+            pkg["chg24h"] = round(((pkg["price"] - op) / op * 100) if op > 0 else 0, 2)
     except Exception:
         pass
 
     # 2. 15M Candles (recent 24, about 6 hours) & Technical Indicators Calculation
     try:
-        req = urllib.request.Request(f"https://www.okx.com/api/v5/market/candles?instId={inst_id}&bar=15m&limit=24", headers=headers)
-        with urllib.request.urlopen(req, timeout=3) as resp:
-            d = json.loads(resp.read().decode("utf-8"))
-            if d.get("code") == "0" and d.get("data"):
-                raw_candles = d["data"]
-                pkg["recent_15m"] = [[float(c[1]), float(c[2]), float(c[3]), float(c[4]), round(float(c[5]), 1)] for c in raw_candles[:12]]
+        d = market.get_json(f"https://www.okx.com/api/v5/market/candles?instId={inst_id}&bar=15m&limit=24")
+        if d.get("code") == "0" and d.get("data"):
+            raw_candles = d["data"]
+            pkg["recent_15m"] = [[float(c[1]), float(c[2]), float(c[3]), float(c[4]), round(float(c[5]), 1)] for c in raw_candles[:12]]
 
-                # Calculate 15M indicators
-                if len(raw_candles) >= 15:
-                    closes = [float(c[4]) for c in reversed(raw_candles)]
-                    highs = [float(c[2]) for c in reversed(raw_candles)]
-                    lows = [float(c[3]) for c in reversed(raw_candles)]
-                    vols = [float(c[5]) for c in reversed(raw_candles)]
+            # Calculate 15M indicators
+            if len(raw_candles) >= 15:
+                closes = [float(c[4]) for c in reversed(raw_candles)]
+                highs = [float(c[2]) for c in reversed(raw_candles)]
+                lows = [float(c[3]) for c in reversed(raw_candles)]
+                vols = [float(c[5]) for c in reversed(raw_candles)]
 
-                    # ATR 15M
-                    tr_list = []
-                    for i in range(1, len(closes)):
-                        tr = max(highs[i] - lows[i], abs(highs[i] - closes[i-1]), abs(lows[i] - closes[i-1]))
-                        tr_list.append(tr)
-                    if len(tr_list) >= 14:
-                        pkg["atr_15m"] = round(sum(tr_list[-14:]) / 14, 4)
-                        pkg["atr"] = pkg["atr_15m"]
+                # ATR 15M
+                tr_list = []
+                for i in range(1, len(closes)):
+                    tr = max(highs[i] - lows[i], abs(highs[i] - closes[i-1]), abs(lows[i] - closes[i-1]))
+                    tr_list.append(tr)
+                if len(tr_list) >= 14:
+                    pkg["atr_15m"] = round(sum(tr_list[-14:]) / 14, 4)
+                    pkg["atr"] = pkg["atr_15m"]
 
-                    # RSI 15M
-                    diffs = [closes[i] - closes[i-1] for i in range(1, len(closes))]
-                    gains = [d if d > 0 else 0 for d in diffs]
-                    losses = [-d if d < 0 else 0 for d in diffs]
-                    if len(gains) >= 14:
-                        avg_g = sum(gains[-14:]) / 14
-                        avg_l = sum(losses[-14:]) / 14
-                        rs = (avg_g / avg_l) if avg_l > 0 else 100.0
-                        pkg["rsi"] = round(100.0 - (100.0 / (1.0 + rs)), 1)
-                        pkg["rsi_15m"] = pkg["rsi"]
+                # RSI 15M
+                diffs = [closes[i] - closes[i-1] for i in range(1, len(closes))]
+                gains = [d if d > 0 else 0 for d in diffs]
+                losses = [-d if d < 0 else 0 for d in diffs]
+                if len(gains) >= 14:
+                    avg_g = sum(gains[-14:]) / 14
+                    avg_l = sum(losses[-14:]) / 14
+                    rs = (avg_g / avg_l) if avg_l > 0 else 100.0
+                    pkg["rsi"] = round(100.0 - (100.0 / (1.0 + rs)), 1)
+                    pkg["rsi_15m"] = pkg["rsi"]
 
-                    # VWAP Bias
-                    pv_sum = sum(closes[i] * vols[i] for i in range(len(closes)))
-                    v_sum = sum(vols)
-                    if v_sum > 0:
-                        vwap = pv_sum / v_sum
-                        pkg["vwap_bias"] = round((pkg["price"] - vwap) / vwap * 100, 2)
+                # VWAP Bias
+                pv_sum = sum(closes[i] * vols[i] for i in range(len(closes)))
+                v_sum = sum(vols)
+                if v_sum > 0:
+                    vwap = pv_sum / v_sum
+                    pkg["vwap_bias"] = round((pkg["price"] - vwap) / vwap * 100, 2)
 
-                    # Volume Ratio (Last vs MA5)
-                    if len(vols) >= 6:
-                        avg_v5 = sum(vols[-6:-1]) / 5
-                        if avg_v5 > 0:
-                            pkg["vol_ratio"] = round(vols[-1] / avg_v5, 2)
+                # Volume Ratio (Last vs MA5)
+                if len(vols) >= 6:
+                    avg_v5 = sum(vols[-6:-1]) / 5
+                    if avg_v5 > 0:
+                        pkg["vol_ratio"] = round(vols[-1] / avg_v5, 2)
 
-                    # OBV Flow
-                    obv = 0
-                    for i in range(1, len(closes)):
-                        if closes[i] > closes[i-1]:
-                            obv += vols[i]
-                        elif closes[i] < closes[i-1]:
-                            obv -= vols[i]
-                    pkg["obv_flow"] = "BULL_FLOW" if obv > 0 else ("BEAR_FLOW" if obv < 0 else "NEUTRAL")
+                # OBV Flow
+                obv = 0
+                for i in range(1, len(closes)):
+                    if closes[i] > closes[i-1]:
+                        obv += vols[i]
+                    elif closes[i] < closes[i-1]:
+                        obv -= vols[i]
+                pkg["obv_flow"] = "BULL_FLOW" if obv > 0 else ("BEAR_FLOW" if obv < 0 else "NEUTRAL")
     except Exception:
         pass
 
     # 3. 1H Candles (recent 24, about 24 hours) & 1H ATR / 1H RSI
     try:
-        req = urllib.request.Request(f"https://www.okx.com/api/v5/market/candles?instId={inst_id}&bar=1H&limit=24", headers=headers)
-        with urllib.request.urlopen(req, timeout=3) as resp:
-            d = json.loads(resp.read().decode("utf-8"))
-            if d.get("code") == "0" and d.get("data"):
-                raw_1h = d["data"]
-                pkg["recent_1h"] = [[float(c[1]), float(c[2]), float(c[3]), float(c[4]), round(float(c[5]), 1)] for c in raw_1h[:12]]
-                if len(raw_1h) >= 15:
-                    closes_1h = [float(c[4]) for c in reversed(raw_1h)]
-                    highs_1h = [float(c[2]) for c in reversed(raw_1h)]
-                    lows_1h = [float(c[3]) for c in reversed(raw_1h)]
+        d = market.get_json(f"https://www.okx.com/api/v5/market/candles?instId={inst_id}&bar=1H&limit=24")
+        if d.get("code") == "0" and d.get("data"):
+            raw_1h = d["data"]
+            pkg["recent_1h"] = [[float(c[1]), float(c[2]), float(c[3]), float(c[4]), round(float(c[5]), 1)] for c in raw_1h[:12]]
+            if len(raw_1h) >= 15:
+                closes_1h = [float(c[4]) for c in reversed(raw_1h)]
+                highs_1h = [float(c[2]) for c in reversed(raw_1h)]
+                lows_1h = [float(c[3]) for c in reversed(raw_1h)]
 
-                    tr_list_1h = []
-                    for i in range(1, len(closes_1h)):
-                        tr = max(highs_1h[i] - lows_1h[i], abs(highs_1h[i] - closes_1h[i-1]), abs(lows_1h[i] - closes_1h[i-1]))
-                        tr_list_1h.append(tr)
-                    if len(tr_list_1h) >= 14:
-                        pkg["atr_1h"] = round(sum(tr_list_1h[-14:]) / 14, 4)
-                        pkg["atr"] = pkg["atr_1h"]  # Elevate primary ATR to 1H
+                tr_list_1h = []
+                for i in range(1, len(closes_1h)):
+                    tr = max(highs_1h[i] - lows_1h[i], abs(highs_1h[i] - closes_1h[i-1]), abs(lows_1h[i] - closes_1h[i-1]))
+                    tr_list_1h.append(tr)
+                if len(tr_list_1h) >= 14:
+                    pkg["atr_1h"] = round(sum(tr_list_1h[-14:]) / 14, 4)
+                    pkg["atr"] = pkg["atr_1h"]  # Elevate primary ATR to 1H
 
-                    diffs_1h = [closes_1h[i] - closes_1h[i-1] for i in range(1, len(closes_1h))]
-                    gains_1h = [d if d > 0 else 0 for d in diffs_1h]
-                    losses_1h = [-d if d < 0 else 0 for d in diffs_1h]
-                    if len(gains_1h) >= 14:
-                        avg_g_1h = sum(gains_1h[-14:]) / 14
-                        avg_l_1h = sum(losses_1h[-14:]) / 14
-                        rs_1h = (avg_g_1h / avg_l_1h) if avg_l_1h > 0 else 100.0
-                        pkg["rsi_1h"] = round(100.0 - (100.0 / (1.0 + rs_1h)), 1)
+                diffs_1h = [closes_1h[i] - closes_1h[i-1] for i in range(1, len(closes_1h))]
+                gains_1h = [d if d > 0 else 0 for d in diffs_1h]
+                losses_1h = [-d if d < 0 else 0 for d in diffs_1h]
+                if len(gains_1h) >= 14:
+                    avg_g_1h = sum(gains_1h[-14:]) / 14
+                    avg_l_1h = sum(losses_1h[-14:]) / 14
+                    rs_1h = (avg_g_1h / avg_l_1h) if avg_l_1h > 0 else 100.0
+                    pkg["rsi_1h"] = round(100.0 - (100.0 / (1.0 + rs_1h)), 1)
 
-                    # 1H Swing Structure
-                    if len(closes_1h) >= 10:
-                        ma7_1h = sum(closes_1h[-7:]) / 7
-                        ma20_1h = sum(closes_1h[-20:]) / min(len(closes_1h), 20)
-                        if closes_1h[-1] > ma7_1h > ma20_1h:
-                            pkg["structure_1h"] = "1H_SWING_BULL"
-                        elif closes_1h[-1] < ma7_1h < ma20_1h:
-                            pkg["structure_1h"] = "1H_SWING_BEAR"
-                        else:
-                            pkg["structure_1h"] = "1H_SWING_CHOP"
+                # 1H Swing Structure
+                if len(closes_1h) >= 10:
+                    ma7_1h = sum(closes_1h[-7:]) / 7
+                    ma20_1h = sum(closes_1h[-20:]) / min(len(closes_1h), 20)
+                    if closes_1h[-1] > ma7_1h > ma20_1h:
+                        pkg["structure_1h"] = "1H_SWING_BULL"
+                    elif closes_1h[-1] < ma7_1h < ma20_1h:
+                        pkg["structure_1h"] = "1H_SWING_BEAR"
+                    else:
+                        pkg["structure_1h"] = "1H_SWING_CHOP"
     except Exception:
         pass
 
     # 4. 4H Candles (recent 16, about 64 hours) & 4H Macro Structure
     try:
-        req = urllib.request.Request(f"https://www.okx.com/api/v5/market/candles?instId={inst_id}&bar=4H&limit=16", headers=headers)
-        with urllib.request.urlopen(req, timeout=3) as resp:
-            d = json.loads(resp.read().decode("utf-8"))
-            if d.get("code") == "0" and d.get("data"):
-                raw_4h = d["data"]
-                pkg["recent_4h"] = [[float(c[1]), float(c[2]), float(c[3]), float(c[4]), round(float(c[5]), 1)] for c in raw_4h[:8]]
-                if len(raw_4h) >= 8:
-                    closes_4h = [float(c[4]) for c in reversed(raw_4h)]
-                    ma5_4h = sum(closes_4h[-5:]) / 5
-                    ma12_4h = sum(closes_4h[-12:]) / min(len(closes_4h), 12)
-                    if closes_4h[-1] > ma5_4h > ma12_4h:
-                        pkg["macro_4h"] = "4H_MACRO_BULL (大级别多头通道)"
-                    elif closes_4h[-1] < ma5_4h < ma12_4h:
-                        pkg["macro_4h"] = "4H_MACRO_BEAR (大级别空头承压)"
-                    else:
-                        pkg["macro_4h"] = "4H_MACRO_RANGE (大级别区间震荡)"
+        d = market.get_json(f"https://www.okx.com/api/v5/market/candles?instId={inst_id}&bar=4H&limit=16")
+        if d.get("code") == "0" and d.get("data"):
+            raw_4h = d["data"]
+            pkg["recent_4h"] = [[float(c[1]), float(c[2]), float(c[3]), float(c[4]), round(float(c[5]), 1)] for c in raw_4h[:8]]
+            if len(raw_4h) >= 8:
+                closes_4h = [float(c[4]) for c in reversed(raw_4h)]
+                ma5_4h = sum(closes_4h[-5:]) / 5
+                ma12_4h = sum(closes_4h[-12:]) / min(len(closes_4h), 12)
+                if closes_4h[-1] > ma5_4h > ma12_4h:
+                    pkg["macro_4h"] = "4H_MACRO_BULL (大级别多头通道)"
+                elif closes_4h[-1] < ma5_4h < ma12_4h:
+                    pkg["macro_4h"] = "4H_MACRO_BEAR (大级别空头承压)"
+                else:
+                    pkg["macro_4h"] = "4H_MACRO_RANGE (大级别区间震荡)"
     except Exception:
         pass
 
     # 5. Funding Rate & OI
     if item["type"] == "crypto":
         try:
-            req = urllib.request.Request(f"https://www.okx.com/api/v5/public/funding-rate?instId={inst_id}", headers=headers)
-            with urllib.request.urlopen(req, timeout=3) as resp:
-                d = json.loads(resp.read().decode("utf-8"))
-                if d.get("code") == "0" and d.get("data"):
-                    pkg["fundingRate"] = round(float(d["data"][0].get("fundingRate", 0)) * 100, 4)
+            d = market.get_json(f"https://www.okx.com/api/v5/public/funding-rate?instId={inst_id}")
+            if d.get("code") == "0" and d.get("data"):
+                pkg["fundingRate"] = round(float(d["data"][0].get("fundingRate", 0)) * 100, 4)
         except Exception:
             pass
 
         try:
-            req = urllib.request.Request(f"https://www.okx.com/api/v5/public/open-interest?instType=SWAP&instId={inst_id}", headers=headers)
-            with urllib.request.urlopen(req, timeout=3) as resp:
-                d = json.loads(resp.read().decode("utf-8"))
-                if d.get("code") == "0" and d.get("data"):
-                    usd = float(d["data"][0].get("oiUsd", 0) or 0)
-                    pkg["oiUsd"] = f"{round(usd / 1e8, 2)}亿 U" if usd > 1e8 else f"{round(usd / 1e4, 1)}万 U"
+            d = market.get_json(f"https://www.okx.com/api/v5/public/open-interest?instType=SWAP&instId={inst_id}")
+            if d.get("code") == "0" and d.get("data"):
+                usd = float(d["data"][0].get("oiUsd", 0) or 0)
+                pkg["oiUsd"] = f"{round(usd / 1e8, 2)}亿 U" if usd > 1e8 else f"{round(usd / 1e4, 1)}万 U"
         except Exception:
             pass
 
         if ccy:
             try:
-                req = urllib.request.Request(f"https://www.okx.com/api/v5/rubik/stat/contracts/long-short-account-ratio?ccy={ccy}&period=5m", headers=headers)
-                with urllib.request.urlopen(req, timeout=3) as resp:
-                    d = json.loads(resp.read().decode("utf-8"))
-                    if d.get("code") == "0" and d.get("data") and len(d["data"]) > 0:
-                        pkg["lsRatio"] = float(d["data"][0][1])
+                d = market.get_json(f"https://www.okx.com/api/v5/rubik/stat/contracts/long-short-account-ratio?ccy={ccy}&period=5m")
+                if d.get("code") == "0" and d.get("data") and len(d["data"]) > 0:
+                    pkg["lsRatio"] = float(d["data"][0][1])
             except Exception:
                 pass
 
             try:
-                req = urllib.request.Request(f"https://www.okx.com/api/v5/rubik/stat/taker-volume?ccy={ccy}&instType=CONTRACTS&period=5m", headers=headers)
-                with urllib.request.urlopen(req, timeout=3) as resp:
-                    d = json.loads(resp.read().decode("utf-8"))
-                    if d.get("code") == "0" and d.get("data") and len(d["data"]) > 0:
-                        b_vol = float(d["data"][0][1])
-                        s_vol = float(d["data"][0][2])
-                        net_diff = b_vol - s_vol
-                        pkg["takerNetUsd"] = f"{round(net_diff / 1e4, 1)}万 U"
+                d = market.get_json(f"https://www.okx.com/api/v5/rubik/stat/taker-volume?ccy={ccy}&instType=CONTRACTS&period=5m")
+                if d.get("code") == "0" and d.get("data") and len(d["data"]) > 0:
+                    b_vol = float(d["data"][0][1])
+                    s_vol = float(d["data"][0][2])
+                    net_diff = b_vol - s_vol
+                    pkg["takerNetUsd"] = f"{round(net_diff / 1e4, 1)}万 U"
             except Exception:
                 pass
 
         # 6. OKX ADX Trend Strength Indicator (1H)
         try:
-            cmd = f"okx market indicator adx {inst_id} --bar 1H --json 2>/dev/null"
-            res = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=5)
-            if res.stdout:
-                ind_data = json.loads(res.stdout)
-                if isinstance(ind_data, list) and ind_data:
-                    adx_vals = ind_data[0].get("data", [{}])[0].get("timeframes", {}).get("1H", {}).get("indicators", {}).get("ADX", [])
-                    if adx_vals:
-                        pkg["adx_1h"] = float(adx_vals[0].get("values", {}).get("adx", 0.0) or 0.0)
+            indicators = market.indicator_values(inst_id)
+            pkg["adx_1h"] = float(indicators["ADX"][0]["values"].get("adx", 0.0) or 0.0)
         except Exception:
             pass
 
@@ -804,33 +783,29 @@ def execute_batch_ai_brain_cycle(pos_summary: str = "当前总持仓 0/6", activ
 
     # Fetch OKX Smart Money Signals
     try:
-        instruments_ccy = ",".join([p["name"] for p in packages])
-        sm_cmd = f"okx smartmoney signal-overview-by-filter --instCcyList {instruments_ccy} --json 2>/dev/null"
-        sm_res = subprocess.run(sm_cmd, shell=True, capture_output=True, text=True, timeout=8)
-        if sm_res.stdout:
-            sm_data = json.loads(sm_res.stdout).get("data", [])
-            sm_dict = {item.get("ccy"): item for item in sm_data if item.get("ccy")}
-            for p in packages:
-                ccy = p["name"]
-                if ccy in sm_dict:
-                    item = sm_dict[ccy]
-                    ls = item.get("longShortRatio", {})
-                    notional = item.get("notional", {})
-                    win = item.get("winRate", {})
-                    w_long = round(float(ls.get("weightedLongRatio", 0.5)) * 100, 1)
-                    net_usdt = float(notional.get("netNotionalUsdt", 0) or 0)
-                    net_flow_str = f"{round(net_usdt / 1e4, 1)}万 U" if abs(net_usdt) >= 1e4 else f"{round(net_usdt, 0)} U"
-                    long_cost = notional.get("smartMoneyLongAvgEntry") or "--"
-                    short_cost = notional.get("smartMoneyShortAvgEntry") or "--"
-                    top_win = f"多胜率{round(float(win.get('avgLongWinRate', 0))*100, 1)}%" if win.get('avgLongWinRate') else "--"
+        sm_data = market.smart_money_overview([p["name"] for p in packages])
+        sm_dict = {item.get("ccy"): item for item in sm_data if item.get("ccy")}
+        for p in packages:
+            ccy = p["name"]
+            if ccy in sm_dict:
+                item = sm_dict[ccy]
+                ls = item.get("longShortRatio", {})
+                notional = item.get("notional", {})
+                win = item.get("winRate", {})
+                w_long = round(float(ls.get("weightedLongRatio", 0.5)) * 100, 1)
+                net_usdt = float(notional.get("netNotionalUsdt", 0) or 0)
+                net_flow_str = f"{round(net_usdt / 1e4, 1)}万 U" if abs(net_usdt) >= 1e4 else f"{round(net_usdt, 0)} U"
+                long_cost = notional.get("smartMoneyLongAvgEntry") or "--"
+                short_cost = notional.get("smartMoneyShortAvgEntry") or "--"
+                top_win = f"多胜率{round(float(win.get('avgLongWinRate', 0))*100, 1)}%" if win.get('avgLongWinRate') else "--"
 
-                    p["smart_money"] = {
-                        "weighted_long_pct": w_long,
-                        "net_flow_usdt": net_flow_str,
-                        "avg_long_entry": str(long_cost)[:10],
-                        "avg_short_entry": str(short_cost)[:10],
-                        "top_win_rate": top_win
-                    }
+                p["smart_money"] = {
+                    "weighted_long_pct": w_long,
+                    "net_flow_usdt": net_flow_str,
+                    "avg_long_entry": str(long_cost)[:10],
+                    "avg_short_entry": str(short_cost)[:10],
+                    "top_win_rate": top_win
+                }
     except Exception as e:
         print(f"[AI Brain Batch] SmartMoney fetch warning: {e}")
 
