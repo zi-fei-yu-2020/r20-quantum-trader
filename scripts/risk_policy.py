@@ -134,6 +134,6 @@ def update_equity_state(previous, *, equity, at, cash_flow, complete, policy=Non
     peak=max(equity,number(old.get('peak',equity))+flow)
     if anchor<=0 or peak<=0: raise RiskRejected('Invalid adjusted equity anchor')
     daily=max(0,(anchor-equity)/anchor); drawdown=max(0,(peak-equity)/peak)
-    return {'day':day,'at':at,'equity':equity,'day_anchor':anchor,'peak':peak,'daily_drawdown':daily,
+    return {'external_flow_origin':number(old.get('external_flow_origin',old.get('at',at)),positive=True),'external_flow_total':number(old.get('external_flow_total',0))+flow,'day':day,'at':at,'equity':equity,'day_anchor':anchor,'peak':peak,'daily_drawdown':daily,
             'peak_drawdown':drawdown,'blocked':daily>=policy.daily_drawdown_pct or drawdown>=policy.peak_drawdown_pct,
             'baseline':'observed_equity_not_reconstructed_history'}

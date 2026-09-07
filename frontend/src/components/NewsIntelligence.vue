@@ -1,5 +1,7 @@
 <script setup lang="ts">
 import AppCard from './ui/AppCard.vue'
+import NewsConnectionStatus from './NewsConnectionStatus.vue'
+import { newsIsFresh } from '../utils/newsStatus'
 
 import { computed } from 'vue'
 import { useDashboardStore } from '../stores/dashboard'
@@ -14,6 +16,11 @@ const coinsSentiment = computed<[string, any][]>(() =>
 const macro = computed<string>(() => intel.value.macro_sentiment || '--')
 const breakerActive = computed<boolean>(() => !!intel.value.circuit_breaker?.active)
 
+function safeNewsLink(value: unknown): string | undefined {
+  if (typeof value !== 'string') return undefined
+  try { const url = new URL(value); return ['https:', 'http:'].includes(url.protocol) ? url.href : undefined } catch { return undefined }
+}
+
 function labelClass(label: string) {
   if (label === 'bullish')
     return 'color: var(--color-up); background-color: var(--color-up-bg); border-color: var(--color-up-border);'
@@ -26,7 +33,7 @@ function labelClass(label: string) {
 
 function labelCn(label: string) {
   return (
-    { bullish: '偏多', bearish: '偏空', mixed: '多空交织', neutral: '中性' }[label] ||
+    { bullish: '偏多', bearish: '偏空', mixed: '多空交织', neutral: '中性', unknown: '未知' }[label] ||
     label ||
     '中性'
   )
@@ -78,13 +85,13 @@ function importanceCn(imp: string) {
         <span
           class="px-2.5 py-1 rounded-lg border text-xs font-mono font-bold"
           :style="{
-            backgroundColor: breakerActive ? 'var(--color-down-bg)' : 'var(--color-up-bg)',
-            borderColor: breakerActive ? 'var(--color-down-border)' : 'var(--color-up-border)',
-            color: breakerActive ? 'var(--color-down)' : 'var(--color-up)',
+            backgroundColor: breakerActive ? 'var(--color-down-bg)' : newsIsFresh(intel) ? 'var(--color-up-bg)' : 'var(--color-warn-bg)',
+            borderColor: breakerActive ? 'var(--color-down-border)' : newsIsFresh(intel) ? 'var(--color-up-border)' : 'var(--color-warn-border)',
+            color: breakerActive ? 'var(--color-down)' : newsIsFresh(intel) ? 'var(--color-up)' : 'var(--color-warn)',
           }"
         >
           <ShieldAlert class="w-3 h-3 inline mr-1" />
-          {{ breakerActive ? '黑天鹅熔断激活' : '常态监控中' }}
+          {{ breakerActive ? '黑天鹅熔断激活' : newsIsFresh(intel) ? '资讯监测可用' : '资讯监测待恢复' }}
         </span>
 
         <span
@@ -100,6 +107,7 @@ function importanceCn(imp: string) {
       </div>
     </AppCard>
 
+    <NewsConnectionStatus :status="intel" />
     <!-- Coin Sentiment Chips -->
     <div
       v-if="coinsSentiment.length"
@@ -135,7 +143,7 @@ function importanceCn(imp: string) {
           style="border-color: var(--border-subtle)"
         >
           <span style="color: var(--text-faint)"
-            >提及 {{ (s.mentions ?? 0).toLocaleString() }}</span
+            >提及 {{ s.mentions == null ? '--' : s.mentions.toLocaleString() }}</span
           >
           <span v-if="s.long_short_ratio" class="font-bold text-blue-400"
             >比率 {{ s.long_short_ratio }}</span
@@ -155,7 +163,7 @@ function importanceCn(imp: string) {
       "
     >
       <p class="text-xs font-mono font-medium">
-        当前市场无破坏性突发黑天鹅或高热度异动，舆情环境平稳。
+        暂无可展示资讯。可能是连接未就绪、缓存过期或本次查询没有结果，不能据此判断市场平稳。
       </p>
     </div>
 
@@ -204,7 +212,7 @@ function importanceCn(imp: string) {
             >
             <a
               v-if="item.url"
-              :href="item.url"
+              :href="safeNewsLink(item.url)"
               target="_blank"
               rel="noopener noreferrer"
               class="flex items-center hover:underline"

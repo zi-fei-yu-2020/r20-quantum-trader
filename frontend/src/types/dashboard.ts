@@ -1,3 +1,5 @@
+import type { ScenarioShadowStatus } from '../utils/scenarioShadow'
+import type { CapitalPoolStatus } from '../utils/capitalPool'
 import type { WaitAuditState, DecisionCycle } from '../utils/waitAudit'
 import type { MacroAnalysis } from '../utils/macroAnalysis'
 // OKX raw numeric strings and locally aggregated numeric values coexist.
@@ -141,6 +143,8 @@ export interface LLMRuntime {
 }
 
 export interface DashboardResponse {
+  scenario_shadow?: ScenarioShadowStatus
+  capital_pool?: CapitalPoolStatus
   wait_audit?: WaitAuditState
   decision_cycle?: DecisionCycle
   macro_analysis?: MacroAnalysis
@@ -167,7 +171,7 @@ export interface DashboardResponse {
   ai_last_prompt?: string
   today_stats?: any
   performance?: any
-  news_intelligence?: any[]
+  news_intelligence?: Record<string, any>
   review?: any
   ai_trading_memory_md?: string
   factor_library?: any

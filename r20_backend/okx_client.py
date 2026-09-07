@@ -47,10 +47,11 @@ class OKXClient:
         return payload.get("data", payload)
 
     def _request(self, method, path, params=None):
-        from scripts.okx_runtime import OKXEnvironment
+        from scripts.okx_runtime import selected_environment
         from scripts.algo_reader import algo_mutation
-        selected = OKXEnvironment(settings.okx_environment, settings.okx_api_key,
-                                  settings.okx_secret_key, settings.okx_passphrase, self.base_url)
+        from r20_backend.account_connections import assert_current
+        selected = selected_environment()
+        assert_current(selected)
         if method.upper() != "GET" and path.startswith("/api/v5/trade/"):
             from scripts.trade_lock import writer
             with writer(), algo_mutation(selected):

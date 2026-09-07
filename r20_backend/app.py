@@ -785,6 +785,12 @@ def admin_runtime(x_r20_admin_token: str | None = Header(default=None), x_r20_se
     from scripts.wait_audit import public_status as wait_status
     from scripts.okx_runtime import selected_environment
     payload["wait_audit"] = wait_status(selected_environment().identity)
+    from scripts.decision_reporting import execution_history
+    payload["recent_execution_cycles"] = execution_history(selected_environment().identity)
+    from scripts.scenario_shadow import public_status as shadow_status
+    payload["scenario_shadow"] = shadow_status(selected_environment().identity)
+    from scripts.capital_pool import status as capital_status
+    payload["capital_pool"] = capital_status(selected_environment())
     payload["decision_cycle"] = read_json("trading_state.json", {}).get("decision_cycle", {})
     raw_decisions = read_json("ai_brain_decisions.json", {})
     if isinstance(raw_decisions, dict):
@@ -940,6 +946,9 @@ def admin_okx_runtime(x_r20_session: str | None = Header(default=None, alias="X-
 @app.post("/api/v1/admin/okx/oauth/start")
 def admin_okx_oauth_start(payload: OkxOAuthStartRequest, x_r20_session: str | None = Header(default=None, alias="X-R20-Session")) -> dict[str, Any]:
     actor = require_superadmin(x_r20_session)
+    from r20_backend.account_connections import load as load_connections
+    if load_connections()['connections']:
+        raise HTTPException(status_code=409, detail='已有独立连接，请在账户中心授权；禁止覆盖全局OAuth登录态')
     try:
         result = start_oauth_device_login(payload.site)
     except (ValueError, RuntimeError) as exc:
@@ -985,6 +994,9 @@ def update_admin_config(payload: AdminConfigUpdate, x_r20_admin_token: str | Non
         raise HTTPException(status_code=400, detail="LLM Base URL 必须以 http:// 或 https:// 开头")
     if "notification_webhook" in data and data["notification_webhook"] and not data["notification_webhook"].startswith(("https://", "http://")):
         raise HTTPException(status_code=400, detail="Webhook 必须以 http:// 或 https:// 开头")
+    from r20_backend.account_connections import load as load_connections
+    if any(k.startswith('okx_') for k in data) and load_connections()['managed']:
+        raise HTTPException(status_code=409, detail='账户中心已接管连接，请在账户中心检查、绑定或更换账号，不能通过旧配置绕过安全检查')
     selected_mode = data.get("okx_environment") or ("demo" if data.get("okx_simulated") else "live" if "okx_simulated" in data else None)
     if selected_mode and selected_mode != settings.okx_environment:
         import fcntl
@@ -2520,6 +2532,9 @@ def positions(x_r20_admin_token: str | None = Header(default=None)) -> dict[str,
     except Exception as exc:
         raise HTTPException(status_code=502, detail=f"OKX account request failed: {exc}") from exc
 
+
+from r20_backend.account_routes import install as install_account_routes
+install_account_routes(app, require_superadmin, audit_record)
 
 # Preserve the existing public dashboard and its relative-path API contract at /.
 # Admin and /api/v1 routes above are evaluated before this catch-all mount.

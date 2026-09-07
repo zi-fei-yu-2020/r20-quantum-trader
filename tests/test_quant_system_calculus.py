@@ -296,7 +296,7 @@ class AiFactorTraderPositionProtectionTest(unittest.TestCase):
         with patch.object(ai_factor_trader,"close_position_confirmed",return_value=(True,"exchange position closed")) as close, patch.object(ai_factor_trader,"record_trade"), patch.object(ai_factor_trader,"add_stop_cooldown"), patch.object(ai_factor_trader,"notify_trade_close") as notify_close:
             closed,reason=ai_factor_trader.manage_position_tp_and_trailing(self._factor(),position,trackers,"2026-09-02 15:00:00",actions)
         self.assertTrue(closed); self.assertEqual(reason,"已硬止损")
-        close.assert_called_once_with("SOL-USDT-SWAP","long",4.0)
+        close.assert_called_once_with("SOL-USDT-SWAP","long",4.0,exit_reason="hard_stop",position=position)
         self.assertNotIn("SOL-USDT-SWAP_long",trackers)
         self.assertTrue(any("触发硬止损" in item for item in actions))
         if notify_close is not None:
@@ -342,7 +342,7 @@ class AiFactorTraderPositionProtectionTest(unittest.TestCase):
         with patch.object(ai_factor_trader,"ensure_cloud_position_protection",return_value=(False,"repair failed")), patch.object(ai_factor_trader,"close_position_confirmed",return_value=(True,"closed")) as close, patch.object(ai_factor_trader,"record_trade"), patch.object(ai_factor_trader,"add_stop_cooldown"), patch.object(ai_factor_trader,"notify_trade_close") as notify_close:
             closed,reason=ai_factor_trader.manage_position_tp_and_trailing(self._factor(102.5),position,trackers,"2026-09-02 15:00:00",actions)
         self.assertTrue(closed); self.assertEqual(reason,"保护核验安全退出")
-        close.assert_called_once_with("SOL-USDT-SWAP","long",4.0)
+        close.assert_called_once_with("SOL-USDT-SWAP","long",4.0,exit_reason="oco_unverified",position=position)
         self.assertNotIn("SOL-USDT-SWAP_long",trackers)
         if notify_close is not None:
             notify_close.assert_called_once_with(inst="SOL", pnl=-4.0, stage="云端保护核验未知退出", exit_px=102.5)

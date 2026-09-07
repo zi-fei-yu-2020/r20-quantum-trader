@@ -25,6 +25,7 @@ export interface WaitAuditState {
   items: WaitAuditRecord[]
 }
 export interface DecisionCycle {
+  executed_actions?: string[]
   timestamp?: string
   status?: string
   evaluated_count?: number
@@ -39,4 +40,9 @@ export function conditionText(c: AuditCondition): string {
   if (c.op === 'available') return `${c.ref} 恢复可用`
   const op = ({ gt: '>', gte: '≥', lt: '<', lte: '≤', eq: '=', ne: '≠' } as Record<string, string>)[c.op] || c.op
   return `${c.ref} ${op} ${String(c.value)}`
+}
+
+export function reviewLabel(row: WaitAuditRecord): string {
+  if (!row.previous_check?.required) return ""
+  return row.status === "audited_wait" && row.audit?.previous_review ? "\u524d\u8f6e\u6761\u4ef6\u5df2\u590d\u67e5" : "\u524d\u8f6e\u6761\u4ef6\u5f85\u590d\u67e5"
 }

@@ -1,6 +1,8 @@
 <script setup lang="ts">
 import AppCard from './ui/AppCard.vue'
 import DecisionAuditPanel from './DecisionAuditPanel.vue'
+import CapitalPoolPanel from './CapitalPoolPanel.vue'
+import ScenarioShadowPanel from './ScenarioShadowPanel.vue'
 import { auditLabel } from '../utils/waitAudit'
 import InstrumentSupportNotice from './InstrumentSupportNotice.vue'
 import { canOpen } from '../utils/instrumentSupport'
@@ -52,6 +54,8 @@ function getActionLabel(action?: string, status?: string) {
 
 <template>
   <div class="space-y-3">
+    <CapitalPoolPanel :pool="store.data?.capital_pool" />
+    <ScenarioShadowPanel :shadow="store.data?.scenario_shadow" />
     <DecisionAuditPanel :audit="store.data?.wait_audit" :cycle="store.data?.decision_cycle" />
     <!-- Macro Summary Telemetry Strip -->
     <AppCard

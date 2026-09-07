@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import AppCard from './ui/AppCard.vue'
-import { auditLabel, conditionText } from '../utils/waitAudit'
+import { auditLabel, conditionText, reviewLabel } from '../utils/waitAudit'
 import type { WaitAuditState, DecisionCycle } from '../utils/waitAudit'
 const props = defineProps<{ audit?: WaitAuditState; cycle?: DecisionCycle }>()
 const rows = computed(() => props.audit?.items || [])
@@ -28,12 +28,12 @@ const timestamp = computed(() => props.audit?.updated_at
     <p v-if="!rows.length" class="text-xs" style="color: var(--text-muted)">
       {{ cycle?.unavailable_reason || '尚未取得结构化审计，不能将旧版 WAIT 视为已通过审查。' }}
     </p>
-    <div class="grid min-w-0 grid-cols-1 gap-2 xl:grid-cols-2">
-      <details v-for="row in rows" :key="row.instId" class="min-w-0 rounded-lg border p-2.5"
+    <div class="grid min-w-0 grid-cols-1 items-start gap-2 xl:grid-cols-2">
+      <details v-for="row in rows" :key="row.instId" :data-wait-audit-card="row.instId" class="min-w-0 self-start rounded-lg border p-2.5"
         style="border-color: var(--border-subtle); background: var(--bg-card-subtle)">
         <summary class="cursor-pointer text-xs leading-relaxed break-words" style="color: var(--text-main)">
           <strong>{{ row.instId.split('-')[0] }}</strong> · {{ auditLabel(row.status) }}
-          <span v-if="row.previous_check?.required" class="ml-1">· 前轮条件需复查</span>
+          <span v-if="reviewLabel(row)" class="ml-1">· {{ reviewLabel(row) }}</span>
         </summary>
         <div class="mt-2 space-y-2 text-xs leading-relaxed break-words min-w-0" style="color: var(--text-muted); overflow-wrap: anywhere">
           <p v-if="row.error" style="color: var(--text-main)">未通过：{{ row.error }}</p>
@@ -53,6 +53,12 @@ const timestamp = computed(() => props.audit?.updated_at
         </div>
       </details>
     </div>
+    <details v-if="cycle?.executed_actions?.length" class="text-xs min-w-0">
+      <summary class="cursor-pointer" style="color: var(--text-main)">本轮完整执行记录（{{ cycle.executed_actions.length }}）</summary>
+      <ul class="mt-2 space-y-1 leading-relaxed break-words" style="color: var(--text-muted); overflow-wrap: anywhere">
+        <li v-for="(action, index) in cycle.executed_actions" :key="index">{{ action }}</li>
+      </ul>
+    </details>
     <p v-if="cycle?.environment_notices?.length" class="text-xs leading-relaxed break-words" style="color: var(--text-muted)">
       环境限制（非交易动作）：{{ cycle.environment_notices.join('；') }}
     </p>

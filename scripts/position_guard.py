@@ -26,13 +26,18 @@ def read_positions(env):
     return positions
 
 
-def observe_equity(env):
+def observe_equity(env,positions=None):
     from r20_backend.okx_trade_service import _request
     from scripts.entry_gateway import equity_guard
     from scripts.risk_policy import load_policy
     rows=_request('GET','/api/v5/account/balance',{},env)
     if len(rows)!=1:raise ValueError('Guard equity read unknown')
-    return equity_guard(env,rows[0],load_policy())
+    policy=load_policy();observation=equity_guard(env,rows[0],policy)
+    from scripts import capital_pool
+    if positions is not None and not capital_pool.active_positions(positions) and capital_pool.needs_initialization(env):
+        pending=_request('GET','/api/v5/trade/orders-pending',{'instType':'SWAP'},env)
+        capital_pool.initialize_flat(env,observation,rows[0],positions,pending,policy)
+    return observation
 
 def run_guard(*, observe_only=False):
     import ai_factor_trader as trader
@@ -45,7 +50,7 @@ def run_guard(*, observe_only=False):
         with writer(timeout=5):
             positions=read_positions(env)
             if not observe_only:
-                try: observe_equity(env)
+                try: observe_equity(env,positions)
                 except Exception as exc: actions.append({'status':'equity_guard_blocked_or_unknown','category':type(exc).__name__})
             held=[p for p in positions if abs(float(p.get('pos') or 0))>0]
             trackers=trader.load_trackers()
@@ -73,7 +78,7 @@ def run_guard(*, observe_only=False):
                     protected=not orders_unknown and trader._live_oco_coverage(same,side)>=abs(float(position['pos']))*.999
                     actions.append({'instrument':inst,'status':'metadata_missing','coverage_confirmed':protected})
                     if not observe_only and not protected:
-                        closed,detail=trader.close_position_confirmed(inst,side,abs(float(position['pos'])))
+                        closed,detail=trader.close_position_confirmed(inst,side,abs(float(position['pos'])),exit_reason='independent_guard',position=position)
                         if closed:
                             trackers.pop(key,None)
                             trader.add_stop_cooldown(inst,side,'Independent guard safety exit')
@@ -94,7 +99,7 @@ def run_guard(*, observe_only=False):
                     actions.append({'instrument':inst,'coverage_confirmed':covered,'market_data_valid':factors['market_data_valid']});continue
                 if orders_unknown or (not covered and not factors.get('market_data_valid')):
                     # Market-factor loss does not disable fail-closed account protection.
-                    closed,detail=trader.close_position_confirmed(inst,side,abs(float(position['pos'])))
+                    closed,detail=trader.close_position_confirmed(inst,side,abs(float(position['pos'])),exit_reason='independent_guard',position=position)
                     actions.append({'instrument':inst,'status':'protection_unknown_exit','closed':closed})
                     if closed:
                         trackers.pop(key,None)

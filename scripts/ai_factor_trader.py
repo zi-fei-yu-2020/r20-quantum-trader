@@ -147,6 +147,8 @@ def is_tradfi_market_liquid(asset_type: str) -> bool:
 def run_cmd_result(cmd, timeout=15):
     """Return process metadata; callers must inspect returncode before mutating local state."""
     try:
+        from r20_backend.account_connections import assert_current
+        assert_current(market._selected())
         with algo_reader.command_barrier(cmd, market._selected()):
             res = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=timeout)
         parsed = None
@@ -357,7 +359,7 @@ def query_positions() -> Tuple[bool, List[Dict[str, Any]], str]:
     return True, result["data"], ""
 
 
-def close_position_confirmed(inst_id: str, pos_side: str, before_size: float) -> Tuple[bool, str]:
+def close_position_confirmed(inst_id: str, pos_side: str, before_size: float, *, exit_reason='strategy_close', position=None) -> Tuple[bool, str]:
     """Close a position and verify at the exchange before changing local state."""
     # Pre-cancel any conflicting pending/reduce-only orders for this instrument to release available size
     try:
@@ -372,6 +374,15 @@ def close_position_confirmed(inst_id: str, pos_side: str, before_size: float) ->
     except Exception as e:
         print(f"[Close Pre-Clean] Warning cancelling pending orders for {inst_id}: {e}")
 
+    close_started = time.time()
+    def journal(status, response):
+        try:
+            from scripts.close_evidence import record_close
+            record_close(market._selected(),inst_id=inst_id,side=pos_side,size=before_size,
+                started_at=close_started,confirmed_at=time.time(),reason=exit_reason,position=position,
+                result=response,status=status)
+        except Exception:
+            pass  # Never retry or suppress a protective close because audit storage failed.
     result = run_cmd_result(
         okx_private_command(f"okx swap close --instId {inst_id} --mgnMode cross --posSide {pos_side} --autoCxl --json"),
         timeout=20,
@@ -379,6 +390,7 @@ def close_position_confirmed(inst_id: str, pos_side: str, before_size: float) ->
     if not result["ok"]:
         return False, result["stderr"] or result["stdout"] or "close command failed"
 
+    journal('accepted',result.get('data'))
     saw_successful_query = False
     for _ in range(6):
         time.sleep(0.6)
@@ -387,11 +399,12 @@ def close_position_confirmed(inst_id: str, pos_side: str, before_size: float) ->
             continue
         saw_successful_query = True
         remaining = 0.0
-        for position in positions:
-            if position.get("instId") == inst_id and str(position.get("posSide", "net")).lower() == pos_side:
-                remaining = abs(float(position.get("pos", 0) or 0))
+        for current_position in positions:
+            if current_position.get("instId") == inst_id and str(current_position.get("posSide", "net")).lower() == pos_side:
+                remaining = abs(float(current_position.get("pos", 0) or 0))
                 break
         if remaining < max(1e-12, abs(before_size) * 0.001):
+            journal('confirmed',result.get('data'))
             return True, "exchange position closed"
     if not saw_successful_query:
         return False, "position verification failed: no successful exchange response"
@@ -1003,7 +1016,7 @@ def manage_position_tp_and_trailing(f, curr_pos, trackers, timestamp_full, execu
             adopted_stop = (min if is_long else max)(float(o['slTriggerPx']) for o in rows)
             adopted_tp = float(rows[0]['tpTriggerPx'])
         except Exception:
-            closed, detail = close_position_confirmed(inst_id, 'long' if is_long else 'short', pos_sz)
+            closed, detail = close_position_confirmed(inst_id, 'long' if is_long else 'short', pos_sz, exit_reason='oco_unverified', position=curr_pos)
             executed_actions.append(f"[{name}] 新发现持仓缺少可确认的原始保护，安全退出确认={closed}")
             return closed, '初始保护核验未知'
         score, action, reasons, strat_tag, strat_desc = evaluate_asset_signal(f)
@@ -1047,7 +1060,7 @@ def manage_position_tp_and_trailing(f, curr_pos, trackers, timestamp_full, execu
     hard_stop_px = float(t.get("trailingStopPx", 0.0) or 0.0)
     hard_stop_hit = hard_stop_px > 0 and ((is_long and cur_px <= hard_stop_px) or (not is_long and cur_px >= hard_stop_px))
     if hard_stop_hit:
-        closed, close_detail = close_position_confirmed(inst_id, "long" if is_long else "short", pos_sz)
+        closed, close_detail = close_position_confirmed(inst_id, "long" if is_long else "short", pos_sz, exit_reason='hard_stop', position=curr_pos)
         if not closed:
             executed_actions.append(f"[{name}] 硬止损平仓失败，仓位仍保留: {close_detail}")
             return False, "硬止损平仓失败"
@@ -1083,7 +1096,7 @@ def manage_position_tp_and_trailing(f, curr_pos, trackers, timestamp_full, execu
         inst_id, "long" if is_long else "short", pos_sz, float(t["takeProfitPx"]), hard_stop_px
     )
     if not protected:
-        closed, close_detail = close_position_confirmed(inst_id, "long" if is_long else "short", pos_sz)
+        closed, close_detail = close_position_confirmed(inst_id, "long" if is_long else "short", pos_sz, exit_reason='oco_unverified', position=curr_pos)
         if not closed:
             executed_actions.append(f"[{name}] 🚨 云端 OCO 核验未通过且安全退出失败: {protection_detail}; {close_detail}")
             return False, "保护与退出均失败"
@@ -1109,7 +1122,7 @@ def manage_position_tp_and_trailing(f, curr_pos, trackers, timestamp_full, execu
     # 2. Volatility Time-Stop Exit (After 8 Hours dead consolidation without expansion)
     hold_duration_sec = now_ts - t["entryTs"]
     if hold_duration_sec > 28800 and abs(cur_profit_px) < 0.15 * atr:
-        closed, close_detail = close_position_confirmed(inst_id, "long" if is_long else "short", pos_sz)
+        closed, close_detail = close_position_confirmed(inst_id, "long" if is_long else "short", pos_sz, exit_reason='time_exit', position=curr_pos)
         if not closed:
             executed_actions.append(f"[{name}] 时间止损平仓失败，仓位仍保留: {close_detail}")
             return False, "平仓失败"
@@ -1158,7 +1171,7 @@ def manage_position_tp_and_trailing(f, curr_pos, trackers, timestamp_full, execu
 
         # A. Hit Ratchet Floor Stop (Locked Profit Trigger)
         if cur_px <= dynamic_floor_sl and peak_profit_px >= tier1_breakeven_trigger:
-            closed, close_detail = close_position_confirmed(inst_id, "long", pos_sz)
+            closed, close_detail = close_position_confirmed(inst_id, "long", pos_sz, exit_reason='profit_lock', position=curr_pos)
             if not closed:
                 executed_actions.append(f"[{name}] 锁利平多失败，仓位仍保留: {close_detail}")
                 return False, "平仓失败"
@@ -1188,7 +1201,7 @@ def manage_position_tp_and_trailing(f, curr_pos, trackers, timestamp_full, execu
 
         # B. Kinetic Momentum Pullback Exit from Peak (Pullback >= 0.75x ATR when profit >= 2.0x ATR)
         if peak_profit_px >= 2.0 * atr and cur_px <= (t["highWaterMark"] - 0.75 * atr):
-            closed, close_detail = close_position_confirmed(inst_id, "long", pos_sz)
+            closed, close_detail = close_position_confirmed(inst_id, "long", pos_sz, exit_reason='trailing_exit', position=curr_pos)
             if not closed:
                 executed_actions.append(f"[{name}] 动能见顶移动止盈失败，仓位仍保留: {close_detail}")
                 return False, "平仓失败"
@@ -1230,7 +1243,7 @@ def manage_position_tp_and_trailing(f, curr_pos, trackers, timestamp_full, execu
 
         # A. Hit Ratchet Floor Stop (Locked Profit Trigger)
         if cur_px >= dynamic_floor_sl and peak_profit_px >= tier1_breakeven_trigger:
-            closed, close_detail = close_position_confirmed(inst_id, "short", pos_sz)
+            closed, close_detail = close_position_confirmed(inst_id, "short", pos_sz, exit_reason='profit_lock', position=curr_pos)
             if not closed:
                 executed_actions.append(f"[{name}] 锁利平空失败，仓位仍保留: {close_detail}")
                 return False, "平仓失败"
@@ -1260,7 +1273,7 @@ def manage_position_tp_and_trailing(f, curr_pos, trackers, timestamp_full, execu
 
         # B. Kinetic Momentum Pullback Exit from Peak
         if peak_profit_px >= 1.5 * atr and cur_px >= (t["lowWaterMark"] + 0.5 * atr):
-            closed, close_detail = close_position_confirmed(inst_id, "short", pos_sz)
+            closed, close_detail = close_position_confirmed(inst_id, "short", pos_sz, exit_reason='trailing_exit', position=curr_pos)
             if not closed:
                 executed_actions.append(f"[{name}] 动能见底移动止盈失败，仓位仍保留: {close_detail}")
                 return False, "平仓失败"
@@ -1322,7 +1335,7 @@ def execute_ai_position_management(real_pos_dict, trackers, timestamp_full, exec
             if confidence < 85:
                 executed_actions.append(f"[{name}] AI平仓置信度{confidence:.0f}<85，拒绝执行")
                 continue
-            closed, close_detail = close_position_confirmed(inst_id, pos_side, float(position.get("pos", 0) or 0))
+            closed, close_detail = close_position_confirmed(inst_id, pos_side, float(position.get("pos", 0) or 0), exit_reason='ai_exit', position=position)
             if closed:
                 executed_actions.append(f"[{name}] AI高置信度整仓退出: {reason}")
                 trackers.pop(f"{inst_id}_{pos_side}", None)
@@ -2065,11 +2078,12 @@ def execute_portfolio():
                     else:
                         executed_actions.append(f"[{f['name']}] AI限价空单提交失败: {order_ref}")
 
-    from scripts.decision_reporting import summarize, format_summary
+    from scripts.decision_reporting import summarize, format_summary, format_actions
     decision_cycle = summarize(brain_cache, environment_notices,
         unavailable_reason=cb_reason if cb_active else get_last_inference_error() if not brain_cache else '',
         circuit_breaker=cb_active)
     decision_cycle['timestamp'] = timestamp_full
+    decision_cycle['executed_actions'] = list(executed_actions)
     from scripts.wait_audit import public_status as wait_status
     latest_wait_status = wait_status(market._selected().identity)
     if brain_cache:
@@ -2118,6 +2132,9 @@ def execute_portfolio():
     with open(os.path.join(DATA_DIR, "trading_state.json"), "w", encoding="utf-8") as f:
         json.dump(state_payload, f, ensure_ascii=False, indent=2)
 
+    strategy_evidence.best_effort(market._selected().identity, 'execution_cycle',
+        {'timestamp':timestamp_full,'actions':executed_actions,'decision_cycle':decision_cycle})
+
     # 6. Always Sync Full Lifecycle Ledger and SQLite DB in Realtime
     try:
         sync_script = os.path.join(WORKSPACE_DIR, "scripts", "sync_full_ledger.py")
@@ -2129,7 +2146,7 @@ def execute_portfolio():
     except Exception as e:
         print(f"[Ledger Sync Warning] {e}")
 
-    log_entry = f"[{timestamp_full}] ⚡ R20 Quantum Trader v7.3.0 巡检完成 | 持仓 {active_pos_count}/{MAX_CONCURRENT_POSITIONS} (多{long_count}/空{short_count}) | 动作: {', '.join(executed_actions) if executed_actions else '无开平仓操作'} | 决策: {format_summary(decision_cycle)}\n"
+    log_entry = f"[{timestamp_full}] 巡检完成 | 持仓 {active_pos_count}/{MAX_CONCURRENT_POSITIONS} (多{long_count}/空{short_count}) | 动作: {format_actions(executed_actions)} | 决策: {format_summary(decision_cycle)}\n"
     with open(LOG_FILE, "a", encoding="utf-8") as f:
         f.write(log_entry)
     print(log_entry.strip())

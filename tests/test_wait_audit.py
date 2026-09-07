@@ -194,7 +194,7 @@ class DecisionReportingTests(unittest.TestCase):
         summary=summarize({'BTC-USDT-SWAP':{'name':'BTC','decision':decision}},['WLD：模拟盘不支持，仅观察'])
         line=format_summary(summary)
         self.assertEqual(summary['evaluated_count'],1)
-        self.assertIn('BTC',line);self.assertIn('WAIT审计通过',line);self.assertIn('环境限制:',line)
+        self.assertEqual(summary['items'][0]['name'],'BTC');self.assertIn('WAIT1',line);self.assertIn('观察:WLD',line)
         self.assertEqual(summary['counts']['audited_wait'],1)
 
     def test_no_cache_is_not_audited_wait(self):
@@ -204,7 +204,7 @@ class DecisionReportingTests(unittest.TestCase):
     def test_legacy_wait_and_rejected_entry_are_incomplete(self):
         summary=summarize({'BTC-USDT-SWAP':{'decision':{'action':'WAIT','summary_reason':'old'}}})
         self.assertEqual(summary['counts']['incomplete'],1)
-        self.assertIn('决策不完整',format_summary(summary))
+        self.assertIn('不完整1(BTC)',format_summary(summary))
 
     def test_incomplete_macro_is_not_green_ready(self):
         from r20_backend.macro_status import project
@@ -215,4 +215,4 @@ class DecisionReportingTests(unittest.TestCase):
         summary=summarize({'BTC-USDT-SWAP':{'decision':{'action':'WAIT','contract_valid':False,'decision_status':'execution_rejected','validation_reason':'ADX gate'}}})
         self.assertEqual(summary['counts']['execution_rejected'],1)
         self.assertEqual(summary['counts']['incomplete'],0)
-        self.assertIn('ADX gate',format_summary(summary))
+        self.assertEqual(summary['items'][0]['reason'],'ADX gate');self.assertIn('风控拒绝1(BTC)',format_summary(summary))

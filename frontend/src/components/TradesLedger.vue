@@ -292,7 +292,7 @@ function clean(v: any, fallback = '--'): string {
                 >
                   {{ t.status === 'holding' ? '在途' : isSettlementPending(t) ? '已平·待结算' : '已平' }}
                 </span>
-                <span class="trade-ledger__reason">{{ clean(t.exit_reason, '持仓中') }}</span>
+                <span class="trade-ledger__reason" :title="t.attribution_note || t.exit_evidence || ''">{{ clean(t.exit_reason, '持仓中') }}</span>
               </td>
             </tr>
           </tbody>

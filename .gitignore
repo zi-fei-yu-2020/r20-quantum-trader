@@ -72,6 +72,8 @@ data/*.txt
 data/*.md
 data/.*secret_key
 data/credentials/
+data/oauth-connections/
+data/account-switch-archive/
 data/.public-market/
 data/.private-algos/
 data/research_runs/

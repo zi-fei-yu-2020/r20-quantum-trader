@@ -1,6 +1,6 @@
 """Account-wide, READ-ONLY algo snapshots with cross-process admission control.
 
-The network transport can only GET orders-algo-pending. Write barriers only
+Pending snapshots and optional history enrichment are read-only fixed endpoints. Write barriers only
 invalidate snapshots; they never retry, delay on the read gate, or send orders.
 """
 from __future__ import annotations
@@ -406,3 +406,25 @@ def read_algo_orders(env, *, priority='risk', force=False, timeout=None):
 
 def orders_for_instrument(orders, inst_id):
     return [row for row in orders if row.get('instId') == inst_id]
+
+
+def read_algo_history(env, *, ord_type, timeout=2.0):
+    """Optional one-page history enrichment; same monitor admission, no write/retry.
+
+    History-specific failures do not poison the risk endpoint's shared cooldown.
+    """
+    if ord_type not in ('oco','conditional'):raise ValueError('Unsupported history type')
+    if not env.configured:raise AlgoReadError('history_requires_static_key')
+    if env.base_url.rstrip('/')!='https://www.okx.com':raise AlgoReadError('invalid_host')
+    deadline=time.monotonic()+min(2.,max(.1,float(timeout)))
+    try:
+        with _turn(deadline,'monitor'):
+            _reserve(deadline,'monitor');_check(deadline,'monitor')
+            from r20_backend.okx_trade_service import _request
+            rows=_request('GET','/api/v5/trade/orders-algo-history',
+                {'ordType':ord_type,'state':'effective','instType':'SWAP','limit':'100'},env,
+                timeout=max(.1,deadline-time.monotonic()))
+            if not isinstance(rows,list) or any(not isinstance(r,dict) for r in rows):raise AlgoReadError('invalid_history_response')
+            return rows
+    except AlgoReadError:raise
+    except Exception as exc:raise AlgoReadError('history_unavailable',code=getattr(exc,'code',0) or 0) from None

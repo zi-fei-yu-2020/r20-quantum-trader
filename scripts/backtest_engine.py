@@ -6,7 +6,7 @@ frozen timestamped decisions for replay. No online model is called by this modul
 """
 from __future__ import annotations
 import argparse
-from dataclasses import dataclass, field, asdict
+from dataclasses import dataclass, field, asdict, replace
 import datetime
 import hashlib
 import json
@@ -18,7 +18,7 @@ from typing import Any, Dict, List, Optional
 
 ROOT=Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path: sys.path.insert(0,str(ROOT))
-from scripts.risk_policy import Policy, RiskRejected, order_plan, number, floor_step
+from scripts.risk_policy import Policy, RiskRejected, order_plan, number, floor_step, update_equity_state
 from scripts.signal_data import closed_candles, bar_seconds
 from scripts.instrument_pool import load_instruments
 
@@ -67,6 +67,12 @@ class BacktestSummary:
     input_hash: str=''
     funding_complete: bool=False
     operating_costs_usdt: float=0
+    replay_leverage: float=3
+    entry_evaluations: int=0
+    accepted_orders: int=0
+    filled_entries: int=0
+    expired_orders: int=0
+    rejection_reasons: Dict[str,int]=field(default_factory=dict)
 
 
 def fetch_okx_candles(inst_id,bar='1H',limit=100):
@@ -114,7 +120,7 @@ def baseline_signals(candles):
 class BacktestEngine:
     def __init__(self,initial_capital=10000.,risk_per_trade_pct=.005,maker_fee=.0002,taker_fee=.0005,
                  slippage=.001,min_confidence_gate=.75,min_rr_gate=2.,*,bar='1H',participation=.01,
-                 order_ttl_bars=2,policy=None,metadata=None):
+                 order_ttl_bars=2,policy=None,metadata=None,leverage=3,max_positions=None,capital_ceiling=None,asset_margin_fraction=None,total_margin_fraction=None):
         self.initial_capital=number(initial_capital,positive=True)
         self.risk_per_trade_pct=number(risk_per_trade_pct,positive=True)
         self.maker_fee=number(maker_fee);self.taker_fee=number(taker_fee);self.slippage=number(slippage)
@@ -124,6 +130,14 @@ class BacktestEngine:
         if min(self.maker_fee,self.taker_fee,self.slippage)<0 or self.participation>1 or self.order_ttl_bars<1:
             raise ValueError('Invalid execution assumptions')
         self.policy=policy or Policy(per_trade_equity_pct=risk_per_trade_pct,taker_fee=max(taker_fee,1e-12),slippage=max(slippage,1e-12),minimum_net_rr=min_rr_gate)
+        self.leverage=number(leverage,positive=True)
+        if self.leverage>self.policy.max_leverage:raise ValueError('Replay leverage exceeds declared risk policy')
+        if max_positions is not None and (isinstance(max_positions,bool) or not isinstance(max_positions,int) or max_positions<1):raise ValueError('Invalid replay position cap')
+        self.max_positions=max_positions
+        self.capital_ceiling=number(capital_ceiling,positive=True) if capital_ceiling is not None else None
+        self.asset_margin_fraction=asset_margin_fraction;self.total_margin_fraction=total_margin_fraction
+        for fraction in (asset_margin_fraction,total_margin_fraction):
+            if fraction is not None and not 0<number(fraction)<1:raise ValueError('Invalid replay allocation fraction')
         self.metadata=metadata or {}
         self.capital=self.initial_capital
 
@@ -135,15 +149,17 @@ class BacktestEngine:
         self.capital=self.initial_capital
         symbol=next(iter(series)) if len(series)==1 else 'SHARED_EQUITY_PORTFOLIO'
         summary=BacktestSummary(symbol=symbol,initial_equity=self.initial_capital,final_equity=self.initial_capital,
-            strategy_kind='explicit_frozen_signals' if signals is not None else 'deterministic_ma_baseline_not_live_llm')
+            strategy_kind='explicit_frozen_signals' if signals is not None else 'deterministic_ma_baseline_not_live_llm', replay_leverage=self.leverage)
         summary.assumptions=['signals observed at candle close; orders active no earlier than next bar',
             'OHLC stop-first on ambiguous bars; newly filled limit stops are checked conservatively',
             'trailing stops computed at close become active next bar; R uses immutable initial risk',
             'volume is contracts; missing volume prohibits limit fills; queue modeled by participation cap',
             'partial fills supported; remaining entry canceled when its position exits',
+            'expired_orders counts expired unfilled remainders, including partially filled orders',
             'protective TP/SL are market exits (taker fee and adverse slippage), matching attached -1 orders',
             'open positions marked, not force-closed at end; shared cash/risk budget',
             'known model costs deducted from economic NAV; trade-level win rate/PF exclude this shared overhead',
+            'observed marked-equity daily/peak drawdown gates block new submissions; existing exits remain active',
             'no liquidation simulator; not approval for live trading']
         if not series or any(len(rows)<20 for rows in series.values()): return summary
         # Require aligned timestamps for a portfolio: never substitute BTC or forward-fill missing assets.
@@ -161,10 +177,13 @@ class BacktestEngine:
         maps={inst:{s['timestamp']:dict(s) for s in (baseline_signals(rows) if signals is None else signals.get(inst,[]))} for inst,rows in series.items()}
         summary.input_hash=hashlib.sha256(json.dumps({'series':series,'signals':signals,'policy':asdict(self.policy),'bar':self.bar,
             'maker_fee':self.maker_fee,'taker_fee':self.taker_fee,'slippage':self.slippage,'participation':self.participation,
-            'metadata':self.metadata,'ttl':self.order_ttl_bars},sort_keys=True,allow_nan=False).encode()).hexdigest()
+            'metadata':self.metadata,'ttl':self.order_ttl_bars,'leverage':self.leverage,'max_positions':self.max_positions,'capital_ceiling':self.capital_ceiling,
+            'asset_margin_fraction':self.asset_margin_fraction,'total_margin_fraction':self.total_margin_fraction},sort_keys=True,allow_nan=False).encode()).hexdigest()
         summary.funding_complete=all('funding_rate' in c for rows in series.values() for c in rows)
         if not summary.funding_complete: summary.assumptions.append('funding data missing: no financing-performance claim')
-        positions={};pending={};trades=[];curve=[];last_marks={};filtered=0
+        positions={};pending={};trades=[];curve=[];last_marks={};filtered=0;equity_state=None
+        def reject(reason):
+            summary.rejection_reasons[reason]=summary.rejection_reasons.get(reason,0)+1
         def ct(inst): return float(self.metadata.get(inst,{}).get('ctVal',1))*float(self.metadata.get(inst,{}).get('ctMult') or 1)
         def marked(): return self.capital+sum((last_marks.get(k,p['entry'])-p['entry'])*p['direction']*p['size']*ct(k) for k,p in positions.items())
         def close(inst,p,price,reason,stamp,taker=True):
@@ -192,7 +211,7 @@ class BacktestEngine:
                     elif tp_hit: close(inst,p,p['tp']*(1-p['direction']*self.slippage),'TAKE_PROFIT',stamp,True)
                 order=pending.get(inst)
                 if order:
-                    if index-order['created']>self.order_ttl_bars: pending.pop(inst);order=None
+                    if index-order['created']>self.order_ttl_bars: pending.pop(inst);order=None;summary.expired_orders+=1
                     if order:
                         direction=order['direction'];limit=order['limit']
                         crossing=limit is None or (o<=limit if direction==1 else o>=limit)
@@ -206,7 +225,7 @@ class BacktestEngine:
                                 pending.pop(inst);fill=0
                             if fill:
                                 initial_unit_risk=ct(inst)*abs(price-order['stop'])+ct(inst)*((price+max(order['stop'],order['tp']))*self.taker_fee+price*2*self.slippage)
-                                fill=floor_step(min(fill,order['risk_remaining']/max(initial_unit_risk,1e-12),order['margin_remaining']*3/(price*ct(inst))),
+                                fill=floor_step(min(fill,order['risk_remaining']/max(initial_unit_risk,1e-12),order['margin_remaining']*order['leverage']/(price*ct(inst))),
                                                 self.metadata.get(inst,{}).get('lotSz',1e-8))
                             if fill:
                                 fee=price*fill*ct(inst)*(self.taker_fee if crossing else self.maker_fee)
@@ -217,11 +236,12 @@ class BacktestEngine:
                                     total=old['size']+fill;old['entry']=(old['entry']*old['size']+price*fill)/total;old['size']=total
                                     old['entry_fee']+=fee;old['initial_risk']+=fill*initial_unit_risk
                                 else:
+                                    summary.filled_entries+=1
                                     positions[inst]={'entry':price,'size':fill,'stop':order['stop'],'tp':order['tp'],'direction':direction,
-                                        'entry_fee':fee,'funding':0.,'initial_risk':fill*initial_unit_risk,'time':stamp,'decision_id':order.get('decision_id','')}
+                                        'entry_fee':fee,'funding':0.,'leverage':order['leverage'],'initial_risk':fill*initial_unit_risk,'time':stamp,'decision_id':order.get('decision_id','')}
                                 order['remaining']-=fill
                                 order['risk_remaining']-=fill*initial_unit_risk
-                                order['margin_remaining']-=fill*price*ct(inst)/3
+                                order['margin_remaining']-=fill*price*ct(inst)/order['leverage']
                                 if order['remaining']<=1e-12: pending.pop(inst,None)
                                 p=positions[inst]
                                 if (l<=p['stop'] if direction==1 else h>=p['stop']):
@@ -242,15 +262,24 @@ class BacktestEngine:
                     self.capital-=cost;summary.operating_costs_usdt+=cost
             equity=marked();curve.append({'time':stamp,'equity':equity})
             if equity<=0: break
+            observed_at=next(iter(series.values()))[index].get('ts_ms')
+            observed_at=float(observed_at)/1000 if observed_at is not None else (index+1)*bar_seconds(self.bar)
+            equity_state=update_equity_state(equity_state,equity=equity,at=observed_at,cash_flow=0,complete=True,policy=self.policy)
             for inst in sorted(series):
                 sig=maps[inst].get(stamp)
                 if not sig: continue
                 action=str(sig.get('action','WAIT')).upper()
                 if action=='WAIT':continue
+                summary.entry_evaluations+=1
+                if equity_state['blocked']:
+                    filtered+=1;reject('Observed daily/peak drawdown gate');continue
                 conf=number(sig.get('confidence',0));conf=conf/100 if sig.get('confidence_scale')=='percent' or conf>1 else conf
                 if conf<self.min_confidence_gate or action not in {'BUY','SELL','BUY_LONG','SELL_SHORT'}:
-                    filtered+=1;continue
-                if inst in positions or inst in pending:continue
+                    filtered+=1;reject('Invalid action or research admission score');continue
+                if inst in positions or inst in pending:
+                    reject('Existing position or pending order');continue
+                if self.max_positions is not None and len(set(positions)|set(pending))>=self.max_positions:
+                    filtered+=1;reject('Position/pending slot cap');continue
                 direction=1 if action in {'BUY','BUY_LONG'} else -1
                 entry=number(sig.get('entry_price') or series[inst][index]['close'],positive=True)
                 atr=number(sig.get('atr',entry*.012),positive=True)
@@ -262,20 +291,26 @@ class BacktestEngine:
                 for key,p in positions.items():
                     risk=p['size']*ct(key)*(abs(last_marks[key]-p['stop'])+last_marks[key]*(2*self.taker_fee+2*self.slippage))
                     exposure['total']+=risk;exposure['long' if p['direction']==1 else 'short']+=risk
-                    margin+=p['entry']*p['size']*ct(key)/3
+                    margin+=last_marks[key]*p['size']*ct(key)/p['leverage']
                 for key,q in pending.items():
                     risk=q['remaining']*q['unit_risk'];exposure['total']+=risk;exposure['long' if q['direction']==1 else 'short']+=risk
-                    margin+=q['remaining']*q['intended_entry']*ct(key)/3
+                    margin+=q['remaining']*q['intended_entry']*ct(key)/q['leverage']
                 exposure['group']=exposure['total']
                 meta=self.metadata.get(inst) or {'instId':inst,'ctType':'linear','settleCcy':'USDT','state':'live','ctVal':1,'lotSz':'0.00000001','minSz':'0.00000001','tickSz':'0.00000001'}
+                risk_equity=min(equity,self.capital_ceiling) if self.capital_ceiling is not None else equity
+                available=max(0,equity-margin)
+                effective_policy=self.policy
+                if self.asset_margin_fraction is not None:effective_policy=replace(effective_policy,single_asset_margin_usdt=min(effective_policy.single_asset_margin_usdt,risk_equity*self.asset_margin_fraction))
+                if self.total_margin_fraction is not None:available=min(available,max(0,risk_equity*self.total_margin_fraction-margin))
                 try:
                     plan=order_plan(metadata=meta,side=side,entry=round(entry,8),stop=round(stop,8),take_profit=round(tp,8),
-                        requested_size=number(sig.get('size',1e12),positive=True),budget_usdt=equity*self.risk_per_trade_pct,
-                        equity=equity,available=max(0,equity-margin),leverage=3,policy=self.policy,portfolio=exposure)
-                except RiskRejected: filtered+=1;continue
+                        requested_size=number(sig.get('size',1e12),positive=True),budget_usdt=risk_equity*self.risk_per_trade_pct,
+                        equity=risk_equity,available=available,leverage=self.leverage,policy=effective_policy,portfolio=exposure)
+                except RiskRejected as exc: filtered+=1;reject(str(exc));continue
+                summary.accepted_orders+=1
                 pending[inst]={'created':index,'remaining':plan['size'],'direction':direction,'stop':stop,'tp':tp,
                     'limit':entry if sig.get('entry_price') else None,'intended_entry':entry,'unit_risk':plan['risk_usdt']/plan['size'],'risk_remaining':plan['risk_usdt'],
-                    'margin_remaining':plan['margin_usdt'],'decision_id':sig.get('decision_id','')}
+                    'margin_remaining':plan['margin_usdt'],'leverage':plan['leverage'],'decision_id':sig.get('decision_id','')}
         wins=[t for t in trades if t.pnl_usd>0];losses=[t for t in trades if t.pnl_usd<=0]
         gross_profit=sum(t.pnl_usd for t in wins);gross_loss=-sum(t.pnl_usd for t in losses)
         summary.total_trades=len(trades);summary.winning_trades=len(wins);summary.losing_trades=len(losses)

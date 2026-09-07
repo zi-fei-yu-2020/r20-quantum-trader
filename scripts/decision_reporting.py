@@ -24,22 +24,52 @@ def summarize(cache, notices=None, *, unavailable_reason='', circuit_breaker=Fal
 
 
 def format_summary(summary):
+    """One-line counts; full reasons remain in summary.items and the audit views."""
     if not summary['items']:
-        text='本轮决策不可用：'+(summary.get('unavailable_reason') or ('熔断暂停推理' if summary['status']=='circuit_breaker' else '未取得模型输出'))
+        text='决策不可用：'+clean(summary.get('unavailable_reason') or ('熔断暂停' if summary['status']=='circuit_breaker' else '未取得模型输出'),45)
     else:
         n=summary['counts']
-        text=f"审查{summary['evaluated_count']}标的，候选{n['entry_candidate']}，等待审计通过{n['audited_wait']}，决策不完整{n['incomplete']}，风控拒绝{n['execution_rejected']}"
-        for row in summary['items']:
-            if row['status']=='audited_wait':
-                detail=f"多：{clean(row['long_blocker'],55)}；空：{clean(row['short_blocker'],55)}"
-                if row.get('previous_check',{}).get('required'):detail+='；已触发前轮条件复查'
-                label='WAIT审计通过'
-            else:
-                label='决策不完整' if row['status']=='incomplete' else '候选被风控拒绝' if row['status']=='execution_rejected' else row['action']
-                detail=clean(row['reason'],100)
-            text+=f"；[{row['name']}] {label}（{detail}）"
-    if summary.get('wait_alert'):
-        text+=f"；诊断告警：连续{summary.get('no_entry_candidate_streak',0)}轮无开仓候选，不触发强制交易"
+        text=f"审查{summary['evaluated_count']} | 候选{n['entry_candidate']} | WAIT{n['audited_wait']}"
+        for status,label in (('incomplete','不完整'),('execution_rejected','风控拒绝')):
+            names=[r['name'] for r in summary['items'] if r['status']==status]
+            if names:text+=f" | {label}{len(names)}({','.join(names[:6])})"
+    if summary.get('wait_alert'):text+=f" | 连续{summary.get('no_entry_candidate_streak',0)}轮无候选"
     notices=summary.get('environment_notices') or []
-    if notices:text+=' | 环境限制: '+', '.join(clean(n,100) for n in notices)
+    if notices:
+        names=[clean(n,100).split('：',1)[0].split(':',1)[0].strip('[] ') for n in notices]
+        text+=' | 观察:'+','.join(names[:6])
     return text
+
+
+def format_actions(actions, *, maximum=3):
+    """Compact headlines, not replacements for the durable full execution record."""
+    import re
+    if not actions:return '无开平仓'
+    def headline(action):
+        text=clean(action,2000)
+        code=re.search(r'(?:HTTP\s+|Code:\s*)([45][0-9]{2,4})',text)
+        text=re.sub(r'\s*\(order=[^)]*\)','',text)
+        text=re.split(r':\s+|原因[:：]',text,maxsplit=1)[0]
+        text=clean(text,85)
+        if code and code[1] not in text:text+=' ['+code[1]+']'
+        return text
+    # Surface failures before ordinary maintenance when the summary must be bounded.
+    ranked=sorted(enumerate(actions),key=lambda pair:(0 if any(w in str(pair[1]) for w in ('失败','未确认','无法','未获')) else 1,pair[0]))
+    selected=sorted(ranked[:maximum])
+    result='；'.join(headline(value) for _,value in selected)
+    if len(actions)>maximum:result+=f'；另{len(actions)-maximum}项见执行记录'
+    return result
+
+
+def execution_history(scope, limit=12):
+    """Read-only full cycle details for the authenticated administrator view."""
+    import json
+    import sqlite3
+    from scripts import strategy_evidence
+    path=strategy_evidence.DB_PATH
+    if not path.exists():return []
+    try:
+        with sqlite3.connect(path.resolve().as_uri()+'?mode=ro',uri=True) as db:
+            rows=db.execute("SELECT payload FROM events WHERE scope=? AND kind='execution_cycle' ORDER BY at DESC LIMIT ?",(scope,max(1,min(30,int(limit))))).fetchall()
+        return [json.loads(row[0]) for row in rows]
+    except (OSError,sqlite3.Error,ValueError):return []

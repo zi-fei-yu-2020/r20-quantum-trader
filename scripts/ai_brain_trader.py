@@ -23,7 +23,7 @@ import urllib.request
 import public_market as market
 import instrument_support as support
 import algo_reader
-from scripts import trade_lock, strategy_evidence, trading_prompt, wait_audit
+from scripts import trade_lock, strategy_evidence, trading_prompt, wait_audit, capital_pool
 import subprocess
 import tempfile
 from typing import Dict, Any, List, Optional, Tuple
@@ -545,8 +545,9 @@ def construct_full_market_prompt(packages: List[Dict[str, Any]], pos_summary: st
     if os.path.exists(NEWS_SENTIMENT_FILE):
         try:
             with open(NEWS_SENTIMENT_FILE, "r", encoding="utf-8") as f:
-                ns_data = json.load(f)
-                macro_env = ns_data.get("macro_sentiment") or "UNKNOWN"
+                from scripts.news_connection import for_strategy
+                ns_data = for_strategy(json.load(f)) or {}
+                macro_env = ns_data.get("macro_sentiment") or "UNKNOWN（资讯过期、缺失或未验证）"
                 for n in ns_data.get("latest_news", [])[:6]:
                     news_briefs.append(f"- [{n.get('time', '')}] {n.get('title', '')} ({n.get('summary', '')[:80]}...)")
         except Exception:
@@ -556,12 +557,14 @@ def construct_full_market_prompt(packages: List[Dict[str, Any]], pos_summary: st
 
     avail_balance_str = f"{usdt_available:.2f} USDT" if usdt_available > 0 else "0 USDT；不得假设存在可用资金"
 
+    capital_context = capital_pool.status(market._selected())
     previous_wait_reviews = wait_audit.prepare(market._selected().identity, packages, active_positions_detail)
     runtime_vars = {
         'previous_wait_reviews': previous_wait_reviews,
+        'capital_pool': capital_context,
         "pending_orders_status": "verified" if pending_verified else "unknown",
         "decision_timestamp": f"【推演基准时间】: {now_bj_str}",
-        "account_balance": f"【当前账户可用资金】: {avail_balance_str}",
+        "account_balance": f"【交易所账户可用资金】: {avail_balance_str}" + (f"；策略资金池上限={capital_context.get('configured_cap', 'UNKNOWN')} USDT，风险净值={capital_context.get('risk_equity', '待初始化')}；不是额外现金，不能借用池外权益放大建议。" if capital_context.get("enabled") else ""),
         "account_positions": f"【账户持仓概况】: {pos_summary}\n【当前活动在途持仓明细】:\n{active_pos_text}",
         "pending_orders": f"【当前在途挂单列表】:\n{pending_orders_text}",
         "news_intelligence": f"【宏观环境基调】: {macro_env}\n【最新核心资讯要闻】:\n{news_text}",

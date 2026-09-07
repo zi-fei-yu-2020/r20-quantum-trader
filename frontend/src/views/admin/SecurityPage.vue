@@ -435,6 +435,7 @@ const { prompt, confirm } = useDialogs()
 
 <template>
   <div class="space-y-4 font-sans text-sm">
+    <AppCard class="p-4 text-sm leading-relaxed"><router-link to="/admin/accounts" class="font-semibold" style="color:var(--color-brand)">前往统一账户中心</router-link><p style="color:var(--text-muted)">新增资讯授权、双环境绑定和安全换号请使用账户中心；此页保留旧配置兼容及标的管理。</p></AppCard>
     <!-- Header & Action Bar -->
 
     <LoadingState v-if="loading" />

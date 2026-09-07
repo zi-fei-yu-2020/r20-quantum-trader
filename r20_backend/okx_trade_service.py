@@ -52,6 +52,8 @@ def _request_untracked(method: str, path: str, params: dict[str, Any] | list[dic
     if isinstance(params, list) and (method == "GET" or not params or not all(isinstance(row, dict) for row in params)):
         raise ValueError("OKX 批量请求需要非空对象数组，且不能用于 GET")
     selected = env or selected_environment()
+    from r20_backend.account_connections import assert_current
+    assert_current(selected)
     if not selected.configured:
         if isinstance(params, list):
             raise RuntimeError("批量 OKX REST 操作需要当前环境的静态 API Key")

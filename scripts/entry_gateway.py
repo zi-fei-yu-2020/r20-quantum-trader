@@ -3,6 +3,7 @@ import json
 import time
 from scripts import strategy_evidence as evidence
 from scripts import risk_policy as risk
+from scripts import capital_pool
 from scripts.algo_reader import read_algo_orders
 from scripts import public_market
 from r20_backend.okx_trade_service import _request
@@ -32,6 +33,9 @@ def equity_guard(env, balance, policy):
     if previous:
         if at==previous['at']:
             if abs(equity-previous['equity'])>1e-8: raise risk.RiskRejected('Contradictory equity timestamp')
+            previous.setdefault('external_flow_total',0.)
+            previous.setdefault('external_flow_origin',previous['at'])
+            capital_pool.observe_existing(env,previous,policy,balance=balance)
             if previous['blocked']: raise risk.RiskRejected('Equity drawdown circuit breaker active')
             return previous
         after=None; seen=set()
@@ -61,11 +65,14 @@ def equity_guard(env, balance, policy):
     with evidence.connection() as db:
         db.execute('INSERT OR REPLACE INTO equity_state VALUES (?,?)',(env.identity,evidence.canonical(state)))
     evidence.append(env.identity,'equity',state)
+    capital_pool.observe_existing(env,state,policy,balance=balance)
     if state['blocked']: raise risk.RiskRejected('Equity drawdown circuit breaker active; protection remains enabled')
     return state
 
 
 def prepare(env, *, inst_id, side, entry, stop, take_profit, requested_size, budget, decision_id, decision_at):
+    from r20_backend.account_connections import assert_current
+    assert_current(env)
     if not env.configured: raise risk.RiskRejected('Final risk preflight requires current account static credentials')
     age=time.time()-risk.number(decision_at,positive=True)
     if not 0<=age<=300: raise risk.RiskRejected('Decision is stale or future-dated')
@@ -73,6 +80,8 @@ def prepare(env, *, inst_id, side, entry, stop, take_profit, requested_size, bud
         recorded=db.execute("SELECT payload FROM events WHERE id=? AND scope=? AND kind='decision'",(decision_id,env.identity)).fetchone()
     if not recorded: raise risk.RiskRejected('Decision evidence not found for this account')
     record=json.loads(recorded[0])
+    if getattr(env,'connection_id','') and (record.get('connection_id')!=env.connection_id or record.get('binding_version')!=env.binding_version):
+        raise risk.RiskRejected('Account binding changed after decision; fresh inference required')
     decision=record.get('decision',{})
     from scripts.trading_prompt import VERSION
     if decision.get('contract_version')!=VERSION or decision.get('contract_valid') is not True:
@@ -98,7 +107,7 @@ def prepare(env, *, inst_id, side, entry, stop, take_profit, requested_size, bud
     pending=_request('GET','/api/v5/trade/orders-pending',{'instType':'SWAP'},env)
     balances=_request('GET','/api/v5/account/balance',{},env)
     if len(balances)!=1: raise risk.RiskRejected('Invalid account balance snapshot')
-    equity_guard(env,balances[0],policy)
+    observed_equity=equity_guard(env,balances[0],policy)
     usdt=next((d for d in balances[0].get('details',[]) if d.get('ccy')=='USDT'),{})
     available=risk.number(usdt.get('availEq') or usdt.get('availBal'),positive=True)
     algos=read_algo_orders(env,priority='risk',force=True) if any(abs(risk.number(p.get('pos') or 0))>0 for p in positions) else []
@@ -118,14 +127,29 @@ def prepare(env, *, inst_id, side, entry, stop, take_profit, requested_size, bud
     if not 0 <= time.time()*1000-risk.number(ticker.get('ts'),positive=True) <= 15000:
         raise risk.RiskRejected('Final execution quote is stale or future-dated')
     if abs(entry-current)/current>policy.max_entry_distance_pct: raise risk.RiskRejected('Final limit too far from current market')
+    def pending_leverage(pending_inst,pending_side):
+        if pending_inst==inst_id and pending_side in (side,'net','',None):return lev['lever']
+        rows=_request('GET','/api/v5/account/leverage-info',{'instId':pending_inst,'mgnMode':'cross'},env)
+        found=next((r for r in rows if r.get('posSide') in (pending_side,'net','')),None)
+        if not found:raise risk.RiskRejected('Pending leverage unknown; pool cannot reserve guessed margin')
+        return found['lever']
+    allocation=capital_pool.admit(env,observed_equity,balances[0],positions,pending,metadata,
+        inst_id=inst_id,available=available,policy=policy,leverage_reader=pending_leverage)
     plan=risk.order_plan(metadata=metadata[inst_id],side=side,entry=entry,stop=stop,take_profit=take_profit,
-                         requested_size=requested_size,budget_usdt=budget,equity=balances[0]['totalEq'],available=available,
-                         leverage=lev['lever'],policy=policy,existing_margin=sum(risk.number(p.get('margin') or p.get('imr') or 0) for p in existing),portfolio=portfolio)
+                         requested_size=requested_size,budget_usdt=budget,equity=allocation.equity,available=allocation.available,
+                         leverage=lev['lever'],policy=allocation.policy,existing_margin=sum(risk.number(p.get('imr') if p.get('imr') not in (None,'') else p.get('margin') or 0) for p in existing),portfolio=portfolio)
+    if allocation.enabled:plan['capital_pool']=allocation.detail
     latest_positions=_request('GET','/api/v5/account/positions',{'instType':'SWAP'},env)
     def identities(rows):
         return sorted((str(p.get('instId')),str(p.get('posSide')),str(p.get('posId')),str(p.get('cTime')),str(p.get('pos')),str(p.get('avgPx'))) for p in rows if abs(risk.number(p.get('pos') or 0))>0)
     if identities(latest_positions)!=identities(positions):
         raise risk.RiskRejected('Positions changed during preflight; defer to a fresh decision cycle')
+    if allocation.enabled:
+        fresh_pending=_request('GET','/api/v5/trade/orders-pending',{'instType':'SWAP'},env)
+        def pending_identity(rows):
+            return sorted((str(r.get('ordId')),str(r.get('instId')),str(r.get('posSide')),str(r.get('sz')),str(r.get('accFillSz')),str(r.get('px'))) for r in capital_pool.entry_orders(rows))
+        if pending_identity(fresh_pending)!=pending_identity(pending):raise risk.RiskRejected('Pending reservations changed during pool preflight')
+    if capital_pool.config_signature()!=allocation.config_signature:raise risk.RiskRejected('Capital pool configuration changed during preflight; no order authorized')
     plan['portfolio_before']=portfolio
     plan['decision_id']=decision_id
     plan['scope']=env.identity

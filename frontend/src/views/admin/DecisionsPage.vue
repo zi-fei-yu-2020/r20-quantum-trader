@@ -3,6 +3,10 @@ import { useToast } from '../../composables/useFeedback'
 const toast = useToast()
 import AppCard from '../../components/ui/AppCard.vue'
 import DecisionAuditPanel from '../../components/DecisionAuditPanel.vue'
+import CapitalPoolPanel from '../../components/CapitalPoolPanel.vue'
+import ScenarioShadowPanel from '../../components/ScenarioShadowPanel.vue'
+import type { ScenarioShadowStatus } from '../../utils/scenarioShadow'
+import type { CapitalPoolStatus } from '../../utils/capitalPool'
 import type { WaitAuditState, DecisionCycle } from '../../utils/waitAudit'
 
 import { ref, onMounted } from 'vue'
@@ -10,6 +14,9 @@ import { useApi } from '../../composables/useApi'
 import { Terminal, RefreshCw } from 'lucide-vue-next'
 
 const { api } = useApi()
+const executionCycles = ref<Array<{ timestamp: string; actions: string[] }>>([])
+const capital = ref<CapitalPoolStatus>()
+const shadow = ref<ScenarioShadowStatus>()
 const audit = ref<WaitAuditState>()
 const cycle = ref<DecisionCycle>()
 const loading = ref(true)
@@ -23,6 +30,9 @@ async function loadDecisions() {
   try {
     const res = await api('/api/v1/admin/runtime')
     logs.value = res.recent_logs || []
+    executionCycles.value = res.recent_execution_cycles || []
+    capital.value = res.capital_pool
+    shadow.value = res.scenario_shadow
     audit.value = res.wait_audit
     cycle.value = res.decision_cycle
     await fetchLogStream('trader')
@@ -69,7 +79,19 @@ onMounted(() => {
       </span>
     </div>
 
+    <CapitalPoolPanel :pool="capital" />
+    <ScenarioShadowPanel :shadow="shadow" />
     <DecisionAuditPanel :audit="audit" :cycle="cycle" />
+    <AppCard v-if="executionCycles.length" class="min-w-0 rounded-xl border p-4 space-y-2" style="border-color: var(--border-subtle); background: var(--bg-card)">
+      <h3 class="text-sm font-semibold" style="color: var(--text-main)">近期完整执行记录</h3>
+      <details v-for="entry in executionCycles" :key="entry.timestamp" class="min-w-0 border-t pt-2 text-xs" style="border-color: var(--border-subtle)">
+        <summary class="cursor-pointer" style="color: var(--text-muted)">{{ entry.timestamp }} · {{ entry.actions.length }} 项</summary>
+        <ul class="mt-2 space-y-1 leading-relaxed" style="color: var(--text-main); overflow-wrap: anywhere">
+          <li v-for="(action, index) in entry.actions" :key="index">{{ action }}</li>
+          <li v-if="!entry.actions.length">无开平仓操作</li>
+        </ul>
+      </details>
+    </AppCard>
     <!-- 3-Way Log Streams -->
     <AppCard
       class="rounded-xl border p-4 sm:p-5 shadow-xs transition-colors"

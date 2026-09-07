@@ -21,6 +21,7 @@ import datetime
 import tempfile
 from scripts import ledger_monitor
 from scripts.close_attribution import reason as close_reason
+from scripts.close_evidence import load_inputs as close_inputs
 
 WORKSPACE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DATA_DIR = os.path.join(WORKSPACE_DIR, "data")
@@ -101,6 +102,10 @@ def build_lifecycle_ledger(*, notify=True):
     for receipt in pos_history:
         strategy_evidence.best_effort(env.identity, "position_receipt", receipt)
 
+    try:
+        attribution_inputs=close_inputs(env,orders_history)
+    except Exception:
+        attribution_inputs={'orders':orders_history,'algos':[],'executions':[]}
     trades_lifecycle = []
 
     # Process Active Holding Positions FIRST
@@ -220,10 +225,11 @@ def build_lifecycle_ledger(*, notify=True):
         # Strategy tag
         strat_tag = "🌊 顺势做多" if side == "多" else "⚡ 阻力高空"
         
-        attribution=close_reason(h,orders_history)
+        attribution=close_reason(h,attribution_inputs['orders'],algos=attribution_inputs['algos'],executions=attribution_inputs['executions'],scope=env.identity)
         previous=next((row for row in old_trades if row.get('id')==f'pos_hist_{u_ts}_{inst}'),{})
-        if attribution['attribution_status']=='unknown' and previous.get('attribution_status')=='verified':
-            for field in ('exit_reason','exit_source','exit_evidence','attribution_status','close_order_ids'):
+        tier={'unknown':0,'partial':1,'corroborated':2,'mixed':3,'verified':3}
+        if tier.get(previous.get('attribution_status'),0)>tier.get(attribution['attribution_status'],0):
+            for field in ('exit_reason','exit_source','exit_evidence','attribution_status','close_order_ids','close_order_sources','attribution_note'):
                 if field in previous:attribution[field]=previous[field]
 
         trades_lifecycle.append({

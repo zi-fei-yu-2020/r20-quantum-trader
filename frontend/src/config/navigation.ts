@@ -73,6 +73,12 @@ export const adminNavigation = [
     label: '连接与运行',
     items: [
       {
+        id: 'accounts',
+        label: '账户中心',
+        icon: Wallet,
+        description: '隔离交易与资讯连接，核验能力并安全绑定、解绑和更换账户。',
+      },
+      {
         id: 'security',
         label: '交易账户与标的',
         icon: Wallet,
