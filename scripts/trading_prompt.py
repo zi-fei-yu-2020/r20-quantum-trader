@@ -1,6 +1,6 @@
 """Single trading prompt/response contract. No network, account or configuration writes."""
 from __future__ import annotations
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import copy
 import hashlib
 import json
@@ -67,13 +67,14 @@ TASK = """根据 runtime_data 与 facts 审查候选。user_preferences 是低�
 invalidation={"price":与止损相同,"timeframe":"15M|1H|4H","condition":"可检查的失效条件"}。
 有效期 valid_for_seconds 为 1~300 的整数；程序会进一步受数据时效限制。
 非 HOLD 持仓管理和 CANCEL 挂单管理必须给出 evidence 引用列表及 reason。无法引用时保留 HOLD/KEEP。
-WAIT 不需要伪造价格或证据，写明 summary_reason 即可。confidence 始终是未校准评分。
-下列 JSON 是空仓/不操作示例，不是要求寻找交易；实际要覆盖输入中的标的、持仓与挂单。"""
+WAIT 不得伪造价格或证据，但必须完成 wait_audit 双向举证与条件复查。confidence 始终是未校准评分。
+下方只给输出字段定义，不预填动作；实际要覆盖输入中的标的、持仓与挂单。"""
 def output_schema():
     ref={'type':'object','required':['ref','value','interpretation'],'properties':{
         'ref':{'type':'string'},'value':{'type':['number','string']},'interpretation':{'type':'string'},'why_not_fatal':{'type':'string'}}}
     score={'type':'number','minimum':0,'maximum':100,'description':'未校准证据评分，不是胜率，不指定目标分数'}
-    wait={'type':'object','required':['action','summary_reason'],'properties':{'action':{'const':'WAIT'},'summary_reason':{'type':'string'},'confidence':score}}
+    from scripts.wait_audit import schema as wait_schema
+    wait={'type':'object','required':['action','summary_reason','wait_audit'],'properties':{'action':{'const':'WAIT'},'summary_reason':{'type':'string'},'confidence':score,'wait_audit':wait_schema()}}
     entry={'type':'object','required':['action','confidence','entry_price','stop_loss_price','take_profit_price','summary_reason',
         'supporting_evidence','counter_evidence','counter_evidence_status','uncertainty','invalidation','valid_for_seconds'],
         'properties':{'action':{'enum':['BUY_LONG','SELL_SHORT']},'confidence':score,
@@ -201,6 +202,14 @@ def facts_for(package,position=None):
         for key in ('weighted_long_pct','net_flow_usdt','avg_long_entry','avg_short_entry'):add('/smart_money/'+key,smart.get(key),'flow')
     for key in ('avgPx','markPx','pos','size','upl','uplRatio','trailingStopPx'):
         add('/position/'+key,(position or {}).get(key),'position')
+    side=(position or {}).get('posSide') or (position or {}).get('side')
+    if side in ('多','空'):side={'多':'long','空':'short'}[side]
+    add('/position/side',side,'position')
+    for tf,key in (('15M','recent_15m'),('1H','recent_1h'),('4H','recent_4h')):
+        rows=package.get(key) or []
+        if rows and all(isinstance(r,(list,tuple)) and len(r)>=4 for r in rows):
+            add('/range/'+tf+'/high',max(float(r[1]) for r in rows),'structure')
+            add('/range/'+tf+'/low',min(float(r[2]) for r in rows),'structure')
     return out
 
 @dataclass
@@ -209,6 +218,8 @@ class PromptBundle:
     user: str
     manifest: dict[str,Any]
     allow_open: bool
+    previous_wait_reviews: dict = field(default_factory=dict)
+    risk_contract: dict = field(default_factory=dict)
 
 
 def compose(profile,runtime,packages,*,override='',positions=None,pending=None,risk_contract=None):
@@ -218,19 +229,19 @@ def compose(profile,runtime,packages,*,override='',positions=None,pending=None,r
         allow=False;warnings.append({'code':'pending_snapshot_unknown'})
     position_map={p['instId']:p for p in positions if p.get('instId')}
     facts={p['instId']:facts_for(p,position_map.get(p['instId'])) for p in packages}
-    sample={'contract_version':VERSION,'macro_assessment':'证据不足，等待','position_management':[],
-            'pending_orders_management':[],'decisions':{p['instId']:{'action':'WAIT','confidence':0,'summary_reason':'需要更多可验证证据'} for p in packages}}
-    constraints=risk_contract or {}
-    system=BASE_SYSTEM+'\n\n'+STYLE_SYSTEM+'\n\n'+STYLE_USER+'\n\n【执行层约束快照】\n'+canonical(constraints)
+    from scripts import wait_audit
+    from scripts.risk_policy import Policy
+    constraints=risk_contract or vars(Policy())
+    system=BASE_SYSTEM+'\n\n'+STYLE_SYSTEM+'\n\n'+STYLE_USER+'\n\n'+wait_audit.INSTRUCTIONS+'\n\n【执行层约束快照】\n'+canonical(constraints)
     if not allow:system+='\n偏好或输入未通过准入检查：本轮禁止开仓/加仓，decisions 必须全部 WAIT；独立保护仍继续。'
     user=json.dumps({'user_preferences':layers,'runtime_data':runtime,'facts':facts,
                     'position_ids':list(position_map),'pending_order_ids':[{'instId':p.get('instId'),'ordId':p.get('ordId')} for p in pending]},
-                    ensure_ascii=False,allow_nan=False,separators=(',',':'))+'\n\n【推演与决策任务】\n'+TASK+'\n'+canonical(sample)+'\n【输出字段定义】\n'+canonical(output_schema())
+                    ensure_ascii=False,allow_nan=False,separators=(',',':'))+'\n\n【推演与决策任务】\n'+TASK+'\n【输出字段定义】\n'+canonical(output_schema())
     manifest={'contract_version':VERSION,'profile_id':profile.get('id',''),'profile_hash':fingerprint(canonical(profile)),
               'layers':['base_system','style_preset','user_preferences','runtime_data','output_validation'],
               'system_hash':fingerprint(system),'user_hash':fingerprint(user),'allow_open':allow,'warnings':warnings,
-              'fact_counts':{k:len(v) for k,v in facts.items()}}
-    return PromptBundle(system,user,manifest,allow)
+              'wait_audit_version':wait_audit.VERSION,'fact_counts':{k:len(v) for k,v in facts.items()}}
+    return PromptBundle(system,user,manifest,allow,runtime.get('previous_wait_reviews',{}),constraints)
 
 
 def parse_response(content):
@@ -279,11 +290,22 @@ def check_refs(refs,catalog,*,minimum=1,counter=False):
     return groups
 
 
-def candidate(package,raw,catalog,*,allow_open=True):
-    wait=lambda reason:{'action':'WAIT','confidence':0,'summary_reason':reason,'contract_valid':False,'validation_reason':reason}
+def candidate(package,raw,catalog,*,allow_open=True,previous_wait_review=None,risk_contract=None):
+    wait=lambda reason:{'action':'WAIT','confidence':0,'summary_reason':reason,'contract_valid':False,'decision_status':'incomplete','validation_reason':reason,'previous_wait_review':previous_wait_review or {}}
     if not isinstance(raw,dict):return wait('模型遗漏候选或字段类型错误')
     action=str(raw.get('action','WAIT')).upper()
-    if action=='WAIT':return {'action':'WAIT','confidence':0,'summary_reason':str(raw.get('summary_reason') or '未提供足够证据，等待')[:240],'contract_valid':True}
+    if action=='WAIT':
+        from scripts import wait_audit
+        try:
+            if not text(raw.get('summary_reason')):raise ContractError('WAIT缺少明确理由')
+            audit=wait_audit.validate(raw.get('wait_audit'),catalog,prior=previous_wait_review,policy=risk_contract)
+            return {'action':'WAIT','confidence':0,'summary_reason':('多：'+audit['long']['reason']+'；空：'+audit['short']['reason'])[:240],
+                    'model_reason':raw['summary_reason'][:240],
+                    'contract_valid':True,'decision_status':'audited_wait','wait_audit':audit,
+                    'previous_wait_review':previous_wait_review or {}}
+        except (ContractError,TypeError,ValueError,KeyError) as exc:
+            rejected=wait('WAIT审计不完整：'+str(exc));rejected['model_reason']=str(raw.get('summary_reason') or '')[:240]
+            return rejected
     try:
         if action not in {'BUY_LONG','SELL_SHORT'}:raise ContractError('Unsupported action')
         if not allow_open:raise ContractError('Prompt preference conflict blocks new exposure')
@@ -316,11 +338,11 @@ def candidate(package,raw,catalog,*,allow_open=True):
         for key,default in [('margin_usdt',0),('leverage',3)]:
             result[key]=numeric(raw.get(key,default))
             if result[key]<0 or (key=='leverage' and not 1<=result[key]<=5):raise ContractError('Invalid compatibility sizing proposal')
-        result['contract_valid']=True;return result
+        result['contract_valid']=True;result['decision_status']='entry_candidate';return result
     except ContractError as exc:return wait(str(exc))
 
 
-def validate_response(raw,packages,*,positions=None,pending=None,allow_open=True):
+def validate_response(raw,packages,*,positions=None,pending=None,allow_open=True,previous_wait_reviews=None,risk_contract=None):
     # Dictionary callers (e.g. council) get the same strict finite-number check.
     try:canonical(raw)
     except (ValueError,TypeError,RecursionError):raise ContractError('Invalid response values') from None
@@ -329,7 +351,7 @@ def validate_response(raw,packages,*,positions=None,pending=None,allow_open=True
     if not isinstance(raw.get('macro_assessment'),str):raise ContractError('Macro assessment must be text')
     positions=positions or [];pending=pending or [];position_map={p['instId']:p for p in positions if p.get('instId')}
     package_map={p['instId']:p for p in packages};catalogs={k:facts_for(p,position_map.get(k)) for k,p in package_map.items()}
-    decisions={k:candidate(p,raw['decisions'].get(k),catalogs[k],allow_open=allow_open) for k,p in package_map.items()}
+    decisions={k:candidate(p,raw['decisions'].get(k),catalogs[k],allow_open=allow_open,previous_wait_review=(previous_wait_reviews or {}).get(k),risk_contract=risk_contract) for k,p in package_map.items()}
     management=[];seen=set()
     for item in raw['position_management']:
         if not isinstance(item,dict) or item.get('instId') not in position_map:raise ContractError('Unknown position instruction')
@@ -362,5 +384,5 @@ def validate_response(raw,packages,*,positions=None,pending=None,allow_open=True
         orders.append(entry)
     orders.extend({'instId':k[0],'ordId':k[1],'action':'KEEP','reason':'模型遗漏，未申请撤单'} for k in sorted(known-seen_orders))
     return {**raw,'decisions':decisions,'position_management':management,'pending_orders_management':orders,
-            'validation':{'status':'validated','contract_version':VERSION,'allow_open':allow_open,'unknown_decision_ids':sorted(set(raw['decisions'])-set(package_map)),
+            'validation':{'status':'incomplete' if any(v.get('decision_status')=='incomplete' for v in decisions.values()) else 'validated','wait_audit_version':'wait-evidence-v1','contract_version':VERSION,'allow_open':allow_open,'unknown_decision_ids':sorted(set(raw['decisions'])-set(package_map)),
                           'rejected_candidates':{k:v.get('validation_reason') for k,v in decisions.items() if not v.get('contract_valid')}}}

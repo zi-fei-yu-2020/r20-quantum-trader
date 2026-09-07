@@ -256,6 +256,7 @@ def _build_factors_from_local_files(positions, timestamp_full):
             "market_regime": ins.get("market_regime", "CHOP"),
             "strategy_tag": strategy_val,
             "action": action_val,
+            "decision_status": ai_dec.get("decision_status", "incomplete" if action_val == "WAIT" else "entry_candidate"),
             "confidence": confidence,
             "smart_money": sm_val,
             "adx_1h": adx_val,
@@ -354,11 +355,14 @@ def _inject_local_data_into_stale(stale, positions, timestamp_full):
             pass
 
     from r20_backend.macro_status import fields as macro_fields
-    from scripts import ledger_monitor
+    from scripts import ledger_monitor, wait_audit
     from scripts.okx_runtime import selected_environment
     stale.update(macro_fields(DATA_DIR, history=stale.get('ai_brain_history', []), state=state_data))
     stale['trades']=ledger_monitor.project_rows(stale.get('trades', []), selected_environment().identity)
     stale['ledger_sync']=ledger_monitor.load('ledger_sync_status.json', {})
+    from scripts.wait_audit import public_status as wait_status
+    stale['wait_audit']=wait_status(selected_environment().identity)
+    stale['decision_cycle']=state_data.get('decision_cycle', {})
     return stale
 
 
@@ -987,6 +991,7 @@ def _update_cache_cycle():
             "market_regime": ins.get("market_regime", "CHOP"),
             "strategy_tag": strategy_val,
             "action": action_val,
+            "decision_status": ai_dec.get("decision_status", "incomplete" if action_val == "WAIT" else "entry_candidate"),
             "confidence": confidence,
             "smart_money": sm_val,
             "adx_1h": adx_val,
@@ -1140,11 +1145,13 @@ def _update_cache_cycle():
     disk_free_gb = round(free_b / (1024 ** 3), 1)
 
     from r20_backend.macro_status import fields as macro_fields
-    from scripts import ledger_monitor
+    from scripts import ledger_monitor, wait_audit
     trades_table = ledger_monitor.project_rows(trades_table, environment.identity)
     CACHE_DATA = {
         **macro_fields(DATA_DIR, ai_decisions, ai_history_list, state=state_data),
         "ledger_sync": ledger_monitor.load("ledger_sync_status.json", {}),
+        "wait_audit": wait_audit.public_status(environment.identity),
+        "decision_cycle": state_data.get("decision_cycle", {}),
         "timestamp": timestamp_full,
         "okx_environment": environment.mode,
         "account_source_id": environment.identity,

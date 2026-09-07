@@ -1,3 +1,4 @@
+import type { WaitAuditState, DecisionCycle } from '../utils/waitAudit'
 import type { MacroAnalysis } from '../utils/macroAnalysis'
 // OKX raw numeric strings and locally aggregated numeric values coexist.
 export type NumericValue = string | number
@@ -109,7 +110,9 @@ export interface InstrumentFactor {
     net_flow_usdt?: string
     top_win_rate?: string
   }
+  decision_status?: string
   decision?: {
+    decision_status?: string
     action: TradeAction
     confidence: number
     leverage: number
@@ -138,6 +141,8 @@ export interface LLMRuntime {
 }
 
 export interface DashboardResponse {
+  wait_audit?: WaitAuditState
+  decision_cycle?: DecisionCycle
   macro_analysis?: MacroAnalysis
   ledger_sync?: { status?: string; last_success?: number; pending_settlements?: number }
   instrument_support?: InstrumentSupportSummary

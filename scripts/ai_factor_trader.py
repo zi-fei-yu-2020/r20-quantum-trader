@@ -1733,6 +1733,7 @@ def execute_portfolio():
 
     # 3. Process Positions & Dynamic Trailing Exits
     executed_actions = []
+    environment_notices = []
     trackers = load_trackers()
     stale_tracker_count = prune_trackers(trackers, real_pos_dict)
     if stale_tracker_count:
@@ -1792,7 +1793,7 @@ def execute_portfolio():
         for f in all_factors:
             state = availability["items"][f["instId"]]
             if not state["can_open"]:
-                executed_actions.append(f"[{f['name']}] {state['label']}，仅观察，跳过开仓/加仓")
+                environment_notices.append(f"{f['name']}：{state['label']}，仅观察")
                 continue
             asset_type = f.get("type", "crypto")
             if not is_tradfi_market_liquid(asset_type):
@@ -2064,6 +2065,16 @@ def execute_portfolio():
                     else:
                         executed_actions.append(f"[{f['name']}] AI限价空单提交失败: {order_ref}")
 
+    from scripts.decision_reporting import summarize, format_summary
+    decision_cycle = summarize(brain_cache, environment_notices,
+        unavailable_reason=cb_reason if cb_active else get_last_inference_error() if not brain_cache else '',
+        circuit_breaker=cb_active)
+    decision_cycle['timestamp'] = timestamp_full
+    from scripts.wait_audit import public_status as wait_status
+    latest_wait_status = wait_status(market._selected().identity)
+    if brain_cache:
+        decision_cycle['no_entry_candidate_streak'] = latest_wait_status.get('no_entry_candidate_streak', 0)
+        decision_cycle['wait_alert'] = latest_wait_status.get('alert', False)
     # 5. Persist Latest State for Web Monitoring Dashboard
     state_payload = {
         "timestamp": timestamp_full,
@@ -2073,6 +2084,8 @@ def execute_portfolio():
         "short_count": short_count,
         "circuit_breaker": {"active": cb_active, "reason": cb_reason},
         "executed_actions": executed_actions,
+        "decision_cycle": decision_cycle,
+        "environment_notices": environment_notices,
         "instruments": []
     }
 
@@ -2116,7 +2129,7 @@ def execute_portfolio():
     except Exception as e:
         print(f"[Ledger Sync Warning] {e}")
 
-    log_entry = f"[{timestamp_full}] ⚡ R20 Quantum Trader v7.3.0 巡检完成 | 持仓 {active_pos_count}/{MAX_CONCURRENT_POSITIONS} (多{long_count}/空{short_count}) | 动作: {', '.join(executed_actions) if executed_actions else '无开平仓操作'}\n"
+    log_entry = f"[{timestamp_full}] ⚡ R20 Quantum Trader v7.3.0 巡检完成 | 持仓 {active_pos_count}/{MAX_CONCURRENT_POSITIONS} (多{long_count}/空{short_count}) | 动作: {', '.join(executed_actions) if executed_actions else '无开平仓操作'} | 决策: {format_summary(decision_cycle)}\n"
     with open(LOG_FILE, "a", encoding="utf-8") as f:
         f.write(log_entry)
     print(log_entry.strip())

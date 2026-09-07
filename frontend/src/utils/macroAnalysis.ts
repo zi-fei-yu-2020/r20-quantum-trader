@@ -1,7 +1,7 @@
 export interface MacroAnalysis {
   text: string
   analyzed_at: string
-  status: 'ready' | 'running' | 'blocked' | 'failed' | 'stale' | 'empty'
+  status: 'ready' | 'running' | 'blocked' | 'failed' | 'stale' | 'empty' | 'incomplete'
   message: string
   source?: string
   age_seconds?: number | null
@@ -28,5 +28,5 @@ export function resolveMacroAnalysis(data: { macro_analysis?: MacroAnalysis; mac
 }
 
 export function macroStatusLabel(status: MacroAnalysis['status']): string {
-  return { ready: '分析结果', running: '更新中', blocked: '本轮暂停', failed: '本轮未就绪', stale: '历史结果', empty: '暂无结果' }[status]
+  return { ready: '分析结果', running: '更新中', blocked: '本轮暂停', failed: '本轮未就绪', stale: '历史结果', empty: '暂无结果', incomplete: '决策审计不完整' }[status]
 }

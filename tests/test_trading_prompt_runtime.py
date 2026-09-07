@@ -9,7 +9,7 @@ from types import SimpleNamespace
 from contextlib import ExitStack
 import ai_brain_trader as brain
 import factor_library
-from scripts import prompt_library, strategy_evidence, trading_prompt
+from scripts import prompt_library, strategy_evidence, trading_prompt, wait_audit
 from scripts.okx_runtime import OKXEnvironment
 from test_trading_prompt_contract import package, response, candidate
 
@@ -21,6 +21,7 @@ class PromptRuntimeTests(unittest.TestCase):
             for key in ('AI_DECISION_CACHE_FILE','AI_POSITION_MANAGEMENT_FILE','AI_LAST_PROMPT_FILE','AI_DECISION_HISTORY_FILE','CALCULUS_SNAPSHOT_FILE','AI_BRAIN_LOCK_FILE','NEWS_SENTIMENT_FILE','AI_MEMORY_MD_FILE','AI_MEMORY_FILE','PROMPT_OVERRIDE_FILE'):
                 stack.enter_context(patch.object(brain,key,str(root/key)))
             stack.enter_context(patch.object(brain,'DATA_DIR',str(root)))
+            stack.enter_context(patch.object(wait_audit,'DATA',root))
             stack.enter_context(patch.object(strategy_evidence,'DB_PATH',root/'evidence.db'))
             stack.enter_context(patch.object(brain,'get_cpa_client_config',return_value=('https://example.invalid/v1','FAKE')))
             stack.enter_context(patch.object(brain.market,'_selected',return_value=OKXEnvironment('demo','fake','fake','fake')))
@@ -53,6 +54,23 @@ class PromptRuntimeTests(unittest.TestCase):
         self.assertEqual(checked['manifest']['system_hash'],trading_prompt.fingerprint(checked['messages'][0]['content']))
         self.assertEqual(checked['manifest']['user_hash'],trading_prompt.fingerprint(checked['messages'][1]['content']))
         self.assertEqual(len(checked['calls']),1)  # pending read only, no model-directed write
+
+    def test_validated_wait_reaches_cache_with_audit_and_cross_cycle_input(self):
+        from test_wait_audit import valid_wait
+        checked=self.exercise(response(valid_wait()))
+        row=checked['result']['BTC-USDT-SWAP']['decision']
+        self.assertEqual(row['decision_status'],'audited_wait')
+        self.assertIn('wait_audit',row)
+        self.assertIn('previous_wait_reviews',checked['messages'][1]['content'])
+        self.assertEqual(checked['validation']['wait_audit_status'],'ready')
+
+    def test_unjustified_wait_is_incomplete_not_normal_success(self):
+        checked=self.exercise(response({'action':'WAIT','summary_reason':'暂时等待观察'}))
+        self.assertEqual(checked['validation']['status'],'incomplete')
+        row=checked['result']['BTC-USDT-SWAP']['decision']
+        self.assertEqual(row['action'],'WAIT')
+        self.assertFalse(row['contract_valid'])
+        self.assertEqual(len(checked['calls']),1)
 
     def test_invalid_root_with_cancel_never_sends_cancel_or_reuses_old_entry(self):
         output=response();del output['contract_version']

@@ -130,9 +130,10 @@ class TradingOutputTests(unittest.TestCase):
         self.assertEqual(result['action'],'BUY_LONG');self.assertTrue(result['contract_valid'])
         self.assertEqual(result['confidence'],79)
 
-    def test_all_wait_is_valid_without_fabricated_prices_or_counter_evidence(self):
+    def test_legacy_wait_without_audit_stays_wait_but_is_incomplete(self):
         checked=self.validate(response({'action':'WAIT','summary_reason':'暂时没有明确优势'}))
-        self.assertEqual(checked['validation']['rejected_candidates'],{})
+        self.assertIn('BTC-USDT-SWAP',checked['validation']['rejected_candidates'])
+        self.assertEqual(checked['validation']['status'],'incomplete')
         self.assertEqual(checked['decisions']['BTC-USDT-SWAP']['action'],'WAIT')
 
     def test_missing_root_contract_or_malformed_lists_rejected(self):

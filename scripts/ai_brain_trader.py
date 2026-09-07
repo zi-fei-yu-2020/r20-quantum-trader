@@ -23,7 +23,7 @@ import urllib.request
 import public_market as market
 import instrument_support as support
 import algo_reader
-from scripts import trade_lock, strategy_evidence, trading_prompt
+from scripts import trade_lock, strategy_evidence, trading_prompt, wait_audit
 import subprocess
 import tempfile
 from typing import Dict, Any, List, Optional, Tuple
@@ -556,7 +556,9 @@ def construct_full_market_prompt(packages: List[Dict[str, Any]], pos_summary: st
 
     avail_balance_str = f"{usdt_available:.2f} USDT" if usdt_available > 0 else "0 USDT；不得假设存在可用资金"
 
+    previous_wait_reviews = wait_audit.prepare(market._selected().identity, packages, active_positions_detail)
     runtime_vars = {
+        'previous_wait_reviews': previous_wait_reviews,
         "pending_orders_status": "verified" if pending_verified else "unknown",
         "decision_timestamp": f"【推演基准时间】: {now_bj_str}",
         "account_balance": f"【当前账户可用资金】: {avail_balance_str}",
@@ -823,7 +825,8 @@ def execute_batch_ai_brain_cycle(pos_summary: str = "当前总持仓 0/6", activ
         # Shared boundary for single-model and council output, before any model-directed write.
         brain_output = trading_prompt.validate_response(brain_output, packages,
             positions=active_positions_detail, pending=pending_orders_list,
-            allow_open=prompt_bundle.allow_open and not brain_output.get('prompt_conflicts'))
+            allow_open=prompt_bundle.allow_open and not brain_output.get('prompt_conflicts'),
+            previous_wait_reviews=prompt_bundle.previous_wait_reviews, risk_contract=prompt_bundle.risk_contract)
         atomic_write_json(os.path.join(DATA_DIR, 'trading_output_validation.json'), brain_output['validation'])
         decisions_dict = brain_output.get("decisions", {})
         pos_mgmt_list = brain_output.get("position_management", [])
@@ -937,8 +940,13 @@ def execute_batch_ai_brain_cycle(pos_summary: str = "当前总持仓 0/6", activ
                 "adx_1h": p.get("adx_1h", "--"),
                 "decision": {
                     "action": final_action,
+                    "decision_status": d_item.get('decision_status','incomplete') if not rejection_reason else 'execution_rejected',
+                    "wait_audit": d_item.get('wait_audit'),
+                    "previous_wait_review": d_item.get('previous_wait_review',{}),
+                    "validation_reason": rejection_reason or d_item.get('validation_reason'),
+                    "model_reason": d_item.get('model_reason'),
                     "contract_version": trading_prompt.VERSION,
-                    "contract_valid": bool(d_item.get('contract_valid')),
+                    "contract_valid": bool(d_item.get('contract_valid')) and not bool(rejection_reason),
                     "supporting_evidence": d_item.get('supporting_evidence', []),
                     "counter_evidence": d_item.get('counter_evidence', []),
                     "counter_evidence_status": d_item.get('counter_evidence_status', 'not_applicable'),
@@ -972,6 +980,19 @@ def execute_batch_ai_brain_cycle(pos_summary: str = "当前总持仓 0/6", activ
         import hashlib
         strategy_evidence.record_decisions(market._selected().identity, standard_cache, packages, model_name,
             hashlib.sha256(effective_system_prompt.encode()).hexdigest(), time.time())
+        try:
+            audit_status = wait_audit.commit(market._selected().identity, standard_cache, packages,
+                active_positions_detail, frame_id=time_str)
+            brain_output['validation']['wait_audit_status'] = audit_status['status']
+        except Exception as exc:
+            # An audit persistence failure cannot authorize a trade or masquerade as a normal WAIT.
+            brain_output['validation']['status'] = 'incomplete'
+            brain_output['validation']['wait_audit_status'] = 'error'
+            brain_output['validation']['reason'] = 'WAIT审计持久化失败：' + type(exc).__name__
+            for row in standard_cache.values():
+                if row['decision']['action']=='WAIT':
+                    row['decision'].update(contract_valid=False,decision_status='incomplete',validation_reason='WAIT审计无法持久化')
+        atomic_write_json(os.path.join(DATA_DIR,'trading_output_validation.json'),brain_output['validation'])
         atomic_write_json(AI_DECISION_CACHE_FILE, standard_cache)
         atomic_write_json(AI_POSITION_MANAGEMENT_FILE, {
             "timestamp": int(time.time()),
@@ -992,6 +1013,9 @@ def execute_batch_ai_brain_cycle(pos_summary: str = "当前总持仓 0/6", activ
             "top_opportunities": [
                 {
                     "inst": p["name"],
+                    "decision_status": standard_cache[p["instId"]]["decision"].get("decision_status"),
+                    "wait_audit": standard_cache[p["instId"]]["decision"].get("wait_audit"),
+                    "previous_wait_review": standard_cache[p["instId"]]["decision"].get("previous_wait_review"),
                     "action": standard_cache[p["instId"]]["decision"]["action"],
                     "confidence": standard_cache[p["instId"]]["decision"]["confidence"],
                     "leverage": standard_cache[p["instId"]]["decision"].get("leverage", 3),

@@ -2,12 +2,16 @@
 import { useToast } from '../../composables/useFeedback'
 const toast = useToast()
 import AppCard from '../../components/ui/AppCard.vue'
+import DecisionAuditPanel from '../../components/DecisionAuditPanel.vue'
+import type { WaitAuditState, DecisionCycle } from '../../utils/waitAudit'
 
 import { ref, onMounted } from 'vue'
 import { useApi } from '../../composables/useApi'
 import { Terminal, RefreshCw } from 'lucide-vue-next'
 
 const { api } = useApi()
+const audit = ref<WaitAuditState>()
+const cycle = ref<DecisionCycle>()
 const loading = ref(true)
 const logs = ref<string[]>([])
 const activeLogTab = ref<'trader' | 'backend' | 'scheduler'>('trader')
@@ -19,6 +23,8 @@ async function loadDecisions() {
   try {
     const res = await api('/api/v1/admin/runtime')
     logs.value = res.recent_logs || []
+    audit.value = res.wait_audit
+    cycle.value = res.decision_cycle
     await fetchLogStream('trader')
   } catch (e: any) {
     toast.error(e.message)
@@ -63,6 +69,7 @@ onMounted(() => {
       </span>
     </div>
 
+    <DecisionAuditPanel :audit="audit" :cycle="cycle" />
     <!-- 3-Way Log Streams -->
     <AppCard
       class="rounded-xl border p-4 sm:p-5 shadow-xs transition-colors"

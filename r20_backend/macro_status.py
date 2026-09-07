@@ -38,6 +38,8 @@ def project(decisions,history,*,validation=None,validation_at=0,now=None):
     if epoch(validation_at)>at and status in {'pending','blocked','unavailable','composition_rejected','rejected'}:
         result['status']='running' if status=='pending' else 'blocked' if status=='blocked' else 'failed'
         result['message']=('新一轮分析中' if status=='pending' else str((validation or {}).get('reason') or '本轮未产生可用模型结果'))+('；展示上次分析' if chosen else '')
+    if status=='incomplete' and epoch(validation_at)>=at:
+        result.update(status='incomplete',message='本轮决策审计不完整，不能将 WAIT 当作已验证的正常等待')
     if not chosen and not result['message']:result['message']='尚未取得可用模型分析；请查看任务运行状态'
     return result
 

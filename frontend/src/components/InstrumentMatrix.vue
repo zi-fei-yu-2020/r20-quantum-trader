@@ -1,5 +1,7 @@
 <script setup lang="ts">
 import AppCard from './ui/AppCard.vue'
+import DecisionAuditPanel from './DecisionAuditPanel.vue'
+import { auditLabel } from '../utils/waitAudit'
 import InstrumentSupportNotice from './InstrumentSupportNotice.vue'
 import { canOpen } from '../utils/instrumentSupport'
 import EmptyState from './ui/EmptyState.vue'
@@ -41,15 +43,16 @@ function getActionStyle(action?: string) {
   }
 }
 
-function getActionLabel(action?: string) {
+function getActionLabel(action?: string, status?: string) {
   if (action === 'BUY_LONG') return '顺势做多 BUY'
   if (action === 'SELL_SHORT') return '顺势做空 SELL'
-  return '空仓等待 WAIT'
+  return status ? auditLabel(status) : '等待 · 未审计'
 }
 </script>
 
 <template>
   <div class="space-y-3">
+    <DecisionAuditPanel :audit="store.data?.wait_audit" :cycle="store.data?.decision_cycle" />
     <!-- Macro Summary Telemetry Strip -->
     <AppCard
       class="rounded-xl border p-3 sm:p-3.5 flex items-start space-x-2.5 transition-colors shadow-xs"
@@ -238,7 +241,7 @@ function getActionLabel(action?: string) {
               class="px-2 py-0.5 rounded text-[10px] font-bold font-mono border"
               :style="getActionStyle(canOpen(item.environment_support) ? (item.decision?.action || item.action) : 'WAIT')"
             >
-              {{ canOpen(item.environment_support) ? getActionLabel(item.decision?.action || item.action) : '仅观察 · 不参与交易' }}
+              {{ canOpen(item.environment_support) ? getActionLabel(item.decision?.action || item.action, item.decision?.decision_status || item.decision_status) : '仅观察 · 不参与交易' }}
             </span>
             <div
               class="flex items-center space-x-1 text-xs font-mono font-bold"

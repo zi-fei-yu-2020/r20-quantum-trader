@@ -782,6 +782,10 @@ def admin_runtime(x_r20_admin_token: str | None = Header(default=None), x_r20_se
     refresh_settings()
     require_admin_header(x_r20_admin_token, x_r20_session)
     payload = runtime_overview()
+    from scripts.wait_audit import public_status as wait_status
+    from scripts.okx_runtime import selected_environment
+    payload["wait_audit"] = wait_status(selected_environment().identity)
+    payload["decision_cycle"] = read_json("trading_state.json", {}).get("decision_cycle", {})
     raw_decisions = read_json("ai_brain_decisions.json", {})
     if isinstance(raw_decisions, dict):
         full_list = []
