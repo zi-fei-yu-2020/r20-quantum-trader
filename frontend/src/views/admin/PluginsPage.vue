@@ -19,6 +19,7 @@ async function load() {
     data.value = await api('/api/v1/admin/plugins')
     errText.value = ''
   } catch (e: any) {
+    if (e?.silent) return
     errText.value = e.message
   } finally {
     loading.value = false

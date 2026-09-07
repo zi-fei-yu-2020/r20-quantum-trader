@@ -71,6 +71,7 @@ async function load() {
     endpoint.value = s.target?.endpoint || ''
     bucket.value = s.target?.bucket || ''
   } catch (e: any) {
+    if (e?.silent) return
     bannerMsg.value = { text: `加载失败：${e.message}`, type: 'err' }
   } finally {
     loading.value = false
@@ -99,6 +100,7 @@ async function testConnection() {
     })
     bannerMsg.value = { text: `✅ ${res.detail}`, type: 'ok' }
   } catch (e: any) {
+    if (e?.silent) return
     bannerMsg.value = { text: `测试失败：${e.message}`, type: 'err' }
   } finally {
     busy.value = ''
@@ -116,6 +118,7 @@ async function save() {
     }
     await load()
   } catch (e: any) {
+    if (e?.silent) return
     bannerMsg.value = { text: `保存失败：${e.message}`, type: 'err' }
   } finally {
     busy.value = ''
@@ -140,6 +143,7 @@ async function runNow() {
     }
     await load()
   } catch (e: any) {
+    if (e?.silent) return
     bannerMsg.value = { text: `灾备失败：${e.message}`, type: 'err' }
   } finally {
     busy.value = ''
@@ -150,15 +154,18 @@ async function downloadArchive(archiveName: string) {
   try {
     const clean = archiveName.split('/').pop() || archiveName
     const url = `/api/v1/admin/backups/download/${encodeURIComponent(clean)}`
+    const checkedToken = auth.token
     const resp = await fetch(url, {
       headers: {
-        ...(auth.token ? { 'X-R20-Session': auth.token } : {}),
+        ...(checkedToken ? { 'X-R20-Session': checkedToken } : {}),
       },
     })
+    auth.checkResponse(resp, checkedToken)
     if (!resp.ok) {
       throw new Error(`下载失败 HTTP ${resp.status}`)
     }
     const blob = await resp.blob()
+    auth.checkResponse(resp, checkedToken)
     const blobUrl = window.URL.createObjectURL(blob)
     const a = document.createElement('a')
     a.href = blobUrl
@@ -169,6 +176,7 @@ async function downloadArchive(archiveName: string) {
     window.URL.revokeObjectURL(blobUrl)
     bannerMsg.value = { text: `✅ 归档文件 ${clean} 已成功触发下载`, type: 'ok' }
   } catch (e: any) {
+    if (e?.silent) return
     bannerMsg.value = { text: `下载失败：${e.message}`, type: 'err' }
   }
 }
@@ -188,20 +196,24 @@ async function onFileSelected(e: Event) {
   try {
     const formData = new FormData()
     formData.append('file', file)
+    const checkedToken = auth.token
     const resp = await fetch('/api/v1/admin/backups/upload', {
       method: 'POST',
       headers: {
-        ...(auth.token ? { 'X-R20-Session': auth.token } : {}),
+        ...(checkedToken ? { 'X-R20-Session': checkedToken } : {}),
       },
       body: formData,
     })
+    auth.checkResponse(resp, checkedToken)
     const res = await resp.json()
+    auth.checkResponse(resp, checkedToken)
     if (!resp.ok) {
       throw new Error(res.detail || `上传失败 HTTP ${resp.status}`)
     }
     bannerMsg.value = { text: `✅ 备份包 ${file.name} 上传成功！`, type: 'ok' }
     await load()
   } catch (err: any) {
+    if (err?.silent) return
     bannerMsg.value = { text: `上传备份失败：${err.message}`, type: 'err' }
   } finally {
     busy.value = ''
@@ -235,6 +247,7 @@ async function restoreArchive(archiveName: string) {
     }
     await load()
   } catch (e: any) {
+    if (e?.silent) return
     bannerMsg.value = { text: `恢复失败：${e.message}`, type: 'err' }
   } finally {
     busy.value = ''

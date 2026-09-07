@@ -95,6 +95,7 @@ async function loadConfig() {
       }
     }
   } catch (e: any) {
+    if (e?.silent) return
     toast.error(e.message)
   } finally {
     loading.value = false
@@ -242,6 +243,7 @@ async function toggleProviderQuick(p: any, e: Event) {
     p.enabled = res.enabled
     await loadConfig()
   } catch (err: any) {
+    if (err?.silent) return
     toast.error(err.message)
   }
 }
@@ -269,6 +271,7 @@ async function saveProviderConfig() {
       }
     }
   } catch (err: any) {
+    if (err?.silent) return
     toast.error(err.message)
   }
 }
@@ -286,6 +289,7 @@ async function clearCurrentProviderModels() {
     toast.success('已清空该供应商所有模型！')
     await loadConfig()
   } catch (err: any) {
+    if (err?.silent) return
     toast.error(err.message)
   }
 }
@@ -320,6 +324,7 @@ async function executeRemoteFetch() {
     })
     remoteFetchResult.value = res
   } catch (err: any) {
+    if (err?.silent) return
     remoteFetchResult.value = { ok: false, error: err.message }
   } finally {
     fetchingRemote.value = false
@@ -364,6 +369,7 @@ async function importRemoteModel(m: any, autoActivate = false) {
     await loadConfig()
     toast.success(autoActivate ? `已收录并激活主脑为 ${m.id}！` : `已成功添加 ${m.id} 到模型列表！`)
   } catch (err: any) {
+    if (err?.silent) return
     toast.error(err.message)
   }
 }
@@ -392,7 +398,8 @@ async function importAllFilteredRemoteModels() {
         body: JSON.stringify(payload),
       })
       successCount++
-    } catch (e) {
+    } catch (e: any) {
+      if (e?.silent) return
       console.warn('Import model failed:', m.id, e)
     }
   }
@@ -447,6 +454,7 @@ async function saveModelForm() {
     modelModalVisible.value = false
     await loadConfig()
   } catch (err: any) {
+    if (err?.silent) return
     toast.error(err.message)
   }
 }
@@ -463,6 +471,7 @@ async function activateModel(m: any) {
     })
     await loadConfig()
   } catch (err: any) {
+    if (err?.silent) return
     toast.error(err.message)
   }
 }
@@ -479,6 +488,7 @@ async function deleteSingleModel(modelId: string) {
     })
     await loadConfig()
   } catch (err: any) {
+    if (err?.silent) return
     toast.error(err.message)
   }
 }
@@ -502,6 +512,7 @@ async function runTestModel(m: any) {
       }),
     })
   } catch (e: any) {
+    if (e?.silent) return
     testResult.value = { ok: false, error: e.message }
   } finally {
     testLoading.value = false

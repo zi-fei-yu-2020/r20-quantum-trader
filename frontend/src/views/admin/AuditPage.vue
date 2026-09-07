@@ -21,6 +21,7 @@ async function load() {
     const res = await api('/api/v1/admin/audit?limit=200')
     records.value = res.records || []
   } catch (error: any) {
+    if (error?.silent) return
     toast.error(error.message)
   } finally {
     loading.value = false

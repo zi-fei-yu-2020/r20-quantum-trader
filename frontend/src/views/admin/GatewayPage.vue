@@ -30,6 +30,7 @@ async function load() {
   try {
     gw.value = await api('/api/v1/admin/gateway?limit=50')
   } catch (e: any) {
+    if (e?.silent) return
     bannerMsg.value = { text: `加载失败：${e.message}`, type: 'err' }
   } finally {
     loading.value = false
@@ -47,6 +48,7 @@ async function replayDelivery(id: number) {
     bannerMsg.value = { text: `投递 #${id} 已重新入队`, type: 'ok' }
     await load()
   } catch (e: any) {
+    if (e?.silent) return
     bannerMsg.value = { text: `重放失败：${e.message}`, type: 'err' }
   }
 }

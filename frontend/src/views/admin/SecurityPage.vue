@@ -46,6 +46,7 @@ async function refreshInstrumentSupport() {
     supportSummary.value = summary
     instruments.value = instruments.value.map(item => ({ ...item, environment_support: summary.items[item.instId] }))
   } catch (e: any) {
+    if (e?.silent) return
     if (generation === supportGeneration) bannerMsg.value = { text: `合约支持状态核验失败：${e.message}`, type: 'warn' }
   } finally { if (generation === supportGeneration) supportLoading.value = false }
 }
@@ -76,6 +77,7 @@ async function loadAll() {
     supportSummary.value = inst.support_summary || null
     void refreshInstrumentSupport()
   } catch (e: any) {
+    if (e?.silent) return
     bannerMsg.value = { text: `加载失败：${e.message}`, type: 'err' }
   } finally {
     loading.value = false
@@ -107,6 +109,7 @@ async function saveCapital() {
     capitalConfirm.value = ''
     await loadAll()
   } catch (e: any) {
+    if (e?.silent) return
     bannerMsg.value = { text: `更新失败：${e.message}`, type: 'err' }
   } finally {
     savingCapital.value = false
@@ -133,6 +136,7 @@ async function addInstrument() {
     instruments.value = inst.instruments || []
     void refreshInstrumentSupport()
   } catch (e: any) {
+    if (e?.silent) return
     bannerMsg.value = { text: `添加失败：${e.message}`, type: 'err' }
   }
 }
@@ -161,6 +165,7 @@ async function removeInstrument(item: any) {
     instruments.value = inst.instruments || []
     void refreshInstrumentSupport()
   } catch (e: any) {
+    if (e?.silent) return
     bannerMsg.value = { text: `删除失败：${e.message}`, type: 'err' }
   }
 }
@@ -173,6 +178,7 @@ async function loadPositions() {
     snapshot.value = d
     snapshotState.value = ''
   } catch (e: any) {
+    if (e?.silent) return
     snapshotState.value = e.message
     snapshot.value = null
   }
@@ -217,6 +223,7 @@ async function confirmClose() {
     closePassword.value = ''
     await loadPositions()
   } catch (e: any) {
+    if (e?.silent) return
     bannerMsg.value = { text: `平仓失败：${e.message}`, type: 'err' }
   } finally {
     closing.value = false

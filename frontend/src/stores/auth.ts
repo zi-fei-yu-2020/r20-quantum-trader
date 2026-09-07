@@ -1,5 +1,7 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
+import { useToast } from '../composables/useFeedback'
+import { checkSessionResponse, SESSION_EXPIRED_MESSAGE } from '../utils/sessionResponse'
 
 const SESSION_TOKEN_KEY = 'r20.admin.session.id'
 const SESSION_USER_KEY = 'r20.admin.session.user'
@@ -13,6 +15,18 @@ export const useAuthStore = defineStore('auth', () => {
   const token = ref<string>('')
   const user = ref<AdminUser | null>(null)
   const error = ref<string>('')
+  let expiryNotified = false
+
+  function expireSession(checkedToken: string) {
+    if (token.value !== checkedToken || expiryNotified) return
+    expiryNotified = true
+    logout(false)
+    useToast().error(SESSION_EXPIRED_MESSAGE)
+  }
+
+  function checkResponse(response: Response, checkedToken: string) {
+    checkSessionResponse(response.status, checkedToken, token.value, expireSession)
+  }
 
   const isAuthenticated = computed(() => !!token.value)
   const isSuperadmin = computed(() => user.value?.role === 'superadmin')
@@ -30,6 +44,7 @@ export const useAuthStore = defineStore('auth', () => {
         error.value = data.detail || `登录失败 (HTTP ${resp.status})`
         return false
       }
+      expiryNotified = false
       token.value = data.session_token
       user.value = { username: data.user?.username || username, role: data.user?.role || 'admin' }
       localStorage.setItem(SESSION_TOKEN_KEY, token.value)
@@ -49,10 +64,8 @@ export const useAuthStore = defineStore('auth', () => {
         headers: { 'X-R20-Session': checkedToken },
       })
       if (token.value !== checkedToken) return false
-      if (!resp.ok) {
-        if (resp.status === 401 || resp.status === 403) logout(false)
-        return false
-      }
+      checkResponse(resp, checkedToken)
+      if (!resp.ok) return false
       const data = await resp.json()
       if (token.value !== checkedToken) return false
       if (data.user) {
@@ -104,5 +117,6 @@ export const useAuthStore = defineStore('auth', () => {
     login,
     logout,
     restoreSession,
+    checkResponse,
   }
 })

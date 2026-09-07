@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { onMounted, reactive, ref } from 'vue'
+import { onMounted, reactive, ref, watch } from 'vue'
+import { useToast } from '../../composables/useFeedback'
 import { useApi } from '../../composables/useApi'
 import AppCard from '../../components/ui/AppCard.vue'
 import AppButton from '../../components/ui/AppButton.vue'
@@ -13,6 +14,9 @@ const state=ref<AccountCenterState>()
 const busy=ref(false)
 const error=ref('')
 const notice=ref('')
+const toast=useToast()
+watch(error, text=>{if(text){toast.error(text);error.value=''}}, {flush:'sync'})
+watch(notice, text=>{if(text){toast.info(text);notice.value=''}}, {flush:'sync'})
 const manualClose=ref(false)
 const cliCheck=ref<any>()
 const addOpen=ref(false)
@@ -51,7 +55,7 @@ function askInstallCli(){
  confirm.value={title:'安装或更新 OKX CLI',description:'这是运行依赖维护，不会授权账户。仅超级管理员可操作，OAuth原生组件仍需另行检查。',phrase:'INSTALL OKX CLI',path:'',apiPath:'/api/v1/admin/okx/install-cli',method:'POST'}
  phrase.value='';confirmOpen.value=true
 }
-async function perform(fn:()=>Promise<void>){busy.value=true;error.value='';try{await fn()}catch(e:any){error.value=friendlyConnectionError(e.message || '操作失败')}finally{busy.value=false}}
+async function perform(fn:()=>Promise<void>){busy.value=true;error.value='';try{await fn()}catch(e:any){if(e?.silent)return;error.value=friendlyConnectionError(e.message || '操作失败')}finally{busy.value=false}}
 function clearSecrets(){form.api_key='';form.secret_key='';form.passphrase=''}
 async function create(){await perform(async()=>{
  const body={label:form.label,auth_type:form.auth_type,mode:form.mode,site:form.site,...(form.auth_type==='api_key'?{api_key:form.api_key,secret_key:form.secret_key,passphrase:form.passphrase}:{})}
@@ -118,8 +122,6 @@ onMounted(()=>perform(load))
     <details class="min-w-0 text-xs" data-capability-details><summary class="cursor-pointer min-h-11" style="color:var(--text-main)">授权与接口能力明细（读取不等于交易许可）</summary><div class="space-y-3 mt-2" style="color:var(--text-muted);overflow-wrap:anywhere"><div v-for="(cap,mode) in c.capabilities" :key="mode"><p>{{ mode==='demo'?'模拟盘':'普通市场/实盘' }} · 账户标识 {{ cap?.account_uid || '未核验' }}</p><ul class="mt-1 space-y-1"><li v-for="(result,name) in cap?.reads || {}" :key="name">{{ probeNames[String(name)] || name }}：{{ result.ok?'通过':friendlyConnectionError(result.error || '不可用') }}</li></ul><p>资讯：{{ cap?.news_ready?'通过':'未验证或不可用' }} · 交易写入：{{ c.auth_type==='oauth'?'未验收，禁止接管自动交易':'保留既有签名交易适配器' }}</p></div><p v-if="!Object.keys(c.capabilities).length">尚未进行只读能力检查。</p></div></details>
    </AppCard>
   </div>
-  <AppDialog :open="!!error" title="连接操作未完成" @update:open="value=>{if(!value)error=''}"><p class="text-sm break-words" style="overflow-wrap:anywhere">{{ error }}</p><template #footer><AppButton @click="error=''">知道了</AppButton></template></AppDialog>
-  <AppDialog :open="!!notice" title="操作反馈" @update:open="value=>{if(!value)notice=''}"><p class="text-sm break-words">{{ notice }}</p><template #footer><AppButton @click="notice=''">确定</AppButton></template></AppDialog>
   <AppDialog v-model:open="addOpen" title="添加候选连接" :busy="busy" description="不会自动替换正在运行的交易连接。OAuth 令牌不会返回浏览器。">
    <form class="space-y-3" @submit.prevent="create">
     <AppField label="连接名称" required v-slot="field"><input :id="field.id" v-model="form.label" class="ui-input w-full" maxlength="60" required></AppField>

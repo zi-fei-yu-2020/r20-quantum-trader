@@ -59,6 +59,7 @@ async function loadData() {
     structuredLessons.value = memRes.structured_lessons || []
     syncWorkingModules()
   } catch (e: any) {
+    if (e?.silent) return
     bannerMsg.value = { text: `加载失败: ${e.message}`, type: 'err' }
   } finally {
     loading.value = false
@@ -86,6 +87,7 @@ async function toggleLessonStatus(lessonId: string) {
     }
     bannerMsg.value = { text: `✅ 心法状态已切换（大模型下次决策立即感知）`, type: 'ok' }
   } catch (e: any) {
+    if (e?.silent) return
     bannerMsg.value = { text: `状态切换失败: ${e.message}`, type: 'err' }
   } finally {
     busy.value = ''
@@ -111,6 +113,7 @@ async function rollbackToBaseline() {
       type: 'ok',
     }
   } catch (e: any) {
+    if (e?.silent) return
     bannerMsg.value = { text: `回滚失败: ${e.message}`, type: 'err' }
   } finally {
     busy.value = ''
@@ -132,6 +135,7 @@ async function addMemoryItem() {
     newMemoryText.value = ''
     bannerMsg.value = { text: '✅ 新心法已通过防偏见审查，并成功同步写入决策注入层', type: 'ok' }
   } catch (e: any) {
+    if (e?.silent) return
     bannerMsg.value = { text: `添加心法失败: ${e.message}`, type: 'err' }
   } finally {
     busy.value = ''
@@ -147,6 +151,7 @@ async function deleteMemoryItem(idx: number) {
     await loadData()
     bannerMsg.value = { text: '✅ 该条自进化心法已成功移除', type: 'ok' }
   } catch (e: any) {
+    if (e?.silent) return
     bannerMsg.value = { text: `删除失败: ${e.message}`, type: 'err' }
   } finally {
     busy.value = ''
@@ -179,6 +184,7 @@ async function savePipelineModules() {
     bannerMsg.value = { text: `✅ 自进化模版布局已成功保存，下一轮复盘自动生效`, type: 'ok' }
     await loadData()
   } catch (e: any) {
+    if (e?.silent) return
     bannerMsg.value = { text: `保存失败: ${e.message}`, type: 'err' }
   } finally {
     busy.value = ''
@@ -207,6 +213,7 @@ async function triggerEvolutionNow() {
     }
     await loadData()
   } catch (e: any) {
+    if (e?.silent) return
     bannerMsg.value = { text: `执行复盘失败: ${e.message}`, type: 'err' }
   } finally {
     busy.value = ''

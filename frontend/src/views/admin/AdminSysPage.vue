@@ -45,6 +45,7 @@ async function load() {
     currentUserId.value = res.current_user_id
     pwdUserId.value = res.current_user_id
   } catch (e: any) {
+    if (e?.silent) return
     bannerMsg.value = { text: e.message, type: 'err' }
   } finally {
     loading.value = false
@@ -69,6 +70,7 @@ async function changePassword() {
     currentPassword.value = ''
     newPassword.value = ''
   } catch (e: any) {
+    if (e?.silent) return
     bannerMsg.value = { text: `修改失败：${e.message}`, type: 'err' }
   } finally {
     changingPwd.value = false
@@ -95,6 +97,7 @@ async function createUser() {
     newPasswordForCreate.value = ''
     await load()
   } catch (e: any) {
+    if (e?.silent) return
     bannerMsg.value = { text: `创建失败：${e.message}`, type: 'err' }
   }
 }
@@ -107,6 +110,7 @@ async function toggleEnabled(u: any) {
     })
     await load()
   } catch (e: any) {
+    if (e?.silent) return
     bannerMsg.value = { text: e.message, type: 'err' }
   }
 }
@@ -122,6 +126,7 @@ async function unlockUser(u: any) {
     bannerMsg.value = { text: `${u.username} 已解锁`, type: 'ok' }
     await load()
   } catch (e: any) {
+    if (e?.silent) return
     bannerMsg.value = { text: e.message, type: 'err' }
   }
 }

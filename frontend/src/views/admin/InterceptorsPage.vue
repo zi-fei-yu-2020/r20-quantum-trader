@@ -61,6 +61,7 @@ async function loadPlugins() {
     const res = await api('/api/v1/admin/interceptors')
     plugins.value = res.plugins || []
   } catch (e: any) {
+    if (e?.silent) return
     bannerMsg.value = { text: `加载插件失败：${e.message}`, type: 'err' }
   } finally {
     loading.value = false
@@ -80,6 +81,7 @@ async function togglePlugin(p: any) {
       type: 'ok',
     }
   } catch (e: any) {
+    if (e?.silent) return
     bannerMsg.value = { text: `操作失败：${e.message}`, type: 'err' }
   }
 }
@@ -100,6 +102,7 @@ async function movePlugin(idx: number, dir: -1 | 1) {
     plugins.value = res.plugins || arr
     bannerMsg.value = { text: '已更新拦截管线执行优先级顺序', type: 'ok' }
   } catch (e: any) {
+    if (e?.silent) return
     bannerMsg.value = { text: `排序更新失败：${e.message}`, type: 'err' }
     await loadPlugins()
   }
@@ -114,6 +117,7 @@ async function openEditor(p: any) {
     codeError.value = ''
     editorVisible.value = true
   } catch (e: any) {
+    if (e?.silent) return
     bannerMsg.value = { text: `读取插件源码失败：${e.message}`, type: 'err' }
   }
 }
@@ -133,6 +137,7 @@ async function saveCode() {
     editorVisible.value = false
     await loadPlugins()
   } catch (e: any) {
+    if (e?.silent) return
     codeError.value = e.message
   } finally {
     savingCode.value = false
@@ -157,6 +162,7 @@ async function deletePlugin(p: any) {
     bannerMsg.value = { text: `已删除插件「${p.filename}」`, type: 'ok' }
     await loadPlugins()
   } catch (e: any) {
+    if (e?.silent) return
     bannerMsg.value = { text: `删除失败：${e.message}`, type: 'err' }
   }
 }
@@ -170,6 +176,7 @@ async function runSandbox() {
     })
     testModalVisible.value = true
   } catch (e: any) {
+    if (e?.silent) return
     bannerMsg.value = { text: `沙箱回归测试执行失败：${e.message}`, type: 'err' }
   } finally {
     testing.value = false
@@ -228,6 +235,7 @@ async function submitCreate() {
     createModalVisible.value = false
     await loadPlugins()
   } catch (e: any) {
+    if (e?.silent) return
     createError.value = e.message
   }
 }

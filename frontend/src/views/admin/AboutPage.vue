@@ -20,6 +20,7 @@ async function loadAbout() {
   try {
     about.value = await api('/api/v1/admin/about')
   } catch (e: any) {
+    if (e?.silent) return
     toast.error(e.message)
   } finally {
     loading.value = false
@@ -41,6 +42,7 @@ async function checkUpdate() {
             : '当前分支没有待同步的上游提交。',
       )
   } catch (e: any) {
+    if (e?.silent) return
     updateResult.value = null
     toast.error(e.message)
   } finally {

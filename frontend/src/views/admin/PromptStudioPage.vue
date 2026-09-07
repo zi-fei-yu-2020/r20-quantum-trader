@@ -104,6 +104,7 @@ async function loadLib() {
     }
     loadWorkingModules()
   } catch (e: any) {
+    if (e?.silent) return
     bannerMsg.value = { text: `加载失败：${e.message}`, type: 'err' }
   } finally {
     loading.value = false
@@ -188,6 +189,7 @@ async function saveProfile() {
     dirty.value = false
     await loadLib()
   } catch (e: any) {
+    if (e?.silent) return
     bannerMsg.value = { text: `保存失败：${e.message}`, type: 'err' }
   }
 }
@@ -201,6 +203,7 @@ async function activateProfile() {
     bannerMsg.value = { text: `已激活方案「${selectedProfile.value?.name}」`, type: 'ok' }
     await loadLib()
   } catch (e: any) {
+    if (e?.silent) return
     bannerMsg.value = { text: `激活失败：${e.message}`, type: 'err' }
   }
 }
@@ -217,6 +220,7 @@ async function duplicateProfile() {
     selectedProfileId.value = res.profile.id
     await loadLib()
   } catch (e: any) {
+    if (e?.silent) return
     bannerMsg.value = { text: `复制失败：${e.message}`, type: 'err' }
   }
 }
@@ -236,6 +240,7 @@ async function createProfile() {
     selectedProfileId.value = res.profile.id
     await loadLib()
   } catch (e: any) {
+    if (e?.silent) return
     bannerMsg.value = { text: `创建失败：${e.message}`, type: 'err' }
   }
 }
@@ -285,6 +290,7 @@ async function deleteProfile() {
     selectedProfileId.value = ''
     await loadLib()
   } catch (e: any) {
+    if (e?.silent) return
     bannerMsg.value = { text: `删除失败：${e.message}`, type: 'err' }
   }
 }
@@ -297,6 +303,7 @@ async function showHistory() {
     )
     historyList.value = res.history || []
   } catch (e: any) {
+    if (e?.silent) return
     bannerMsg.value = { text: `历史加载失败：${e.message}`, type: 'err' }
   }
 }
@@ -315,6 +322,7 @@ async function rollback(revId: string) {
     historyVisible.value = false
     await loadLib()
   } catch (e: any) {
+    if (e?.silent) return
     bannerMsg.value = { text: `回滚失败：${e.message}`, type: 'err' }
   }
 }
@@ -338,6 +346,7 @@ async function exportProfile() {
       type: 'ok',
     }
   } catch (e: any) {
+    if (e?.silent) return
     bannerMsg.value = { text: `导出失败：${e.message}`, type: 'err' }
   }
 }
@@ -386,6 +395,7 @@ async function submitImport() {
     selectedProfileId.value = res.profile.id
     await loadLib()
   } catch (e: any) {
+    if (e?.silent) return
     importFileError.value = `导入失败：${e.message}`
   }
 }

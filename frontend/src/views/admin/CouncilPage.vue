@@ -99,6 +99,7 @@ async function loadData() {
       expandedRole.value = roleKeys[0]
     }
   } catch (e: any) {
+    if (e?.silent) return
     bannerMsg.value = { text: `加载配置失败: ${e.message}`, type: 'err' }
   } finally {
     loading.value = false
@@ -129,6 +130,7 @@ async function saveConfig() {
       type: 'ok',
     }
   } catch (e: any) {
+    if (e?.silent) return
     bannerMsg.value = { text: `保存失败: ${e.message}`, type: 'err' }
   } finally {
     saving.value = false
@@ -146,6 +148,7 @@ async function applySuite(suiteId: string) {
     councilConfig.value = res.config
     bannerMsg.value = { text: '🎉 已载入标准投委会阵容！', type: 'ok' }
   } catch (e: any) {
+    if (e?.silent) return
     bannerMsg.value = { text: `载入失败: ${e.message}`, type: 'err' }
   }
 }
@@ -202,6 +205,7 @@ async function resetRole(roleId: string) {
     councilConfig.value = res.config
     bannerMsg.value = { text: '已重置为出厂标准模板', type: 'ok' }
   } catch (e: any) {
+    if (e?.silent) return
     bannerMsg.value = { text: `重置失败: ${e.message}`, type: 'err' }
   }
 }
@@ -229,6 +233,7 @@ async function runDebateTest() {
       bannerMsg.value = { text: `测试失败: ${res.error || '未知错误'}`, type: 'err' }
     }
   } catch (e: any) {
+    if (e?.silent) return
     bannerMsg.value = { text: `测试出错: ${e.message}`, type: 'err' }
   } finally {
     testing.value = false

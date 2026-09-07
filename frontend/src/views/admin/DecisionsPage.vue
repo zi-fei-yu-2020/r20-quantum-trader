@@ -37,6 +37,7 @@ async function loadDecisions() {
     cycle.value = res.decision_cycle
     await fetchLogStream('trader')
   } catch (e: any) {
+    if (e?.silent) return
     toast.error(e.message)
   } finally {
     loading.value = false
@@ -50,6 +51,7 @@ async function fetchLogStream(type: 'trader' | 'backend' | 'scheduler') {
     const res = await api(`/api/v1/admin/logs?source=${type}&lines=100`)
     logContent.value = res.content || res.lines?.join('\n') || '无实时日志'
   } catch (e: any) {
+    if (e?.silent) return
     logContent.value = `获取日志失败: ${e.message}`
   } finally {
     logLoading.value = false

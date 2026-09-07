@@ -1,5 +1,6 @@
 import { ref } from 'vue'
 import { useAuthStore } from '../stores/auth'
+import { HandledSessionError } from '../utils/sessionResponse'
 import { createSingleFlight } from '../utils/singleFlight'
 
 const sharedReads = createSingleFlight<any>()
@@ -24,13 +25,10 @@ export function useApi() {
       new Headers(options.headers).forEach((value, key) => headers.set(key, value))
       const request = async () => {
         const resp = await fetch(path, { ...options, headers })
+        auth.checkResponse(resp, session)
         let data: any = {}
         try { data = await resp.json() } catch { /* empty response */ }
-        if (auth.token !== session) throw new Error('登录状态已变化，请重新加载页面')
-        if (resp.status === 401 && session) {
-          auth.logout(false)
-          throw new Error('会话已过期，请重新登录')
-        }
+        auth.checkResponse(resp, session)
         if (!resp.ok) {
           const detail = Array.isArray(data.detail)
             ? data.detail.map((x: any) => `${(x.loc || []).slice(1).join('.') || '请求'}：${x.msg}`).join('；')
@@ -43,7 +41,8 @@ export function useApi() {
       const key = JSON.stringify([session, readEpoch, path, [...headers.entries()]])
       return await (canShare ? sharedReads(key, request) : request()) as T
     } catch (e: any) {
-      error.value = e.message || String(e)
+      if (auth.token !== session) throw new HandledSessionError()
+      error.value = e.silent ? null : e.message || String(e)
       throw e
     } finally {
       // A post-save refresh must not join a read started before the mutation.

@@ -13,6 +13,7 @@ export interface FeedbackMessage {
 }
 const items = ref<ToastItem[]>([])
 const timers = new Map<number, ReturnType<typeof setTimeout>>()
+export const TOAST_DURATION_MS = 3000
 let sequence = 0
 
 function dismiss(id: number) {
@@ -21,6 +22,7 @@ function dismiss(id: number) {
   items.value = items.value.filter((item) => item.id !== id)
 }
 function notify(message: string, tone: ToastTone = 'info') {
+  if (!message) return
   const text = String(message)
     .trim()
     .replace(/^[✅⚠️🛡️]+\s*/u, '')
@@ -33,11 +35,7 @@ function notify(message: string, tone: ToastTone = 'info') {
   const id = ++sequence
   items.value.push({ id, tone, message: text, count: 1 })
   if (items.value.length > 4) dismiss(items.value[0]!.id)
-  if (tone !== 'error')
-    timers.set(
-      id,
-      setTimeout(() => dismiss(id), tone === 'success' ? 5000 : 8000),
-    )
+  timers.set(id, setTimeout(() => dismiss(id), TOAST_DURATION_MS))
 }
 export function useToast() {
   return {

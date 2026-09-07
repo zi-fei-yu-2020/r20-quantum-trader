@@ -7,7 +7,7 @@ import AppDialog from '../../components/ui/AppDialog.vue'
 
 import { useFeedback, useToast } from '../../composables/useFeedback'
 
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { useApi } from '../../composables/useApi'
 import { Zap } from 'lucide-vue-next'
 
@@ -48,6 +48,7 @@ async function loadConfig(silent = false) {
     res._briefingTimes = schedule.briefing_times?.join(', ') || ''
     config.value = res
   } catch (e: any) {
+    if (e?.silent) return
     console.error(e)
     showNotificationBanner('error', '加载通知配置失败: ' + (e.message || String(e)))
   } finally {
@@ -86,6 +87,7 @@ async function toggleChannel(channel: string, enabled: boolean) {
     showNotificationBanner('ok', res.message || `${channel} 通道已成功${enabled ? '开启' : '关闭'}`)
     await loadConfig(true)
   } catch (e: any) {
+    if (e?.silent) return
     showNotificationBanner('error', e.message || '通道状态切换失败')
     await loadConfig(true)
   }
@@ -114,6 +116,7 @@ async function saveAll() {
     showNotificationBanner('ok', res.message || '全部通知通道配置已保存')
     await loadConfig(true)
   } catch (e: any) {
+    if (e?.silent) return
     showNotificationBanner('error', e.message || '保存配置失败')
   }
 }
@@ -126,6 +129,7 @@ async function diagnose(channel: string) {
     })
     testResults.value[channel] = res.result
   } catch (e: any) {
+    if (e?.silent) return
     testResults.value[channel] = { status: 'failed', detail: e.message }
   }
 }
@@ -140,6 +144,7 @@ async function startCapture() {
     captureStatus.value = res
     pollCapture(res.capture_id)
   } catch (e: any) {
+    if (e?.silent) return
     toast.error(e.message)
   }
 }
@@ -234,11 +239,13 @@ async function startQqBind() {
           }
         }
       } catch (e: any) {
-        bindStatus.value = { ...bindStatus.value, text: e.message, tone: 'red' }
         stopBindPolling()
+        if (e?.silent) return
+        bindStatus.value = { ...bindStatus.value, text: e.message, tone: 'red' }
       }
     }, 2000)
   } catch (e: any) {
+    if (e?.silent) return
     toast.error(e.message)
   }
 }
@@ -263,6 +270,7 @@ async function sendTest(channel: string) {
       detail: `${res.result?.[channel] || res.result?.detail || '已发送'} · ${res.meaning || ''}`,
     }
   } catch (e: any) {
+    if (e?.silent) return
     testResults.value[channel] = { status: 'failed', detail: e.message }
   }
 }
@@ -282,9 +290,17 @@ async function saveSchedule() {
     })
     toast.success('简报时间已保存')
   } catch (e: any) {
+    if (e?.silent) return
     toast.error(e.message)
   }
 }
+
+onUnmounted(() => {
+  if (captureTimer) clearInterval(captureTimer)
+  captureTimer = null
+  stopBindPolling()
+  bindTaskId = ''
+})
 
 onMounted(() => {
   loadConfig()

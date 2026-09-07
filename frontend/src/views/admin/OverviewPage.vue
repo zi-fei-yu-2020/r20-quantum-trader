@@ -85,6 +85,7 @@ async function loadRuntime() {
       runtime.value = rt
     }
   } catch (e: any) {
+    if (e?.silent) return
     toast.error(e.message)
   } finally {
     loading.value = false
