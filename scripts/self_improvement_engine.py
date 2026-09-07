@@ -138,7 +138,7 @@ def load_closed_trades():
                 for t in t_list:
                     if t.get("status") != "closed":
                         continue
-                    
+
                     c_time = str(t.get("close_time") or t.get("time") or "")
                     if c_time and c_time < reset_time_str:
                         continue
@@ -146,7 +146,7 @@ def load_closed_trades():
                     inst = str(t.get("inst") or t.get("name") or "OTHER")
                     if inst not in TARGET_INSTRUMENTS:
                         continue
-                    pnl = float(t.get("pnl", 0.0) or 0.0)
+                    pnl = float(t['net_pnl'] if t.get('net_pnl') is not None else (t.get('pnl', 0.0) or 0.0))
                     gross = float(t["gross_pnl"]) if t.get("gross_pnl") is not None else pnl
                     fee = abs(float(t.get("fee", 0.0) or 0.0))
                     strat = str(t.get("strategy") or "⚡ 趋势")
@@ -154,6 +154,7 @@ def load_closed_trades():
 
                     closed_trades.append({
                         "inst": inst,
+                        "trade_id": str(t.get('id') or ''),
                         "time": c_time,
                         "open_time": t.get("open_time", ""),
                         "strategy": strat,
@@ -200,7 +201,7 @@ def resolve_memory_update(change_status: str, proposed_memory: Any, existing_mem
 def call_llm_evolution_review(closed_trades: List[Dict[str, Any]], existing_memory_md: str = "", timestamp_str: str = "") -> Dict[str, Any]:
     base_url, api_key = get_cpa_client_config()
     if not api_key:
-        log_msg("[AI Evolution] Error: CPA API Key not found, using fallback heuristics.")
+        log_msg("[AI Evolution] Model credentials unavailable; review failed, approved memory retained.")
         return {}
 
     tz_bj = datetime.timezone(datetime.timedelta(hours=8))
@@ -327,7 +328,7 @@ def call_llm_evolution_review(closed_trades: List[Dict[str, Any]], existing_memo
             content = content[3:]
         if content.endswith("```"):
             content = content[:-3]
-        
+
         review_json = json.loads(content.strip())
         if not isinstance(review_json, dict):
             review_json = {}
@@ -346,6 +347,10 @@ def run_self_evolution(force: bool = False):
     timestamp_str = now_bj.strftime("%Y-%m-%d %H:%M:%S")
     log_msg("🧬 启动 R20 AI 大脑自进化认知复盘与实战心法提炼 (v7.2.1 Crypto Focus)...")
 
+    status_file = os.path.join(DATA_DIR, 'self_improvement_status.json')
+    def record_status(status, **details):
+        atomic_write_json(status_file, {'status': status, 'last_attempt_at': timestamp_str, **details})
+    record_status('running')
     closed_trades = load_closed_trades()
     total_trades = len(closed_trades)
     ledger_revision = hashlib.sha256(
@@ -355,8 +360,9 @@ def run_self_evolution(force: bool = False):
         try:
             with open(REPORT_JSON_FILE, "r", encoding="utf-8") as f:
                 previous_report = json.load(f)
-            if previous_report.get("ledger_revision") == ledger_revision:
-                log_msg("No new closed-trade evidence; keeping the current adaptive configuration")
+            if previous_report.get('review_status') == 'success' and previous_report.get("ledger_revision") == ledger_revision:
+                record_status('no_new_evidence', ledger_revision=ledger_revision)
+                log_msg("No new closed-trade evidence; keeping the successful review and approved memory")
                 return previous_report
         except Exception:
             pass
@@ -390,9 +396,18 @@ def run_self_evolution(force: bool = False):
             pass
 
     # 2. Call LLM for Cognitive Review & Memory Overwriting
-    llm_review = call_llm_evolution_review(closed_trades, existing_memory_md=existing_memory_md, timestamp_str=timestamp_str)
-    if not isinstance(llm_review, dict):
-        llm_review = {}
+    try:
+        llm_review = call_llm_evolution_review(closed_trades, existing_memory_md=existing_memory_md, timestamp_str=timestamp_str)
+        if not isinstance(llm_review, dict) or llm_review.get('change_status') not in {'NO_CHANGE', 'ADD', 'REVISE', 'INVALIDATE'}:
+            raise ValueError('Review missing a valid change_status')
+        for field in ('diagnosis_insights', 'evolution_actions', 'ai_long_term_memory'):
+            values = llm_review.get(field, [])
+            if not isinstance(values, list) or any(not isinstance(v, str) or not v.strip() for v in values):
+                raise ValueError('Invalid review field: ' + field)
+    except Exception as exc:
+        record_status('failed', error_type=type(exc).__name__, ledger_revision=ledger_revision)
+        log_msg('Review failed; successful report, approved memory and pending candidates retained')
+        raise RuntimeError('Self-improvement model review failed; this ledger revision remains retryable') from exc
 
     change_status, _, _ = resolve_memory_update(llm_review.get("change_status", "NO_CHANGE"), [], [])
     insights = llm_review.get("diagnosis_insights", [])
@@ -401,7 +416,7 @@ def run_self_evolution(force: bool = False):
         insights = []
     if not isinstance(actions_taken, list):
         actions_taken = []
-    
+
     raw_asset_mults = llm_review.get("asset_multipliers", {})
     if not isinstance(raw_asset_mults, dict):
         raw_asset_mults = {}
@@ -414,13 +429,15 @@ def run_self_evolution(force: bool = False):
     )
 
     # New evidence never self-authorizes a production rule change.
+    proposed_change_status = change_status
     candidates = []
     try:
         from scripts.evolution_shield import audit_proposed_lesson
         for proposed_text in long_term_memory if not preserve_existing_memory else []:
             passed, reason = audit_proposed_lesson(proposed_text, sample_size=total_trades)
             candidates.append({'text': proposed_text, 'audit_passed': passed, 'audit_reason': reason,
-                'supporting_trade_ids': [], 'sample_size': total_trades, 'status': 'pending_evidence_review',
+                'supporting_trade_ids': [], 'reviewed_trade_ids': [t['trade_id'] for t in closed_trades if t.get('trade_id')],
+                'sample_size': total_trades, 'status': 'pending_evidence_review' if passed else 'rejected_by_audit',
                 'ledger_revision': ledger_revision})
     except Exception as exc:
         log_msg(f"Evolution audit unavailable; existing memory retained: {type(exc).__name__}")
@@ -442,11 +459,11 @@ def run_self_evolution(force: bool = False):
         atomic_write_json(AI_MEMORY_FILE, memory_payload)
 
     # Save as durable R20 Markdown memory file: update timestamp and insights while keeping core lessons if no overwrite
-    md_content = f"""# R20 AI 交易大脑长期记忆与启发式心法 (AI Trading Memory)
+    md_content = f"""# R20 AI 交易复盘（报告，不等于已应用的策略变更）
 
-> **最新覆盖与修订时间**: {timestamp_str} (北京时间)  
-> **复盘样本覆盖**: 最近平仓 {total_trades} 笔 | 样本胜率: {win_rate}%  
-> **模式说明**: 本文档由每日交易认知复盘（Cognitive Post-Mortem）基于最新实盘流水自动迭代沉淀。具备**智能时效覆盖机制**，动态淘汰被证伪的旧认知，保留并更新最新有效心法，不设死板硬编码限制。
+> **本次复盘时间**: {timestamp_str} (北京时间)
+> **复盘样本覆盖**: 已平仓 {total_trades} 笔 | 样本胜率: {win_rate}%
+> **模式说明**: 基于当前账户的已平仓台账复盘，模拟盘样本不等于实盘结果。新建议单独接受审核，不自动覆盖运行记忆、权重或风险参数。
 
 ---
 
@@ -458,7 +475,7 @@ def run_self_evolution(force: bool = False):
         # Strip any existing leading bracket timestamp
         if clean_item.startswith("[") and "]" in clean_item:
             clean_item = clean_item.split("]", 1)[1].strip()
-        md_content += f"{idx}. [{timestamp_str}] {clean_item}\n"
+        md_content += f"{idx}. {clean_item}\n"
 
     md_content += f"""
 ---
@@ -490,7 +507,12 @@ def run_self_evolution(force: bool = False):
         "total_trades": total_trades,
         "win_rate": win_rate,
         "profit_factor": profit_factor,
-        "mode": "R20 Native Heuristic Memory (启发式长期记忆)",
+        "mode": "review_only",
+        "review_status": "success",
+        "completed_at": datetime.datetime.now(tz_bj).strftime('%Y-%m-%d %H:%M:%S'),
+        "proposed_change_status": proposed_change_status,
+        "pending_candidate_count": sum(c['audit_passed'] for c in candidates),
+        "recommendations": actions_taken,
         "change_status": change_status,
         "memory_preserved": preserve_existing_memory,
         "insights": insights,
@@ -499,6 +521,7 @@ def run_self_evolution(force: bool = False):
     }
 
     atomic_write_json(REPORT_JSON_FILE, report_payload)
+    record_status('success', ledger_revision=ledger_revision)
 
     log_msg(f"🧬 自进化认知复盘完成 | 状态={change_status} | 当前保留 {len(long_term_memory)} 条启发式长期记忆")
     try:

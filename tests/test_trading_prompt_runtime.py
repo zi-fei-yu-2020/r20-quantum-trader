@@ -64,6 +64,16 @@ class PromptRuntimeTests(unittest.TestCase):
         self.assertIn('previous_wait_reviews',checked['messages'][1]['content'])
         self.assertEqual(checked['validation']['wait_audit_status'],'ready')
 
+    def test_model_action_and_score_preserved_separately_from_validation(self):
+        output=response();output['decisions']['BTC-USDT-SWAP']['confidence']=47
+        output['decisions']['BTC-USDT-SWAP']['supporting_evidence']=[]
+        checked=self.exercise(output)
+        row=checked['result']['BTC-USDT-SWAP']['decision']
+        self.assertEqual(row['action'],'WAIT')
+        self.assertEqual(row['model_action'],'BUY_LONG')
+        self.assertEqual(row['model_confidence'],47)
+        self.assertEqual(row['confidence_role'],'uncalibrated_diagnostic')
+
     def test_unjustified_wait_is_incomplete_not_normal_success(self):
         checked=self.exercise(response({'action':'WAIT','summary_reason':'暂时等待观察'}))
         self.assertEqual(checked['validation']['status'],'incomplete')

@@ -7,6 +7,7 @@ from typing import Any
 from pathlib import Path
 from scripts.okx_runtime import replace_cli_prefix as okx_private_command
 from scripts.instrument_pool import load_instruments
+from scripts.evolution_status import public_status as evolution_status
 import os
 import json
 import time
@@ -361,6 +362,7 @@ def _inject_local_data_into_stale(stale, positions, timestamp_full):
     stale['trades']=ledger_monitor.project_rows(stale.get('trades', []), selected_environment().identity)
     stale['ledger_sync']=ledger_monitor.load('ledger_sync_status.json', {})
     from scripts.wait_audit import public_status as wait_status
+    stale['evolution_review']=evolution_status(DATA_DIR)
     stale['wait_audit']=wait_status(selected_environment().identity)
     stale['decision_cycle']=state_data.get('decision_cycle', {})
     stale['capital_pool']=capital_pool.status(selected_environment())
@@ -1229,6 +1231,7 @@ def _update_cache_cycle():
         },
         "adaptive_config": adaptive_cfg,
         "review": review_data,
+        "evolution_review": evolution_status(DATA_DIR),
         "ai_trading_memory_md": ai_memory_md_content,
         "ai_last_prompt": ai_last_prompt_text,
         "snapshots": snapshots_list if baseline_configured else [],

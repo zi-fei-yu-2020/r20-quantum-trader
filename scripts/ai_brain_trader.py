@@ -825,6 +825,7 @@ def execute_batch_ai_brain_cycle(pos_summary: str = "当前总持仓 0/6", activ
                     raw_res = res
 
             brain_output = trading_prompt.parse_response(content)
+        original_brain_output = brain_output
         # Shared boundary for single-model and council output, before any model-directed write.
         brain_output = trading_prompt.validate_response(brain_output, packages,
             positions=active_positions_detail, pending=pending_orders_list,
@@ -902,6 +903,13 @@ def execute_batch_ai_brain_cycle(pos_summary: str = "当前总持仓 0/6", activ
         for p in packages:
             inst_id = p["instId"]
             d_item = decisions_dict.get(inst_id, {})
+            raw_proposal = original_brain_output.get('decisions', {}).get(inst_id)
+            raw_proposal = raw_proposal if isinstance(raw_proposal, dict) else {}
+            try:
+                model_score = trading_prompt.numeric(raw_proposal.get('confidence'))
+                if not 0 <= model_score <= 100: model_score = None
+            except trading_prompt.ContractError:
+                model_score = None
             if not isinstance(d_item, dict):
                 d_item = {}
             # Smooth field alias normalization (support both standard contract and council desk outputs)
@@ -943,6 +951,9 @@ def execute_batch_ai_brain_cycle(pos_summary: str = "当前总持仓 0/6", activ
                 "adx_1h": p.get("adx_1h", "--"),
                 "decision": {
                     "action": final_action,
+                    "model_action": str(raw_proposal.get("action", "MISSING")).upper()[:24],
+                    "model_confidence": model_score,
+                    "confidence_role": "uncalibrated_diagnostic",
                     "decision_status": d_item.get('decision_status','incomplete') if not rejection_reason else 'execution_rejected',
                     "wait_audit": d_item.get('wait_audit'),
                     "previous_wait_review": d_item.get('previous_wait_review',{}),

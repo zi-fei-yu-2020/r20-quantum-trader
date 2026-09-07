@@ -172,6 +172,7 @@ export interface DashboardResponse {
   today_stats?: any
   performance?: any
   news_intelligence?: Record<string, any>
+  evolution_review?: import('../components/EvolutionReviewPanel.vue').EvolutionReview
   review?: any
   ai_trading_memory_md?: string
   factor_library?: any

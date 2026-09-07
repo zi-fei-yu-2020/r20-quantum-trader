@@ -39,6 +39,15 @@
     "12d908f8a0ff212a05d19877e8adde5fc1d05e21ca60b6b88bac36c9a470cf94": "r20_backend/council_manager.py:DEFAULT_PRESET_TEMPLATES",
     "165538e81c0bec8f6fa736839ab2c4ed95f99eba60a198636ec77c3775905273": "r20_backend/council_manager.py:DEFAULT_PRESET_TEMPLATES",
     "e6db26bf717e30fcda28693b68915a5d1a93da83a267d1040b115923b6bfcd93": "r20_backend/council_manager.py:DEFAULT_PRESET_TEMPLATES",
-    "d3b04e764e74a5f9e760e25bd91818420f5faadc5295bf418564b72e606e5e63": "r20_backend/council_manager.py:DEFAULT_PRESET_TEMPLATES"
+    "d3b04e764e74a5f9e760e25bd91818420f5faadc5295bf418564b72e606e5e63": "r20_backend/council_manager.py:DEFAULT_PRESET_TEMPLATES",
+    "8b2eba553abdb28f7a4383daa89fe00a33dfd0e91a970ab3557ca628c9cfcc33": "scripts/trading_prompt.py:BASE_SYSTEM@5d84281",
+    "e52ef562174dfc4430bc6ebe3b8e72e0e50677759768d6e60e190f514ec7a850": "scripts/trading_prompt.py:BASE_SYSTEM@5d84281",
+    "745e7655054c1f4f1e60bd8b1d932ffd2e22e333b0ac6f2dbadd2ceb6e213127": "scripts/trading_prompt.py:BASE_SYSTEM@5d84281",
+    "8618bb6b626c1e37460f356737be9ee24e35ed4379abf8dce1ef502608b6a20b": "scripts/trading_prompt.py:BASE_SYSTEM@5d84281",
+    "851730e52c605ccfb3d724a276e2737f7ba8bcd5a804b8c318b95075fc2ab447": "scripts/trading_prompt.py:BASE_SYSTEM@5d84281",
+    "e69179dec882f983b4f18e9c42d0cd142fb44dbeded293a16a895d2771cb4f73": "scripts/trading_prompt.py:BASE_SYSTEM@5d84281",
+    "2c9d4bf8e61c9a4d88bda996c739681318a4e18c4f01d0464ca1dc420e20f038": "scripts/trading_prompt.py:BASE_SYSTEM@5d84281",
+    "95dfe36e2b13672b92b6516111cafae796203dbad481209793796ddd439a9d4f": "scripts/trading_prompt.py:BASE_SYSTEM@5d84281",
+    "b495ed5dc7dcf3652196175f88f17a80aa63563e6119dd1a189c1c3ea73d2f3e": "scripts/trading_prompt.py:STYLE_SYSTEM@5d84281"
   }
 }

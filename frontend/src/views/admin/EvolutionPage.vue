@@ -1,5 +1,7 @@
 <script setup lang="ts">
 import AppCard from '../../components/ui/AppCard.vue'
+import EvolutionReviewPanel from '../../components/EvolutionReviewPanel.vue'
+import type { EvolutionReview } from '../../components/EvolutionReviewPanel.vue'
 import LoadingState from '../../components/ui/LoadingState.vue'
 
 import { useFeedback, useToast } from '../../composables/useFeedback'
@@ -41,6 +43,7 @@ const workingModules = ref<any[]>([])
 
 // Structured White-Box Memory state
 const structuredLessons = ref<any[]>([])
+const evolutionReview = ref<EvolutionReview>()
 const newMemoryText = ref('')
 
 const selectedProfile = computed(
@@ -57,6 +60,7 @@ async function loadData() {
     lib.value = libRes
     selectedProfileId.value = libRes.active_profile_id || 'stable'
     structuredLessons.value = memRes.structured_lessons || []
+    evolutionReview.value = memRes.evolution_review
     syncWorkingModules()
   } catch (e: any) {
     if (e?.silent) return
@@ -208,7 +212,7 @@ async function triggerEvolutionNow() {
       body: JSON.stringify({ confirmation: 'RUN JOB' }),
     })
     bannerMsg.value = {
-      text: `✅ 自进化复盘已完成（已自动执行离群噪点过滤与宪法安全审查）！${res.detail || ''}`,
+      text: `复盘任务请求已处理，请查看最近任务与报告状态；建议不会自动应用。${res.detail || ''}`,
       type: 'ok',
     }
     await loadData()
@@ -253,6 +257,8 @@ const toast = useToast()
         白盒认知 · 防偏见护栏
       </span>
     </div>
+
+    <EvolutionReviewPanel :review="evolutionReview" />
 
     <!-- Banner -->
 

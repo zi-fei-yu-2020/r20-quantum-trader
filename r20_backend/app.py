@@ -2389,6 +2389,7 @@ def _save_memory_items(items: list[str]) -> None:
 def get_admin_memory(x_r20_admin_token: str | None = Header(default=None), x_r20_session: str | None = Header(default=None, alias="X-R20-Session")) -> dict[str, Any]:
     refresh_settings()
     require_admin_header(x_r20_admin_token, x_r20_session)
+    from scripts.evolution_status import public_status as evolution_status
     items = _parse_memory_items()
     raw_content = MEMORY_FILE.read_text(encoding="utf-8") if MEMORY_FILE.exists() else ""
     
@@ -2404,6 +2405,7 @@ def get_admin_memory(x_r20_admin_token: str | None = Header(default=None), x_r20
         "count": len(items),
         "raw": raw_content,
         "structured_lessons": structured_lessons,
+        "evolution_review": evolution_status(DATA_DIR),
     }
 
 
