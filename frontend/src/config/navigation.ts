@@ -80,9 +80,9 @@ export const adminNavigation = [
       },
       {
         id: 'security',
-        label: '交易账户与标的',
+        label: '交易标的与持仓',
         icon: Wallet,
-        description: '管理 OKX 连接、交易环境、标的池及受保护的手动操作。',
+        description: '管理标的池、盈亏基准及受保护平仓；账户配置统一在账户中心。',
       },
       {
         id: 'gateway',

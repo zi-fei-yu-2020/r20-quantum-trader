@@ -84,16 +84,28 @@ def public_status():
     state = load()
     connections = []
     for c in state['connections'].values():
-        connections.append({k:copy.deepcopy(c[k]) for k in ('id','label','auth_type','mode','site','status','generation','capabilities','created_at') if k in c})
+        row={k:copy.deepcopy(c[k]) for k in ('id','label','auth_type','mode','site','status','generation','capabilities','created_at') if k in c}
+        row.update(display_label=display_label(c['label']),credentials_display=credentials_display(c.get('credentials',{}),c['auth_type']))
+        connections.append(row)
     from scripts.okx_runtime import legacy_environment
     active_legacy = legacy_environment().mode
     legacy = {mode:legacy_environment(mode=mode).configured and (mode==active_legacy or legacy_environment(mode=mode).source=='separate-credentials') for mode in ('demo','live')}
+    legacy_details={}
+    for mode,configured in legacy.items():
+        e=legacy_environment(mode=mode)
+        credentials={'api_key':e.api_key,'secret_key':e.secret_key,'passphrase':e.passphrase} if configured else {}
+        legacy_details[mode]={'configured':configured,'source':e.source,'credentials_display':credentials_display(credentials,'api_key')}
+    from scripts.okx_runtime import _load_dotenv
+    manual_close=_load_dotenv().get('R20_MANUAL_CLOSE_ENABLED','0')=='1'
+    from r20_gateway.scheduler import JOBS
+    news_interval=next(job.interval_seconds for job in JOBS if job.name=='news')
     try: news=json.loads((DATA/'news_sentiment.json').read_text(encoding='utf8'))
     except (OSError,ValueError): news={}
     news={k:news.get(k) for k in ('schema','connection_status','updated_at','last_attempt_at','last_success_at','message')}
     return {'version':VERSION,'revision':state['revision'],'managed':state['managed'],
             'active_mode':state['active_mode'] or legacy_environment().mode,'bindings':state['bindings'],
-            'connections':connections,'legacy_key_configured':legacy,'recent_events':state['events'][:12],
+            'connections':connections,'legacy_key_configured':legacy,'legacy_connections':legacy_details,'recent_events':state['events'][:12],
+            'trading_connection':trading_connection_summary(state),'manual_close_enabled':manual_close,'news_interval_seconds':news_interval,
             'oauth_write_status':'not_validated','automatic_fallback':False,'news':news,
             'oauth_runtime':{'binary_available':transport.AUTH_BINARY.is_file(),'posix_ready':os.name=='posix'}}
 
@@ -252,7 +264,10 @@ def bind(purpose,identity,confirmation):
     if purpose not in {'demo','live','news'} or confirmation!='BIND '+purpose.upper():
         raise AccountChangeError('请确认绑定用途')
     with (registry_guard() if purpose=='news' else mutation_guard()):
-        state=load();was_managed=state['managed'];c=_connection(state,identity);mode='live' if purpose=='news' else purpose
+        state=load()
+        if identity and state['bindings'].get(purpose)==identity:
+            return {**public_status(),'no_change':True}
+        was_managed=state['managed'];c=_connection(state,identity);mode='live' if purpose=='news' else purpose
         cap=c.get('capabilities',{}).get(mode,{})
         if c['status']!='identity_verified': raise AccountChangeError('连接身份尚未核验，或正在重新授权')
         if not cap.get('account_uid') or not 0<=time.time()-cap.get('checked_at',0)<=300:
@@ -366,7 +381,7 @@ def news_connection():
 def import_legacy(mode):
     c=_legacy_connection(mode)
     if c is None: raise AccountChangeError('该环境没有可导入的旧Key')
-    return create('原有'+mode+' Key（待核验）','api_key',mode,credentials=c['credentials'])
+    return create('原有'+('模拟盘' if mode=='demo' else '实盘')+' Key','api_key',mode,credentials=c['credentials'])
 
 
 def _invalidate_news_cache(status):
@@ -400,3 +415,46 @@ def _canonicalize(old,new,mode):
     cap=new.setdefault('capabilities',{}).setdefault(mode,{})
     cap.update(account_uid=uid,canonical_scope=scope)
     return same
+
+
+def display_label(label):
+    names={'原有demo Key（待核验）':'原有模拟盘 Key','原有live Key（待核验）':'原有实盘 Key','原有demo连接':'原有模拟盘连接','原有live连接':'原有实盘连接'}
+    return names.get(label,label)
+
+
+def credentials_display(credentials,auth_type):
+    if auth_type!='api_key':return {'api_key':'不适用（OAuth）','secret_key_saved':False,'passphrase_saved':False}
+    key=str(credentials.get('api_key') or '')
+    masked=(key[:4]+'********'+key[-4:]) if len(key)>12 else '********' if key else '未配置'
+    return {'api_key':masked,'secret_key_saved':bool(credentials.get('secret_key')),'passphrase_saved':bool(credentials.get('passphrase'))}
+
+
+def trading_connection_summary(state=None):
+    state=load() if state is None else state
+    from scripts.okx_runtime import legacy_environment
+    mode=state['active_mode'] or legacy_environment().mode
+    if state['managed']:
+        c=state['connections'].get(state['bindings'].get(mode))
+        configured=bool(c and c['auth_type']=='api_key' and all(c.get('credentials',{}).get(k) for k in ('api_key','secret_key','passphrase')))
+        return {'mode':mode,'configured':configured,'management':'account_center','auth_type':c['auth_type'] if c else 'none',
+                'status':'configured' if configured else 'unbound' if not c else 'not_ready'}
+    env=legacy_environment(mode=mode)
+    return {'mode':mode,'configured':env.configured,'management':'legacy','auth_type':'api_key' if env.configured else 'none',
+            'status':'configured' if env.configured else 'unconfigured'}
+
+
+def runtime_credentials(llm_configured=False):
+    c=trading_connection_summary()
+    # Keep historical names while publishing the same canonical contract as /health.
+    return {'okx':c['configured'],'llm':bool(llm_configured),'okx_configured':c['configured'],
+            'llm_configured':bool(llm_configured),'simulated_trading':c['mode']=='demo','okx_environment':c['mode'],
+            'credential_source':c['auth_type'],'connection_status':c['status']}
+
+
+def set_manual_close(enabled,confirmation):
+    expected='ENABLE MANUAL CLOSE' if enabled is True else 'DISABLE MANUAL CLOSE'
+    if type(enabled) is not bool or confirmation!=expected:raise AccountChangeError('手动平仓开关确认不匹配')
+    from r20_backend.settings_store import update_env
+    with registry_guard():
+        update_env({'R20_MANUAL_CLOSE_ENABLED':'1' if enabled else '0'})
+    return {'manual_close_enabled':enabled,'message':'仅更新后台手动平仓权限；不会平仓，也不影响独立持仓风控。'}

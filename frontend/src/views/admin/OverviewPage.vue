@@ -9,6 +9,7 @@ import EmptyState from '../../components/ui/EmptyState.vue'
 import { ref, computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { useApi } from '../../composables/useApi'
+import { overviewConnection } from '../../utils/accountConnections'
 import {
   Cpu,
   Database,
@@ -29,6 +30,7 @@ const router = useRouter()
 const { api } = useApi()
 const runtime = ref<any>(null)
 const loading = ref(true)
+const connection = computed(() => overviewConnection(runtime.value))
 
 function duration(s: number | null): string {
   if (s == null) return '--'
@@ -264,7 +266,7 @@ const quickNav = [
         <AppCard
           class="rounded-xl border p-4 shadow-xs transition-colors cursor-pointer group"
           style="background-color: var(--bg-card); border-color: var(--border-subtle)"
-          @click="router.push('/admin/security')"
+          @click="router.push('/admin/accounts')"
         >
           <div class="flex items-center justify-between mb-2">
             <span class="text-xs font-sans" style="color: var(--text-muted)">OKX 连接环境</span>
@@ -284,11 +286,7 @@ const quickNav = [
             style="color: var(--color-brand)"
           >
             {{
-              runtime.credentials?.simulated_trading === true
-                ? 'DEMO'
-                : runtime.credentials?.simulated_trading === false
-                  ? 'LIVE'
-                  : '待配置'
+              connection.mode === 'demo' ? 'DEMO' : connection.mode === 'live' ? 'LIVE' : '环境待确认'
             }}
           </div>
           <div
@@ -296,9 +294,9 @@ const quickNav = [
             style="color: var(--text-faint)"
           >
             <span
-              :class="runtime.credentials?.okx_configured ? 'text-emerald-400' : 'text-amber-400'"
+              :class="connection.configured ? 'text-emerald-400' : 'text-amber-400'"
             >
-              ● {{ runtime.credentials?.okx_configured ? 'API 凭证就绪' : '尚未配置凭证' }}
+              ● {{ connection.configured ? 'Key 已配置' : connection.status === 'unbound' ? '当前用途未绑定' : '尚未配置凭证' }}
             </span>
             <span>·</span>
             <span class="text-indigo-400 group-hover:underline">账户管理 →</span>

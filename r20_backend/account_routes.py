@@ -19,6 +19,11 @@ class ModeRequest(BaseModel):
     mode: Literal['demo','live']
 
 
+class ManualCloseRequest(BaseModel):
+    enabled: bool
+    confirmation: str
+
+
 class ConfirmRequest(BaseModel):
     confirmation: str
     connection_id: str = ''
@@ -86,6 +91,10 @@ def install(app, require_superadmin, audit_record):
     @router.delete('/connections/{identity}')
     def delete(identity: str,payload: ConfirmRequest,x_r20_session: str | None = Header(default=None,alias='X-R20-Session')):
         return execute('delete',center.delete,require_superadmin(x_r20_session),identity,payload.confirmation)
+
+    @router.put('/manual-close')
+    def manual_close(payload: ManualCloseRequest,x_r20_session: str | None = Header(default=None,alias='X-R20-Session')):
+        return execute('manual_close',center.set_manual_close,require_superadmin(x_r20_session),payload.enabled,payload.confirmation)
 
     @router.post('/news/refresh')
     def refresh_news(x_r20_session: str | None = Header(default=None,alias='X-R20-Session')):

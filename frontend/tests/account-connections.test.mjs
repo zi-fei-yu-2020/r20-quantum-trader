@@ -1,7 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
-import { canBind, connectionStateLabel, newsConnectionLabel, friendlyConnectionError } from '../src/utils/accountConnections.ts'
+import { syncBindingSelections, overviewConnection, canBind, connectionStateLabel, newsConnectionLabel, friendlyConnectionError } from '../src/utils/accountConnections.ts'
 import { newsIsFresh, newsStatusText, newsTime } from '../src/utils/newsStatus.ts'
 
 const connection={id:'fixture',label:'fixture',auth_type:'oauth',mode:'demo',site:'global',status:'identity_verified',capabilities:{demo:{account_uid:'A',read_ready:true},live:{account_uid:'A',read_ready:true,news_ready:true}}}
@@ -39,4 +39,38 @@ test('news view does not invent mention counts or claim monitoring healthy on st
  assert.ok(source.includes('<NewsConnectionStatus'))
  assert.ok(source.includes('资讯监测待恢复'))
  assert.ok(source.includes("s.mentions == null ? '--'"))
+})
+
+test('overview understands both old and canonical runtime contracts',()=>{
+ assert.deepEqual(overviewConnection({credentials:{okx:true},configuration:{'OKX 当前环境':'模拟盘 DEMO'}}),{mode:'demo',configured:true,source:'api_key',status:'configured'})
+ assert.equal(overviewConnection({credentials:{okx_configured:true,simulated_trading:false}}).mode,'live')
+ assert.equal(overviewConnection({trading_connection:{mode:'demo',configured:false,status:'unbound',auth_type:'none'},credentials:{okx:true}}).configured,false)
+ assert.equal(overviewConnection({}).mode,'unknown')
+})
+test('binding selectors initially show actual bindings and preserve unsaved choices',()=>{
+ const initial={bindings:{demo:'A',live:'B',news:'B'},connections:[{id:'A'},{id:'B'},{id:'C'}]}
+ const selected={demo:'',live:'',news:''}
+ syncBindingSelections(selected,undefined,initial)
+ assert.deepEqual(selected,{demo:'A',live:'B',news:'B'})
+ selected.demo='C'
+ syncBindingSelections(selected,initial,initial)
+ assert.equal(selected.demo,'C')
+ const next={...initial,bindings:{demo:'A',live:'C',news:null}}
+ syncBindingSelections(selected,initial,next)
+ assert.deepEqual(selected,{demo:'C',live:'C',news:''})
+})
+test('removed draft selection resets to current binding, never to an arbitrary account',()=>{
+ const previous={bindings:{demo:'A',live:null,news:null},connections:[{id:'A'},{id:'C'}]}
+ const selected={demo:'C',live:'',news:''}
+ syncBindingSelections(selected,previous,{...previous,connections:[{id:'A'}]})
+ assert.equal(selected.demo,'A')
+})
+test('account configuration has one UI entry; protected closing remains in instrument page',()=>{
+ const page=readFileSync(new URL('../src/views/admin/SecurityPage.vue',import.meta.url),'utf8')
+ for(const text of ['保存环境与凭证','保存平仓开关','startOauth','saveEnvironment','live_secret','demo_secret'])assert.ok(!page.includes(text))
+ assert.ok(page.includes('confirmClose'))
+ assert.ok(page.includes('saveCapital'))
+ assert.ok(page.includes('/admin/accounts'))
+ const accounts=readFileSync(new URL('../src/views/admin/AccountsPage.vue',import.meta.url),'utf8')
+ for(const text of ['允许后台手动平仓','ENABLE MANUAL CLOSE','data-masked-credentials','配置文件中的旧凭据','检测 Node/npm/CLI'])assert.ok(accounts.includes(text))
 })

@@ -527,10 +527,19 @@ def get_admin_configuration() -> dict[str, str]:
 
     has_notify = bool(settings.notification_webhook or getattr(settings, "qq_bot_app_id", None) or getattr(settings, "tg_bot_token", None) or getattr(settings, "wechat_webhook", None))
 
+    from r20_backend.account_connections import load as load_connections
+    connection_state=load_connections()
+    def configured_mode(mode):
+        if connection_state["managed"]:
+            connection=connection_state["connections"].get(connection_state["bindings"].get(mode))
+            return bool(connection and connection.get("auth_type")=="api_key" and all(connection.get("credentials",{}).get(k) for k in ("api_key","secret_key","passphrase")))
+        from scripts.okx_runtime import legacy_environment
+        legacy=legacy_environment(mode=mode)
+        return legacy.configured and (mode==legacy_environment().mode or legacy.source=='separate-credentials')
     return {
         "OKX 当前环境": "模拟盘 DEMO" if settings.okx_simulated else "实盘 LIVE",
-        "OKX 实盘凭证": "已完整配置" if settings.okx_live_configured else "未配置",
-        "OKX 模拟盘凭证": "已配置" if settings.okx_demo_configured else "未配置",
+        "OKX 实盘凭证": "已完整配置" if configured_mode("live") else "未配置",
+        "OKX 模拟盘凭证": "已配置" if configured_mode("demo") else "未配置",
         "LLM 决策主脑": model_name,
         "LLM 思考强度": effort,
         "模型委员会": "已启用" if council.get("enabled") else "未启用",
@@ -544,6 +553,7 @@ def get_admin_configuration() -> dict[str, str]:
 
 
 def runtime_overview() -> dict[str, Any]:
+    from r20_backend.account_connections import runtime_credentials, trading_connection_summary
     health_files = [
         file_health("ai_brain_decisions.json", 15 * 60),
         file_health("factor_library_snapshot.json", 60),
@@ -558,7 +568,8 @@ def runtime_overview() -> dict[str, Any]:
     positions_payload = read_json("position_trackers.json", {})
     return {
         "service": {"version": "7.3.0", "pid": os.getpid(), "uptime_seconds": int(time.time() - STARTED_AT)},
-        "credentials": {"okx": bool(settings.okx_api_key and settings.okx_secret_key and settings.okx_passphrase), "llm": bool(settings.llm_api_key)},
+        "credentials": runtime_credentials(bool(settings.llm_api_key)),
+        "trading_connection": trading_connection_summary(),
         "configuration": get_admin_configuration(),
         "data_health": health_payload,
         "decisions": decision_summary(),

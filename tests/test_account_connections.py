@@ -367,3 +367,61 @@ class NewsEdgeTests(unittest.TestCase):
     def test_non_http_source_links_are_removed(self):
         rows=news_connection.articles([{'details':[{'id':'1','title':'news','cTime':'1000','sourceUrl':'javascript:alert(1)'}]}])
         self.assertEqual(rows[0]['sourceUrl'],'')
+
+
+class AccountDisplayTests(AccountFixture):
+    def test_saving_same_binding_does_not_reset_decisions_or_risk_context(self):
+        identity=self.new()
+        with patch.object(transport,'request',side_effect=self.flat_reader):center.bind('demo',identity,'BIND DEMO')
+        before=center.load();env=center.resolve_environment()
+        with patch.object(transport,'request') as request,patch.object(center,'_archive_runtime') as archive:
+            result=center.bind('demo',identity,'BIND DEMO')
+        self.assertTrue(result['no_change']);self.assertEqual(center.load(),before);self.assertEqual(center.resolve_environment(),env)
+        request.assert_not_called();archive.assert_not_called()
+
+    def test_runtime_credential_aliases_and_mode_match_managed_binding(self):
+        identity=self.new()
+        with patch.object(transport,'request',side_effect=self.flat_reader):center.bind('demo',identity,'BIND DEMO')
+        result=center.runtime_credentials(True)
+        self.assertTrue(result['okx']);self.assertTrue(result['okx_configured']);self.assertTrue(result['simulated_trading'])
+        self.assertEqual(result['okx_environment'],'demo');self.assertEqual(result['credential_source'],'api_key')
+        with patch.object(transport,'request',side_effect=self.flat_reader):center.unbind('demo','UNBIND DEMO')
+        result=center.runtime_credentials(True)
+        self.assertFalse(result['okx_configured']);self.assertEqual(result['connection_status'],'unbound')
+        self.assertTrue(result['simulated_trading'])
+
+    def test_masked_display_never_exposes_secret_or_passphrase_fragments(self):
+        identity=self.new()
+        public=center.public_status();row=next(c for c in public['connections'] if c['id']==identity)
+        self.assertEqual(row['credentials_display'],{'api_key':'PRIV********_LOG','secret_key_saved':True,'passphrase_saved':True})
+        self.assertEqual(public['legacy_connections']['demo']['credentials_display']['api_key'],'********')
+        for secret in ('PRIVATE_KEY_DO_NOT_LOG','PRIVATE_SECRET_DO_NOT_LOG','PRIVATE_PASS_DO_NOT_LOG','OLD_SECRET','OLD_PASS'):
+            self.assertNotIn(secret,json.dumps(public))
+
+    def test_old_auto_generated_pending_label_is_presentation_only(self):
+        identity=self.new();state=center.load();state['connections'][identity]['label']='原有demo Key（待核验）';center.save(state,'fixture')
+        row=next(c for c in center.public_status()['connections'] if c['id']==identity)
+        self.assertEqual(row['display_label'],'原有模拟盘 Key')
+        self.assertEqual(center.load()['connections'][identity]['label'],'原有demo Key（待核验）')
+        self.assertEqual(center.display_label('自定义账户名称'),'自定义账户名称')
+
+    def test_news_interval_comes_from_scheduler_definition(self):
+        from r20_gateway.scheduler import JOBS
+        self.assertEqual(center.public_status()['news_interval_seconds'],next(j.interval_seconds for j in JOBS if j.name=='news'))
+        self.assertEqual(center.public_status()['news_interval_seconds'],600)
+
+    def test_manual_close_setting_changes_only_permission_not_bindings_or_trades(self):
+        from r20_backend import settings_store
+        env=self.root/'settings.env';env.write_text('R20_OKX_ENV=demo\nUNRELATED=keep\n')
+        before=center.load()
+        with patch.object(settings_store,'ENV_FILE',env),patch.object(settings_store,'refresh_settings'),patch.dict(os.environ,{},clear=False),patch.object(transport,'request') as request:
+            result=center.set_manual_close(True,'ENABLE MANUAL CLOSE')
+            self.assertTrue(result['manual_close_enabled'])
+            self.assertIn('R20_OKX_ENV=demo',env.read_text());self.assertIn('UNRELATED=keep',env.read_text())
+            self.assertIn('R20_MANUAL_CLOSE_ENABLED=1',env.read_text())
+            before_invalid=env.read_bytes()
+            with self.assertRaises(center.AccountChangeError):center.set_manual_close(False,'ENABLE MANUAL CLOSE')
+            self.assertEqual(env.read_bytes(),before_invalid)
+            center.set_manual_close(False,'DISABLE MANUAL CLOSE')
+            self.assertIn('R20_MANUAL_CLOSE_ENABLED=0',env.read_text())
+        self.assertEqual(center.load(),before);request.assert_not_called()
