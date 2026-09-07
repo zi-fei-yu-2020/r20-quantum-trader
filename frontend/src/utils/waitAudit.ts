@@ -24,7 +24,19 @@ export interface WaitAuditState {
   message?: string
   items: WaitAuditRecord[]
 }
+export interface ProgramEntryPlan {
+  id: string
+  setup: string
+  action: string
+  entry_price: number
+  stop_loss_price: number
+  take_profit_price: number
+  net_rr: number
+}
 export interface DecisionCycle {
+  items?: Array<{ instId: string; action: string; status: string; candidate_id?: string | null;
+    entry_plans?: { plans: ProgramEntryPlan[]; checks: Array<{ reason: string; side: string; setup: string; net_rr?: number }>; error?: string };
+    candidate_reviews?: Array<{ candidate_id: string; reason: string }> }>
   executed_actions?: string[]
   timestamp?: string
   status?: string

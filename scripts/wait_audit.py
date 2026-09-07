@@ -57,7 +57,8 @@ def known_ref(ref):
     if not isinstance(ref,str): return False
     if ref in {'/'+k for k in _SCALARS}: return True
     return bool(re.fullmatch(r'/calculus/timeframes/(15M|1H|4H)/(velocity|acceleration|jerk|impulse|regime|(?:definite_integrals/(energy_integral|deviation_area_integral|volume_action_integral))|(?:probability_theory/(continuation_prob_pct|breakdown_prob_pct|var_95_pct|cvar_95_pct|skewness|kurtosis)))',ref)
-        or re.fullmatch(r'/range/(15M|1H|4H)/(high|low)',ref))
+        or re.fullmatch(r'/range/(15M|1H|4H)/(high|low)',ref)
+        or re.fullmatch(r'/entry_candles/15M/(last|previous)/(open|high|low|close)',ref))
 
 
 def evaluate(conditions, catalog):
@@ -123,7 +124,7 @@ def validate(raw, catalog, *, prior=None, policy=None):
                 actual=catalog[ref]['value']
                 if isinstance(actual,(int,float)) and not isinstance(actual,bool):
                     numeric(value)
-                    if ref in ('/price','/bidPx','/askPx') or ref.startswith('/range/'):require(float(value)>0,'价格重审阈值必须为正')
+                    if ref in ('/price','/bidPx','/askPx') or ref.startswith(('/range/','/entry_candles/')):require(float(value)>0,'价格重审阈值必须为正')
                     if ref.endswith(('/velocity','/acceleration','/jerk')):require(-3<=float(value)<=3,'动力学阈值超出指标有效范围')
                     if ref in ('/rsi_1h','/rsi_15m') or ref.endswith('_prob_pct'):require(0<=float(value)<=100,'百分比阈值超出有效范围')
                 else: require(op in ('eq','ne') and isinstance(value,str) and 0<len(value)<=160,'WAIT类别条件类型无效')

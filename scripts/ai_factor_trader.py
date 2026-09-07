@@ -121,7 +121,6 @@ MAX_DAILY_LOSS_USDT = 150.0
 MAX_SINGLE_ASSET_MARGIN = 600.0   # 单标的最大累计占用保证金上限 (USDT)
 MAX_SCALE_IN_COUNT = 1            # 单标的最大顺势加仓次数 (底仓+最多1次顺势追加)
 MIN_SCALE_IN_PROFIT_RATIO = 0.008 # 允许顺势加仓的最小底仓浮盈率 (+0.8%)
-MIN_SCALE_IN_CONFIDENCE = 75.0    # 顺势加仓必须达到的最低 AI 置信度门槛
 
 def is_tradfi_market_liquid(asset_type: str) -> bool:
     """Strict US Regular Trading Window (BJ 21:30 ~ 次日 04:00)"""
@@ -427,7 +426,7 @@ def prune_trackers(trackers: Dict[str, Any], real_pos_dict: Dict[str, Any]) -> i
 
 
 @trade_lock.serialized
-def submit_protected_limit_order(inst_id: str, side: str, pos_side: str, size: float, price: float, tp_px: float, sl_px: float, *, risk_budget_usdt=15, decision_id=None, decision_at=None) -> Tuple[bool, str]:
+def submit_protected_limit_order(inst_id: str, side: str, pos_side: str, size: float, price: float, tp_px: float, sl_px: float, *, risk_budget_usdt=15, decision_id=None, decision_at=None, allow_demo_translation=True) -> Tuple[bool, str]:
     """Submit a protected limit order; acceptance is not treated as a fill."""
     # Check if we are running in simulated/demo mode and price diverged significantly from demo orderbook
     env = market._selected()
@@ -447,6 +446,8 @@ def submit_protected_limit_order(inst_id: str, side: str, pos_side: str, size: f
                     divergence = abs(price - demo_last) / demo_last
                     # If live market price diverged from demo sandbox by more than 5% (e.g. ASTER / illiquid demo pair)
                     if divergence > 0.05:
+                        if not allow_demo_translation:
+                            return False, '程序候选与模拟盘报价偏离，禁止平移价格计划，等待重新采集'
                         scale = demo_last / price
                         prec = len(str(demo_ticker[0]["last"]).split(".")[1]) if "." in str(demo_ticker[0]["last"]) else 4
                         effective_px = round(price * scale, prec)
@@ -1881,10 +1882,7 @@ def execute_portfolio():
 
                 # Case A: Standard Initial Entry (No existing position & slot available)
                 if not curr_pos and inst_id not in pending_inst_ids and reserved_slot_count < MAX_CONCURRENT_POSITIONS and reserved_long_count < MAX_SAME_DIRECTION_POSITIONS:
-                    if ai_conf >= 80.0:
-                        allow_entry = True
-                    else:
-                        print(f"[首发开多拦截] {f['name']} AI置信度 {ai_conf:.1f}% 未达 80% 门禁，宁缺毋滥，拦截入场")
+                    allow_entry = True  # Evidence/geometry and account risk, never model score.
 
                 # Case B: Strict Pyramiding Scale-In (Existing long position in profit/breakeven)
                 elif curr_pos and str(curr_pos.get("side", "")).lower() == "long" and inst_id not in pending_inst_ids:
@@ -1900,7 +1898,7 @@ def execute_portfolio():
                     # 1. Base position must be in profit (ROI >= +0.8%) OR stop-loss already moved to/above avg entry px (No-risk trade).
                     # 2. Maximum 1 scale-in per position to prevent overconcentration.
                     # 3. Combined margin must not exceed MAX_SINGLE_ASSET_MARGIN.
-                    # 4. AI Confidence must be >= 75%.
+                    # 4. Model score is diagnostic only; final account risk is authoritative.
                     # 5. Calculus Momentum & Probability Gateway: Acceleration a >= -0.25 and Continuation Prob >= 40%
                     c_dyn = f.get("calculus", {})
                     c_accel = float(c_dyn.get("acceleration", 0.0) or 0.0)
@@ -1912,7 +1910,7 @@ def execute_portfolio():
                     planned_margin = ai_margin if ai_margin > 0 else (actual_sz * ct_val * f["price"] / max(1.0, ai_lever))
                     within_margin_cap = (curr_margin + planned_margin) <= MAX_SINGLE_ASSET_MARGIN
 
-                    if is_profit_or_breakeven and scale_count < MAX_SCALE_IN_COUNT and within_margin_cap and ai_conf >= MIN_SCALE_IN_CONFIDENCE and calculus_accel_ok:
+                    if is_profit_or_breakeven and scale_count < MAX_SCALE_IN_COUNT and within_margin_cap and calculus_accel_ok:
                         allow_entry = True
                         is_scale_in = True
                         print(f"[Pyramiding] {f['name']} 满足顺势浮盈加多条件: 底仓浮盈={pos_upl:+.2f}U ({pos_upl_ratio*100:+.1f}%), 已加仓{scale_count}次, 微积分加速度={c_accel:+.2f}, 延续概率={p_cont:.1f}%, 计划加仓{actual_sz}张")
@@ -1923,8 +1921,6 @@ def execute_portfolio():
                             print(f"[Pyramiding 拦截] {f['name']} 已达最大加仓次数 ({scale_count}/{MAX_SCALE_IN_COUNT})")
                         elif not within_margin_cap:
                             print(f"[Pyramiding 拦截] {f['name']} 加仓后总保证金将超限 ({curr_margin + planned_margin:.1f} > {MAX_SINGLE_ASSET_MARGIN}U)")
-                        elif ai_conf < MIN_SCALE_IN_CONFIDENCE:
-                            print(f"[Pyramiding 拦截] {f['name']} AI加仓置信度不足 ({ai_conf:.0f}% < {MIN_SCALE_IN_CONFIDENCE}%)")
                         elif not calculus_accel_ok:
                             print(f"[Pyramiding 拦截] {f['name']} 数理动能衰竭或延续概率偏低 (加速度={c_accel:+.2f}, 概率={p_cont:.1f}%)，禁止追多加仓")
 
@@ -1933,13 +1929,17 @@ def execute_portfolio():
                     tp_px = round(ai_decision.get("take_profit_price") if (ai_decision and ai_decision.get("take_profit_price", 0) > 0) else (limit_px + tp_dist), prec)
                     sl_px = round(ai_decision.get("stop_loss_price") if (ai_decision and ai_decision.get("stop_loss_price", 0) > 0) else (limit_px - sl_dist), prec)
 
+                    # Program-selected plans may be rounded to ticks, never silently repaired into another setup.
+                    if ai_decision.get('candidate_id') and not 0 < sl_px < limit_px < tp_px:
+                        executed_actions.append(f"[{f['name']}] 程序候选取整后价格结构失效，拒绝重写止损或目标")
+                        continue
                     # Hard check: For BUY LONG, OKX strictly requires sl_px < limit_px < tp_px
                     if sl_px >= limit_px:
                         sl_px = round(limit_px - max(sl_dist, f["price"] * 0.012), prec)
                     if tp_px <= limit_px:
                         tp_px = round(limit_px + max(tp_dist, f["price"] * 0.024), prec)
 
-                    accepted, order_ref = submit_protected_limit_order(inst_id, "buy", "long", actual_sz, limit_px, tp_px, sl_px, risk_budget_usdt=f["risk_per_trade_usd"], decision_id=ai_info.get("decision_id"), decision_at=ai_info.get("data_as_of"))
+                    accepted, order_ref = submit_protected_limit_order(inst_id, "buy", "long", actual_sz, limit_px, tp_px, sl_px, risk_budget_usdt=f["risk_per_trade_usd"], decision_id=ai_info.get("decision_id"), decision_at=ai_info.get("data_as_of"), allow_demo_translation=not bool(ai_decision.get('candidate_id')))
                     if accepted:
                         actual_sz = LAST_ENTRY_PLAN['size']
                         if is_scale_in:
@@ -1986,10 +1986,7 @@ def execute_portfolio():
 
                 # Case A: Standard Initial Entry
                 if not curr_pos and inst_id not in pending_inst_ids and reserved_slot_count < MAX_CONCURRENT_POSITIONS and reserved_short_count < MAX_SAME_DIRECTION_POSITIONS:
-                    if ai_conf >= 80.0:
-                        allow_entry = True
-                    else:
-                        print(f"[首发开空拦截] {f['name']} AI置信度 {ai_conf:.1f}% 未达 80% 门禁，宁缺毋滥，拦截入场")
+                    allow_entry = True  # Evidence/geometry and account risk, never model score.
 
                 # Case B: Strict Pyramiding Scale-In (Existing short position in profit/breakeven)
                 elif curr_pos and str(curr_pos.get("side", "")).lower() == "short" and inst_id not in pending_inst_ids:
@@ -2011,7 +2008,7 @@ def execute_portfolio():
                     p_break = float(p_th.get("breakdown_prob_pct", 50.0) or 50.0)
                     calculus_accel_ok = (c_accel <= 0.25 and p_break >= 40.0)
 
-                    if is_profit_or_breakeven and scale_count < MAX_SCALE_IN_COUNT and within_margin_cap and ai_conf >= MIN_SCALE_IN_CONFIDENCE and calculus_accel_ok:
+                    if is_profit_or_breakeven and scale_count < MAX_SCALE_IN_COUNT and within_margin_cap and calculus_accel_ok:
                         allow_entry = True
                         is_scale_in = True
                         print(f"[Pyramiding] {f['name']} 满足顺势浮盈加空条件: 底仓浮盈={pos_upl:+.2f}U ({pos_upl_ratio*100:+.1f}%), 已加仓{scale_count}次, 微积分加速度={c_accel:+.2f}, 击穿概率={p_break:.1f}%, 计划加仓{actual_sz}张")
@@ -2022,8 +2019,6 @@ def execute_portfolio():
                             print(f"[Pyramiding 拦截] {f['name']} 已达最大加仓次数 ({scale_count}/{MAX_SCALE_IN_COUNT})")
                         elif not within_margin_cap:
                             print(f"[Pyramiding 拦截] {f['name']} 加仓后总保证金将超限 ({curr_margin + planned_margin:.1f} > {MAX_SINGLE_ASSET_MARGIN}U)")
-                        elif ai_conf < MIN_SCALE_IN_CONFIDENCE:
-                            print(f"[Pyramiding 拦截] {f['name']} AI加仓置信度不足 ({ai_conf:.0f}% < {MIN_SCALE_IN_CONFIDENCE}%)")
                         elif not calculus_accel_ok:
                             print(f"[Pyramiding 拦截] {f['name']} 数理动能失速企稳或击穿概率偏低 (加速度={c_accel:+.2f}, 概率={p_break:.1f}%)，禁止追空加仓")
 
@@ -2033,12 +2028,15 @@ def execute_portfolio():
                     sl_px = round(ai_decision.get("stop_loss_price") if (ai_decision and ai_decision.get("stop_loss_price", 0) > 0) else (limit_px + sl_dist), prec)
 
                     # Hard check: For SELL SHORT, OKX strictly requires tp_px < limit_px < sl_px
+                    if ai_decision.get('candidate_id') and not 0 < tp_px < limit_px < sl_px:
+                        executed_actions.append(f"[{f['name']}] 程序候选取整后价格结构失效，拒绝重写止损或目标")
+                        continue
                     if sl_px <= limit_px:
                         sl_px = round(limit_px + max(sl_dist, f["price"] * 0.012), prec)
                     if tp_px >= limit_px:
                         tp_px = round(limit_px - max(tp_dist, f["price"] * 0.024), prec)
 
-                    accepted, order_ref = submit_protected_limit_order(inst_id, "sell", "short", actual_sz, limit_px, tp_px, sl_px, risk_budget_usdt=f["risk_per_trade_usd"], decision_id=ai_info.get("decision_id"), decision_at=ai_info.get("data_as_of"))
+                    accepted, order_ref = submit_protected_limit_order(inst_id, "sell", "short", actual_sz, limit_px, tp_px, sl_px, risk_budget_usdt=f["risk_per_trade_usd"], decision_id=ai_info.get("decision_id"), decision_at=ai_info.get("data_as_of"), allow_demo_translation=not bool(ai_decision.get("candidate_id")))
                     if accepted:
                         actual_sz = LAST_ENTRY_PLAN['size']
                         if is_scale_in:

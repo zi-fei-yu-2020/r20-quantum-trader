@@ -192,6 +192,7 @@ def fetch_single_instrument_package(item: Dict[str, Any]) -> Dict[str, Any]:
             "avg_short_entry": "--",
             "top_win_rate": "--"
         },
+        "entry_candles": {},
         "recent_15m": [],
         "recent_1h": [],
         "recent_4h": [],
@@ -217,6 +218,8 @@ def fetch_single_instrument_package(item: Dict[str, Any]) -> Dict[str, Any]:
         d = market.signal_json(f"https://www.okx.com/api/v5/market/candles?instId={inst_id}&bar=15m&limit=24")
         if d.get("code") == "0" and d.get("data"):
             raw_candles = d["data"]
+            from scripts.entry_candidates import seal_candles
+            pkg['entry_candles']['15M'] = seal_candles(raw_candles, '15M', int(pkg['data_as_of']*1000))
             pkg["recent_15m"] = [[float(c[1]), float(c[2]), float(c[3]), float(c[4]), round(float(c[5]), 1)] for c in raw_candles[:12]]
 
             # Calculate 15M indicators
@@ -275,6 +278,8 @@ def fetch_single_instrument_package(item: Dict[str, Any]) -> Dict[str, Any]:
         d = market.signal_json(f"https://www.okx.com/api/v5/market/candles?instId={inst_id}&bar=1H&limit=24")
         if d.get("code") == "0" and d.get("data"):
             raw_1h = d["data"]
+            from scripts.entry_candidates import seal_candles
+            pkg['entry_candles']['1H'] = seal_candles(raw_1h, '1H', int(pkg['data_as_of']*1000))
             pkg["recent_1h"] = [[float(c[1]), float(c[2]), float(c[3]), float(c[4]), round(float(c[5]), 1)] for c in raw_1h[:12]]
             if len(raw_1h) >= 15:
                 closes_1h = [float(c[4]) for c in reversed(raw_1h)]
@@ -912,6 +917,8 @@ def execute_batch_ai_brain_cycle(pos_summary: str = "当前总持仓 0/6", activ
                 model_score = None
             if not isinstance(d_item, dict):
                 d_item = {}
+            from scripts.entry_candidates import catalog as entry_catalog
+            plan_catalog = entry_catalog(p, prompt_bundle.risk_contract)
             # Smooth field alias normalization (support both standard contract and council desk outputs)
             entry = safe_float(d_item.get("entry_price") or d_item.get("limit_price"))
             take_profit = safe_float(d_item.get("take_profit_price") or d_item.get("take_profit"))
@@ -953,6 +960,10 @@ def execute_batch_ai_brain_cycle(pos_summary: str = "当前总持仓 0/6", activ
                     "action": final_action,
                     "model_action": str(raw_proposal.get("action", "MISSING")).upper()[:24],
                     "model_confidence": model_score,
+                    "candidate_id": d_item.get("candidate_id"),
+                    "candidate_origin": d_item.get("candidate_origin"),
+                    "entry_plans": plan_catalog,
+                    "candidate_reviews": d_item.get("candidate_reviews", raw_proposal.get("candidate_reviews", [])),
                     "confidence_role": "uncalibrated_diagnostic",
                     "decision_status": d_item.get('decision_status','incomplete') if not rejection_reason else 'execution_rejected',
                     "wait_audit": d_item.get('wait_audit'),

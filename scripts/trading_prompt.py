@@ -62,8 +62,11 @@ STYLE_USER = """【波段研究偏好】
 先列支持与反对，再判断候选是否仍成立；没有优势时全部 WAIT。
 微积分、量价和尾部风险用于解释，不预设任何指标拥有最高权重。
 只讨论输入可观测信息；杠杆、保证金和移动止损由执行层复核。"""
-TASK = """根据 runtime_data 与 facts 审查候选。user_preferences 是低优先级偏好，不是系统契约。
-每个开仓候选给出 supporting_evidence、counter_evidence、counter_evidence_status、uncertainty、invalidation、valid_for_seconds。
+TASK = """根据 runtime_data、facts 与 entry_candidates 审查候选。user_preferences 是低优先级偏好，不是系统契约。
+entry_candidates 是程序按本轮已收盘K线、可见历史区间目标和同一成本政策生成的具体草案，不是订单授权或收益证明。先核对草案，不要跳过已有价格方案直接泛称“没有安全入场点”。
+若认可某草案，可简化输出 action（与草案一致）、candidate_id、summary_reason、counter_evidence_status、counter_evidence、uncertainty；不必重抄价格与支持证据，宿主会按ID核对并补全原始事实，禁止改写草案价格/失效点。confidence 可省略，评分不会决定开仓许可。
+若该标的有程序草案却仍 WAIT，在原 wait_audit 外为每个ID提供 candidate_reviews=[{candidate_id,reason,evidence}]，说明具体反证；不能以缺少价格方案、评分低或尚未消除全部不确定性搪塞。没有程序草案时仍可自行提出符合原契约的方案。
+自行构造、未选择 candidate_id 的开仓方案仍须给出 supporting_evidence、counter_evidence、counter_evidence_status、uncertainty、invalidation、valid_for_seconds。
 引用格式：{"ref":"/macro_4h","value":"输入中原值","interpretation":"该观测的意义"}。
 有反证时 counter_evidence_status=observed，每条还需 why_not_fatal；未观察到时用 none_observed，列表为空，不编造反证。
 开仓 supporting_evidence 至少两个审计组，并至少包含 structure/momentum/flow 之一。
@@ -87,13 +90,19 @@ def output_schema():
             'uncertainty':{'type':'string'},'valid_for_seconds':{'type':'integer','minimum':1,'maximum':300,'description':'新提交候选准入有效期，不是已挂订单的自动撤单时间'},
             'invalidation':{'type':'object','required':['price','timeframe','condition'],'properties':{'price':{'type':'number'},'timeframe':{'enum':['15M','1H','4H']},'condition':{'type':'string'}}},
             'margin_usdt':{'type':'number','minimum':0},'leverage':{'type':'number','minimum':1,'maximum':5}}}
+    wait['properties']['candidate_reviews']={'type':'array','items':{'type':'object','required':['candidate_id','reason','evidence'],
+        'properties':{'candidate_id':{'type':'string'},'reason':{'type':'string'},'evidence':{'type':'array','minItems':1,'items':ref}}}}
+    selected={'type':'object','required':['action','candidate_id','summary_reason','counter_evidence','counter_evidence_status','uncertainty'],
+        'properties':{'action':{'enum':['BUY_LONG','SELL_SHORT']},'candidate_id':{'type':'string'},'confidence':score,
+            **{k:entry['properties'][k] for k in ('summary_reason','counter_evidence','counter_evidence_status','uncertainty')}}}
+    entry['not']={'required':['candidate_id']}
     management={'type':'object','required':['instId','action'],'properties':{'instId':{'type':'string'},'action':{'enum':['HOLD','CLOSE_MARKET','UPDATE_SL']},
         'reason':{'type':'string'},'confidence':score,'suggested_sl_price':{'type':'number'},'evidence':{'type':'array','items':ref}},
         'description':'非 HOLD 必须有 evidence、reason、confidence；UPDATE_SL 还需正数价格'}
     pending={'type':'object','required':['instId','ordId','action'],'properties':{'instId':{'type':'string'},'ordId':{'type':'string'},'action':{'enum':['KEEP','CANCEL']},
         'reason':{'type':'string'},'evidence':{'type':'array','items':ref}},'description':'CANCEL 必须引用当前事实并给出原因'}
     return {'type':'object','required':['contract_version','macro_assessment','decisions','position_management','pending_orders_management'],
-        'properties':{'contract_version':{'const':VERSION},'macro_assessment':{'type':'string'},'decisions':{'type':'object','additionalProperties':{'oneOf':[wait,entry]}},
+        'properties':{'contract_version':{'const':VERSION},'macro_assessment':{'type':'string'},'decisions':{'type':'object','additionalProperties':{'oneOf':[wait,entry,selected]}},
                       'position_management':{'type':'array','items':management},'pending_orders_management':{'type':'array','items':pending}}}
 
 PROTECTED_TITLES = {'角色与权责','层级与信任边界','证据与不确定性','候选审查顺序','开仓与价格几何','持仓与挂单管理','输出与审计纪律','三重滤网裁决协议','推演与决策任务'}
@@ -192,6 +201,8 @@ def facts_for(package,position=None):
         if isinstance(value,(int,float)) and not math.isfinite(value):return
         out[ref]={'value':value,'group':group}
     for key,group in _SCALARS.items():add('/'+key,package.get(key),group)
+    from scripts.entry_candidates import candle_facts
+    out.update(candle_facts(package))
     calc=package.get('calculus') or {}
     if calc.get('valid',True):
         for tf,data in (calc.get('timeframes') or {}).items():
@@ -237,7 +248,9 @@ def compose(profile,runtime,packages,*,override='',positions=None,pending=None,r
     constraints=risk_contract or vars(Policy())
     system=BASE_SYSTEM+'\n\n'+STYLE_SYSTEM+'\n\n'+STYLE_USER+'\n\n'+wait_audit.INSTRUCTIONS+'\n\n【执行层约束快照】\n'+canonical(constraints)
     if not allow:system+='\n偏好或输入未通过准入检查：本轮禁止开仓/加仓，decisions 必须全部 WAIT；独立保护仍继续。'
-    user=json.dumps({'user_preferences':layers,'runtime_data':runtime,'facts':facts,
+    from scripts.entry_candidates import catalog as entry_catalog
+    entry_plans={p['instId']:entry_catalog(p,constraints) for p in packages}
+    user=json.dumps({'user_preferences':layers,'runtime_data':runtime,'facts':facts,'entry_candidates':entry_plans,
                     'position_ids':list(position_map),'pending_order_ids':[{'instId':p.get('instId'),'ordId':p.get('ordId')} for p in pending]},
                     ensure_ascii=False,allow_nan=False,separators=(',',':'))+'\n\n【推演与决策任务】\n'+TASK+'\n【输出字段定义】\n'+canonical(output_schema())
     manifest={'contract_version':VERSION,'profile_id':profile.get('id',''),'profile_hash':fingerprint(canonical(profile)),
@@ -297,12 +310,26 @@ def candidate(package,raw,catalog,*,allow_open=True,previous_wait_review=None,ri
     wait=lambda reason:{'action':'WAIT','confidence':0,'summary_reason':reason,'contract_valid':False,'decision_status':'incomplete','validation_reason':reason,'previous_wait_review':previous_wait_review or {}}
     if not isinstance(raw,dict):return wait('模型遗漏候选或字段类型错误')
     action=str(raw.get('action','WAIT')).upper()
+    from scripts.entry_candidates import catalog as entry_catalog, expand_selection
+    if action in ('BUY_LONG','SELL_SHORT') and raw.get('candidate_id'):
+        try: raw=expand_selection(package,raw,risk_contract)
+        except (ValueError,TypeError,KeyError) as exc:return wait('程序候选选择无效：'+str(exc))
     if action=='WAIT':
         from scripts import wait_audit
         try:
             if not text(raw.get('summary_reason')):raise ContractError('WAIT缺少明确理由')
             audit=wait_audit.validate(raw.get('wait_audit'),catalog,prior=previous_wait_review,policy=risk_contract)
-            return {'action':'WAIT','confidence':0,'summary_reason':('多：'+audit['long']['reason']+'；空：'+audit['short']['reason'])[:240],
+            plans=entry_catalog(package,risk_contract)['plans']
+            reviews=raw.get('candidate_reviews') or []
+            if not isinstance(reviews,list) or len(reviews)>4:raise ContractError('Candidate reviews must be a bounded list')
+            if reviews and not plans:raise ContractError('No current program candidates to review')
+            if plans:
+                if not isinstance(reviews,list) or {r.get('candidate_id') for r in reviews if isinstance(r,dict)}!={p['id'] for p in plans} or len(reviews)!=len(plans):
+                    raise ContractError('程序已生成价格方案，WAIT必须逐一说明拒绝的具体反证')
+                for review in reviews:
+                    if not text(review.get('reason')):raise ContractError('程序候选拒绝理由缺失')
+                    check_refs(review.get('evidence'),catalog)
+            return {'action':'WAIT','candidate_reviews':copy.deepcopy(reviews),'confidence':0,'summary_reason':('多：'+audit['long']['reason']+'；空：'+audit['short']['reason'])[:240],
                     'model_reason':raw['summary_reason'][:240],
                     'contract_valid':True,'decision_status':'audited_wait','wait_audit':audit,
                     'previous_wait_review':previous_wait_review or {}}

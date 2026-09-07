@@ -16,8 +16,10 @@ def summarize(cache, notices=None, *, unavailable_reason='', circuit_breaker=Fal
                      'reason':clean(decision.get('validation_reason') or decision.get('summary_reason'),240),
                      'long_blocker':clean((audit.get('long') or {}).get('reason'),160),
                      'short_blocker':clean((audit.get('short') or {}).get('reason'),160),
-                     'previous_check':decision.get('previous_wait_review',{})})
+                     'previous_check':decision.get('previous_wait_review',{}),'entry_plans':decision.get('entry_plans'),
+                     'candidate_id':decision.get('candidate_id'),'candidate_reviews':decision.get('candidate_reviews',[])})
     counts={key:sum(r['status']==key for r in rows) for key in ('audited_wait','incomplete','entry_candidate','execution_rejected')}
+    counts['program_plans']=sum(len((r.get('entry_plans') or {}).get('plans',[])) for r in rows)
     return {'status':'circuit_breaker' if circuit_breaker else 'unavailable' if not rows else 'incomplete' if counts['incomplete'] else 'reviewed',
             'counts':counts,'evaluated_count':len(rows),'items':rows,'environment_notices':notices or [],
             'unavailable_reason':clean(unavailable_reason,240)}
@@ -30,6 +32,7 @@ def format_summary(summary):
     else:
         n=summary['counts']
         text=f"审查{summary['evaluated_count']} | 候选{n['entry_candidate']} | WAIT{n['audited_wait']}"
+        if n.get('program_plans'):text+=f" | 程序草案{n['program_plans']}"
         for status,label in (('incomplete','不完整'),('execution_rejected','风控拒绝')):
             names=[r['name'] for r in summary['items'] if r['status']==status]
             if names:text+=f" | {label}{len(names)}({','.join(names[:6])})"
