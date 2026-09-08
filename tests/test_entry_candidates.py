@@ -99,6 +99,15 @@ class ProgramPlanTests(unittest.TestCase):
         p.update(price=105,bidPx=104.99,askPx=105.01)
         self.assertEqual(plans.catalog(p)['plans'],[])
 
+    def test_final_quote_must_still_hold_the_frozen_trigger_after_inference(self):
+        for side in ('long','short'):
+            p=package(side);plan=plans.catalog(p)['plans'][0]
+            self.assertEqual(plans.validate_live_quote(p,plan['id'],100),plan)
+            lost=99 if side=='long' else 101
+            chased=105 if side=='long' else 95
+            for quote in (lost,chased):
+                with self.assertRaises(ValueError):plans.validate_live_quote(p,plan['id'],quote)
+
     def test_prompt_contains_exact_catalog_and_short_selection_schema(self):
         p=package();bundle=contract.compose({'id':'test'},{},[p])
         payload,_=json.JSONDecoder().raw_decode(bundle.user)

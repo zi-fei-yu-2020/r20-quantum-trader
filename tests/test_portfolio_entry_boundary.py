@@ -89,6 +89,38 @@ class PortfolioEntryBoundaryTests(unittest.TestCase):
         for side in ('long','short'):
             self.assertEqual(self.exercise(side,100,demo_last=50),[])
 
+    def test_real_gateway_rechecks_program_trigger_before_capital_admission(self):
+        from scripts import entry_gateway
+        from unittest.mock import MagicMock
+        p=package();plan=entry_candidates.catalog(p)['plans'][0];now=p['data_as_of']+1
+        env=OKXEnvironment('demo','fake','fake','fake')
+        meta={'instId':p['instId'],'ctType':'linear','settleCcy':'USDT','state':'live','ctVal':'1','ctMult':'1','lotSz':'.1','minSz':'.1','tickSz':'.01'}
+        with tempfile.TemporaryDirectory() as tmp,ExitStack() as stack:
+            stack.enter_context(patch.object(strategy_evidence,'DB_PATH',Path(tmp)/'evidence.db'))
+            decision={**selection(plan),'contract_version':trading_prompt.VERSION,'contract_valid':True,'valid_until':now+120}
+            identity=strategy_evidence.append(env.identity,'decision',{'instrument':p['instId'],'decision':decision,'features':p,'position_basis':{'size':0}})
+            stack.enter_context(patch('r20_backend.account_connections.assert_current'))
+            stack.enter_context(patch.object(entry_gateway,'reconcile_intents'))
+            stack.enter_context(patch.object(entry_gateway,'equity_guard',return_value={}))
+            stack.enter_context(patch.object(entry_gateway.time,'time',return_value=now))
+            def request(method,path,*args,**kwargs):
+                self.assertEqual(method,'GET')
+                if path.endswith('/balance'):return [{'totalEq':'1000','uTime':str(int(now*1000)),'details':[{'ccy':'USDT','availEq':'1000'}]}]
+                if path.endswith('/leverage-info'):return [{'posSide':'long','lever':'3'}]
+                return []
+            stack.enter_context(patch.object(entry_gateway,'_request',side_effect=request))
+            capital=stack.enter_context(patch.object(entry_gateway.capital_pool,'admit',side_effect=RuntimeError('reached capital admission')))
+            kwargs=dict(inst_id=p['instId'],side='long',entry=plan['entry_price'],stop=plan['stop_loss_price'],take_profit=plan['take_profit_price'],requested_size=1,budget=15,decision_id=identity,decision_at=now)
+            for current in (99,100):
+                def public(url,**extra):return {'data':[meta]} if '/instruments?' in url else {'data':[{'last':str(current),'ts':str(int(now*1000))}]}
+                with patch.object(entry_gateway.public_market,'get_json',side_effect=public):
+                    if current==99:
+                        with self.assertRaisesRegex(risk_policy.RiskRejected,'program_trigger_lost'):entry_gateway.prepare(env,**kwargs)
+                        capital.assert_not_called()
+                    else:
+                        with self.assertRaisesRegex(RuntimeError,'reached capital admission'):entry_gateway.prepare(env,**kwargs)
+                        capital.assert_called_once()
+
     def test_entry_section_has_no_hidden_model_confidence_comparison(self):
         source=Path(trader.__file__).read_text(encoding='utf8').split('def execute_portfolio():',1)[1]
         import re

@@ -136,3 +136,19 @@ def expand_selection(package, raw, policy=None):
     result['confidence']=raw.get('confidence',0)
     result['candidate_origin']=VERSION
     return result
+
+
+def validate_live_quote(package, candidate_id, current, policy=None):
+    """Recheck the frozen trigger against the FINAL quote, after potentially slow model inference."""
+    current=number(current)
+    plan=next((p for p in catalog(package,policy)['plans'] if p['id']==candidate_id),None)
+    if plan is None: raise ValueError('program_plan_no_longer_matches_evidence_or_policy')
+    bars=verified_bars(package,'15M');bar=bars[-1];sign=1 if plan['action']=='BUY_LONG' else -1
+    if plan['setup']=='pullback_reclaim':level=bars[-2]['close']
+    else:level=max(b['high'] for b in bars[-13:-1]) if sign==1 else min(b['low'] for b in bars[-13:-1])
+    atr=sum(max(b['high']-b['low'],abs(b['high']-a['close']),abs(b['low']-a['close'])) for a,b in zip(bars[-15:-1],bars[-14:]))/14
+    if (current-level)*sign<=0:raise ValueError('program_trigger_lost_during_inference')
+    if (current-bar['close'])*sign>atr*.25:raise ValueError('program_trigger_chase_limit_exceeded')
+    if not (plan['stop_loss_price']<current<plan['take_profit_price'] if sign==1 else plan['take_profit_price']<current<plan['stop_loss_price']):
+        raise ValueError('program_quote_outside_stop_target')
+    return plan

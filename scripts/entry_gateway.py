@@ -127,6 +127,16 @@ def prepare(env, *, inst_id, side, entry, stop, take_profit, requested_size, bud
     if not 0 <= time.time()*1000-risk.number(ticker.get('ts'),positive=True) <= 15000:
         raise risk.RiskRejected('Final execution quote is stale or future-dated')
     if abs(entry-current)/current>policy.max_entry_distance_pct: raise risk.RiskRejected('Final limit too far from current market')
+    if decision.get('candidate_id'):
+        from scripts.entry_candidates import validate_live_quote
+        try:
+            frozen=validate_live_quote(record.get('features',{}),decision['candidate_id'],current,vars(policy))
+            tick=risk.number(metadata[inst_id].get('tickSz'),positive=True)
+            for key,actual in [('entry_price',entry),('stop_loss_price',stop),('take_profit_price',take_profit)]:
+                if abs(risk.number(actual)-frozen[key])>tick+1e-9:
+                    raise ValueError('program_geometry_changed_beyond_tick_rounding')
+        except (ValueError,TypeError,KeyError) as exc:
+            raise risk.RiskRejected('Final program plan check rejected: '+str(exc)) from None
     def pending_leverage(pending_inst,pending_side):
         if pending_inst==inst_id and pending_side in (side,'net','',None):return lev['lever']
         rows=_request('GET','/api/v5/account/leverage-info',{'instId':pending_inst,'mgnMode':'cross'},env)
