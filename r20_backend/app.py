@@ -488,7 +488,18 @@ def file_health(filename: str, expected_interval: int) -> dict[str, Any]:
     if not path.exists():
         return {"name": filename, "exists": False, "age_seconds": None, "fresh": False}
     age = max(0, int(time.time() - path.stat().st_mtime))
-    return {"name": filename, "exists": True, "age_seconds": age, "fresh": age <= expected_interval * 2, "bytes": path.stat().st_size}
+    result = {"name": filename, "exists": True, "age_seconds": age, "fresh": age <= expected_interval * 2, "bytes": path.stat().st_size}
+    if filename == "news_sentiment.json":
+        try:
+            news = json.loads(path.read_text(encoding="utf-8"))
+            state = news.get("connection_status", "unavailable")
+            at = news.get("last_success_at")
+            ready = (state == "fresh" and isinstance(at, (int, float))
+                     and not isinstance(at, bool) and 0 <= time.time() - at <= expected_interval * 2)
+            result.update(fresh=bool(result["fresh"] and ready), data_status=state)
+        except (OSError, ValueError, TypeError, AttributeError):
+            result.update(fresh=False, data_status="invalid")
+    return result
 
 
 def log_tail(filename: str, lines: int = 30) -> str:

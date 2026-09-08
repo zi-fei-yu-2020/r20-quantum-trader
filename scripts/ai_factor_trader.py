@@ -2302,4 +2302,7 @@ def execute_portfolio():
     print(log_entry.strip())
 
 if __name__ == "__main__":
-    execute_portfolio()
+    # Account/quote aborts and lock skips must not be reported as completed work.
+    # No exchange write is retried here; the next normal schedule may re-read.
+    if execute_portfolio() is None:
+        raise SystemExit(1)

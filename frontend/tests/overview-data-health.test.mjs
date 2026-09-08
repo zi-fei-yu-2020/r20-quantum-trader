@@ -1,7 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
-import { dataHealthSource } from '../src/utils/dataHealthDisplay.ts'
+import { dataHealthSource, dataHealthLabel } from '../src/utils/dataHealthDisplay.ts'
 
 const overview = readFileSync(new URL('../src/views/admin/OverviewPage.vue', import.meta.url), 'utf8')
 const table = readFileSync(new URL('../src/components/ui/AppTable.vue', import.meta.url), 'utf8')
@@ -46,4 +46,12 @@ test('operator pause is explicit and never promises exchange connectivity', () =
 
 test('status messages survive UTF-8 source generation', () => {
   assert.doesNotMatch(overview, /\?{3,}/)
+})
+
+test('fresh unconfigured news is not represented as valid market intelligence', () => {
+  assert.equal(dataHealthLabel({fresh:false,data_status:'unconfigured'}), '未配置')
+  assert.equal(dataHealthLabel({fresh:false,data_status:'partial'}), '数据不完整')
+  assert.equal(dataHealthLabel({fresh:false,data_status:'invalid'}), '数据不可用')
+  assert.equal(dataHealthLabel({fresh:true,data_status:'fresh'}), '正常新鲜')
+  assert.ok(overview.includes('dataHealthLabel(x)'))
 })

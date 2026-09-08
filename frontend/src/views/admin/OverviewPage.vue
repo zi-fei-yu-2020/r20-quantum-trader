@@ -10,7 +10,7 @@ import { ref, computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { useApi } from '../../composables/useApi'
 import { overviewConnection } from '../../utils/accountConnections'
-import { dataHealthSource } from '../../utils/dataHealthDisplay'
+import { dataHealthSource, dataHealthLabel } from '../../utils/dataHealthDisplay'
 import {
   Cpu,
   Database,
@@ -523,7 +523,7 @@ const quickNav = [
                       >
                         <CheckCircle2 v-if="x.fresh" class="w-2.5 h-2.5 shrink-0" />
                         <AlertCircle v-else class="w-2.5 h-2.5 shrink-0" />
-                        <span>{{ x.fresh ? '正常新鲜' : '延迟过期' }}</span>
+                        <span>{{ dataHealthLabel(x) }}</span>
                       </span>
                     </td>
                     <td class="py-2.5 num-tabular" style="color: var(--text-muted)">
