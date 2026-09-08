@@ -857,8 +857,28 @@ def fetch_single_instrument_data(item, all_positions, usdt_available):
                 }
                 break
 
-    # 1. Fetch 15M Candles
+    # Collect the complete frame before any arithmetic. A missing/short 15M
+    # frame used to leave price=0 while 1H ATR divided by it, aborting every
+    # instrument in the portfolio. Incomplete data is a per-symbol WAIT.
     raw_15m = fetch_signal_candles(inst_id, "15m", 45)
+    raw_1h = fetch_signal_candles(inst_id, "1H", 35)
+    raw_4h = fetch_signal_candles(inst_id, "4H", 25)
+    f["calculus"] = {"valid": False}
+    try:
+        for rows, minimum in ((raw_15m, 30), (raw_1h, 20), (raw_4h, 20)):
+            if not isinstance(rows, list) or len(rows) < minimum:
+                raise ValueError("Missing or insufficient closed candles")
+            for row in rows:
+                o, h, l, c, v = [float(row[i]) for i in range(1, 6)]
+                if (not all(math.isfinite(x) for x in (o,h,l,c,v))
+                        or not 0 < l <= min(o,c) <= max(o,c) <= h or v < 0):
+                    raise ValueError("Invalid OHLCV geometry")
+    except (TypeError, ValueError, IndexError, OverflowError):
+        f["sz"] = 0
+        f["data_quality_reason"] = "Closed candle frame unavailable or invalid"
+        return f
+
+    # 1. Compute 15M factors from verified candles.
     if raw_15m:
         candles_15m = list(reversed(raw_15m))
         closes = [float(c[4]) for c in candles_15m]
@@ -913,10 +933,13 @@ def fetch_single_instrument_data(item, all_positions, usdt_available):
             d_t = market.get_json(f"https://www.okx.com/api/v5/market/ticker?instId={inst_id}")
             if d_t.get("code") == "0" and "data" in d_t and len(d_t["data"]) > 0:
                 t_item = d_t["data"][0]
-                f["quote_as_of_ms"] = int(t_item.get("ts") or 0)
-                f["price"] = float(t_item.get("last") or 0)
-                f["bidPx"] = float(t_item.get("bidPx") or 0)
-                f["askPx"] = float(t_item.get("askPx") or 0)
+                last, bid, ask = [float(t_item.get(key) or 0) for key in ("last", "bidPx", "askPx")]
+                stamp = int(t_item.get("ts") or 0)
+                if (not all(math.isfinite(x) and x > 0 for x in (last,bid,ask))
+                        or ask < bid or not 0 <= time.time()*1000-stamp <= 15000):
+                    raise ValueError("Invalid execution quote")
+                f["quote_as_of_ms"] = stamp
+                f["price"], f["bidPx"], f["askPx"] = last, bid, ask
         except Exception:
             pass
 
@@ -934,7 +957,6 @@ def fetch_single_instrument_data(item, all_positions, usdt_available):
         f["vol_ratio"] = round(f["vol_15m"] / f["vol_ma20"], 2) if f["vol_ma20"] > 0 else 1.0
 
     # 2. Fetch 1H & 4H Trend Confluence
-    raw_1h = fetch_signal_candles(inst_id, "1H", 35)
     if raw_1h:
         c_1h = list(reversed(raw_1h))
         closes_1h = [float(c[4]) for c in c_1h]
@@ -966,7 +988,6 @@ def fetch_single_instrument_data(item, all_positions, usdt_available):
         else:
             f["structure_1h"] = "CHOP"
     
-    raw_4h = fetch_signal_candles(inst_id, "4H", 25)
     if raw_4h:
         c_4h = list(reversed(raw_4h))
         closes_4h = [float(c[4]) for c in c_4h]
@@ -1944,6 +1965,9 @@ def execute_portfolio():
             state = availability["items"][f["instId"]]
             if not state["can_open"]:
                 environment_notices.append(f"{f['name']}：{state['label']}，仅观察")
+                continue
+            if not f.get("market_data_valid"):
+                environment_notices.append(f"{f['name']}????????????????")
                 continue
             asset_type = f.get("type", "crypto")
             if not is_tradfi_market_liquid(asset_type):

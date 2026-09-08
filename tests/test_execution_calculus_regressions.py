@@ -47,7 +47,7 @@ def valid_calculus(acceleration=0.0, continuation=50.0, breakdown=50.0):
 
 
 class ExecutionFetchCalculusTests(unittest.TestCase):
-    def fetch(self, raw, *, calculator_error=None):
+    def fetch(self, raw, *, calculator_error=None, quote=None):
         with tempfile.TemporaryDirectory() as tmp, ExitStack() as stack:
             stack.enter_context(patch.object(trader, "NEWS_SENTIMENT_FILE", str(Path(tmp) / "absent.json")))
             stack.enter_context(patch.object(trader, "load_adaptive_config", return_value={}))
@@ -55,7 +55,7 @@ class ExecutionFetchCalculusTests(unittest.TestCase):
             fetch = stack.enter_context(patch.object(trader, "fetch_signal_candles",
                 side_effect=lambda inst, bar, limit: raw[bar]))
             ticker = stack.enter_context(patch.object(trader.market, "get_json", return_value={
-                "code": "0", "data": [{"ts": str(int(NOW * 1000)), "last": "130",
+                "code": "0", "data": [quote if quote is not None else {"ts": str(int(NOW * 1000)), "last": "130",
                                         "bidPx": "129.99", "askPx": "130.01"}]}))
             calculator = stack.enter_context(patch.object(calculus_engine, "calculate_multi_timeframe",
                 wraps=calculus_engine.calculate_multi_timeframe, side_effect=calculator_error))
@@ -98,6 +98,30 @@ class ExecutionFetchCalculusTests(unittest.TestCase):
                 if not raw["15m"]:
                     self.assertFalse(factors["market_data_valid"])
                     self.assertEqual(factors["sz"], 0)
+
+    def test_bad_realtime_quote_never_overwrites_signal_price_or_authorizes_entry(self):
+        base = {"ts": str(int(NOW*1000)), "last": "130", "bidPx": "129.99", "askPx": "130.01"}
+        for change in ({"last":"0"},{"last":"nan"},{"last":"inf"},{"bidPx":"0"},
+                       {"askPx":"120"},{"ts":"0"},{"last":""}):
+            with self.subTest(change=change):
+                raw = candle_fixture()
+                factors, _, _ = self.fetch(raw, quote={**base, **change})
+                self.assertFalse(factors["market_data_valid"])
+                self.assertEqual(factors["sz"], 0)
+                self.assertEqual(factors["quote_as_of_ms"], 0)
+                self.assertEqual(factors["price"], float(raw["15m"][0][4]))
+
+    def test_partial_frames_cannot_crash_portfolio_arithmetic(self):
+        for timeframe in ("15m", "1H", "4H"):
+            for count in (0, 1, 5, 14, 19):
+                with self.subTest(timeframe=timeframe, count=count):
+                    raw = candle_fixture()
+                    raw[timeframe] = raw[timeframe][:count]
+                    factors, calls, _ = self.fetch(raw)
+                    self.assertFalse(factors["market_data_valid"])
+                    self.assertFalse(factors["calculus"]["valid"])
+                    self.assertEqual(factors["sz"], 0)
+                    self.assertEqual(calls, [])
 
     def test_missing_or_nonfinite_ohlcv_is_not_silently_filtered_into_valid_calculus(self):
         # 4H extraction otherwise only reads closes, so exercise the actual adapter.

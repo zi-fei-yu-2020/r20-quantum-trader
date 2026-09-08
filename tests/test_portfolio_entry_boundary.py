@@ -26,7 +26,7 @@ class PortfolioEntryBoundaryTests(unittest.TestCase):
             final,reason,_=brain.validate_and_filter_decision(p,decision,set(),{})
             self.assertEqual(final,plan['action'],reason)
             if model_wait:decision.update(action='WAIT',decision_status='audited_wait')
-            f={**p,'calculus':{'valid':True,'acceleration':0.0,'probability_theory':{'continuation_prob_pct':60.0,'breakdown_prob_pct':60.0}},'type':'crypto','sz':16,'ctVal':.01,'precision':4,'atr':2.,'rsi':50.,'position':position,'risk_per_trade_usd':15}
+            f={**p,'market_data_valid':True,'calculus':{'valid':True,'acceleration':0.0,'probability_theory':{'continuation_prob_pct':60.0,'breakdown_prob_pct':60.0}},'type':'crypto','sz':16,'ctVal':.01,'precision':4,'atr':2.,'rsi':50.,'position':position,'risk_per_trade_usd':15}
             cache={p['instId']:{'name':'TEST','decision':decision,'decision_id':'TEST_DECISION','data_as_of':time.time()}}
             paths={'WORKSPACE_DIR':str(root),'DATA_DIR':str(root),'LOGS_DIR':str(root),'LOG_FILE':str(root/'trader.log'),
                    'TRADER_LOCK_FILE':str(root/'trader.lock'),'TRADER_SLOT_FILE':str(root/'slot.json')}
