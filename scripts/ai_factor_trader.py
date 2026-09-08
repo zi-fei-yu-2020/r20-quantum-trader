@@ -1157,13 +1157,14 @@ def manage_position_tp_and_trailing(f, curr_pos, trackers, timestamp_full, execu
     hard_stop_px = float(t.get("trailingStopPx", 0.0) or 0.0)
     hard_stop_hit = hard_stop_px > 0 and ((is_long and cur_px <= hard_stop_px) or (not is_long and cur_px >= hard_stop_px))
     if hard_stop_hit:
+        protection_label = '浮盈保护' if t.get('profitProtection',{}).get('active') else '硬止损'
         closed, close_detail = close_position_confirmed(inst_id, "long" if is_long else "short", pos_sz, exit_reason='profit_lock' if t.get('profitProtection',{}).get('active') else 'hard_stop', position=curr_pos)
         if not closed:
             executed_actions.append(f"[{name}] 硬止损平仓失败，仓位仍保留: {close_detail}")
             return False, "硬止损平仓失败"
         close_fee = (pos_sz * ct_val * cur_px) * TAKER_FEE_RATE
         pnl_val = curr_pos["upl"]
-        executed_actions.append(f"[{name}] 🛑 触发硬止损 {hard_stop_px} 并确认平仓 (净盈亏: {pnl_val:+.2f}U)")
+        executed_actions.append(f"[{name}] 触发{protection_label} {hard_stop_px} 并确认平仓 (平仓前浮盈参考: {pnl_val:+.2f}U，结算以账本为准)")
         record_trade({
             "is_trade": True,
             "time": timestamp_full,
@@ -1184,7 +1185,7 @@ def manage_position_tp_and_trailing(f, curr_pos, trackers, timestamp_full, execu
         if notify_trade_close:
             notify_trade_close(inst=name, pnl=pnl_val, stage="硬止损平仓", exit_px=cur_px)
         trackers.pop(pos_key, None)
-        return True, "已硬止损"
+        return True, "已" + protection_label
 
     default_tp_dist = max(atr * profile["tp_atr_mult"], entry_px * profile["min_profit_ratio"])
     if not _float_or_zero(t.get("takeProfitPx")):

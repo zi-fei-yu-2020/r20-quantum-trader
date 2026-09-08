@@ -25,6 +25,21 @@ class ProfitProtectionTests(unittest.TestCase):
         self.assertAlmostEqual(100-long['stop'],short['stop']-100)
         drop=profit_protection.floor_plan('long',100,100.6,104,99,2)
         self.assertTrue(drop['crossed'])
+    def test_real_position_manager_retains_profit_floor_and_exits_on_giveback(self):
+        import ai_factor_trader as trader
+        factor={'market_data_valid':True,'instId':'TEST-USDT-SWAP','name':'TEST','price':101.,'type':'crypto','atr':2.,'atr_15m':2.,'precision':2,'ctVal':1}
+        position={'pos':1.,'side':'long','avgPx':100.,'upl':1.}
+        key='TEST-USDT-SWAP_long'
+        trackers={key:{'entryTs':time.time(),'trailingStopPx':99.,'exchangeStopPx':99.,'takeProfitPx':110.,'highWaterMark':101.,'lowWaterMark':100.}}
+        with patch.object(trader,'ensure_cloud_position_protection',return_value=(True,'verified')),patch.object(trader,'record_trade'),patch.object(trader,'add_stop_cooldown'),patch.object(trader,'notify_trade_close'),patch.object(trader,'close_position_confirmed',return_value=(True,'closed')) as close:
+            closed,_=trader.manage_position_tp_and_trailing(factor,position,trackers,'test',[])
+            self.assertFalse(closed);self.assertGreater(trackers[key]['trailingStopPx'],100.3)
+            close.assert_not_called()
+            closed,_=trader.manage_position_tp_and_trailing({**factor,'price':100.2},{**position,'upl':.2},trackers,'test',[])
+            self.assertTrue(closed)
+            self.assertEqual(close.call_args.kwargs['exit_reason'],'profit_lock')
+            self.assertNotIn(key,trackers)
+
     def test_small_noise_and_crossed_or_loss_side_ai_stops_are_rejected(self):
         self.assertFalse(profit_protection.floor_plan('long',100,100.1,100.1,99,2)['active'])
         for stop in (99,100.1,101,102):self.assertFalse(profit_protection.allow_ai_tightening('long',100,101,stop,2))

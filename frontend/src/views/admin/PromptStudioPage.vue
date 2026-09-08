@@ -765,7 +765,7 @@ const { confirm, prompt } = useDialogs()
               style="background-color: #067647; color: #ffffff !important"
             >
               <CheckCircle2 class="w-4 h-4" style="color: #ffffff" />
-              <span style="color: #ffffff">激活为实盘方案</span>
+              <span style="color: #ffffff">设为当前策略</span>
             </button>
           </div>
 

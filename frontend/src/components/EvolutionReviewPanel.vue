@@ -42,6 +42,7 @@ const label = computed(() => ({ success: '复盘已完成', no_new_evidence: '�
       <li v-for="(insight,i) in review.insights" :key="i">{{ insight }}</li>
     </ul>
     <p v-else class="text-sm" style="color:var(--text-muted)">暂无可展示的复盘结论，不推断策略处于最优状态。</p>
+    <p class="text-xs leading-relaxed" style="color:var(--text-muted)" data-evolution-authority>复盘会生成报告和改进候选，但不会自动改交易规则。增加开单次数不等于提升策略；候选需要费用后表现、前向样本和回退条件验证。</p>
     <details v-if="review?.recommendations?.length" class="action-disclosure min-w-0 text-sm">
       <summary class="cursor-pointer min-h-11 flex items-center">改进建议（未自动执行）</summary>
       <ul class="space-y-2 list-disc pl-5" style="overflow-wrap:anywhere"><li v-for="(item,i) in review.recommendations" :key="i">{{ item }}</li></ul>

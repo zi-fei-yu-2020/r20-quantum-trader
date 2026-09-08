@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { readableLog } from '../../utils/logText'
 import { useToast } from '../../composables/useFeedback'
 const toast = useToast()
 import AppCard from '../../components/ui/AppCard.vue'
@@ -49,7 +50,7 @@ async function fetchLogStream(type: 'trader' | 'backend' | 'scheduler') {
   logLoading.value = true
   try {
     const res = await api(`/api/v1/admin/logs?source=${type}&lines=100`)
-    logContent.value = res.content || res.lines?.join('\n') || '无实时日志'
+    logContent.value = readableLog(res.content || res.lines?.join('\n') || '无实时日志')
   } catch (e: any) {
     if (e?.silent) return
     logContent.value = `获取日志失败: ${e.message}`
@@ -89,7 +90,7 @@ onMounted(() => {
       <details v-for="entry in executionCycles" :key="entry.timestamp" class="min-w-0 border-t pt-2 text-xs" style="border-color: var(--border-subtle)">
         <summary class="cursor-pointer" style="color: var(--text-muted)">{{ entry.timestamp }} · {{ entry.actions.length }} 项</summary>
         <ul class="mt-2 space-y-1 leading-relaxed" style="color: var(--text-main); overflow-wrap: anywhere">
-          <li v-for="(action, index) in entry.actions" :key="index">{{ action }}</li>
+          <li v-for="(action, index) in entry.actions" :key="index">{{ readableLog(action) }}</li>
           <li v-if="!entry.actions.length">无开平仓操作</li>
         </ul>
       </details>
