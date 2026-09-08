@@ -64,6 +64,22 @@ class ExecutionPresetTests(unittest.TestCase):
         prompt_library.activate_profile('stable')
         self.assertEqual(execution_profiles.runtime()['signature'],before['signature'])
         self.assertEqual(risk_policy.load_policy().single_asset_margin_usdt,600)
+    def test_copy_export_import_preserves_small_account_execution_binding(self):
+        copied=prompt_library.create_profile('copy','',source_id='small300')
+        exported=prompt_library.export_profile(copied['id'])
+        self.assertEqual(exported['profile']['execution_profile'],'small300')
+        imported=prompt_library.import_profile(exported,'imported')
+        prompt_library.activate_profile(imported['id'])
+        self.assertEqual(risk_policy.load_policy().single_asset_margin_usdt,30)
+        self.assertEqual(execution_profiles.runtime()['execution']['equity_cap_usdt'],300)
+        exported['profile']['execution_profile']='untrusted_large_budget'
+        with self.assertRaises(ValueError):prompt_library.import_profile(exported)
+
+    def test_corrupt_activation_cannot_fall_back_to_larger_standard_budget(self):
+        prompt_library.activate_profile('small300')
+        prompt_library.LIBRARY_FILE.write_text('{')
+        with self.assertRaisesRegex(ValueError,'unreadable'):risk_policy.load_policy()
+
     def test_signature_change_rejects_before_exchange_reads(self):
         before=execution_profiles.runtime()
         d={'action':'BUY_LONG','contract_valid':True,'contract_version':trading_prompt.VERSION,'valid_until':time.time()+100}

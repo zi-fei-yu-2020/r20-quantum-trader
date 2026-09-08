@@ -443,23 +443,27 @@ def rollback_profile(profile_id: str, revision_id: str) -> dict[str, Any]:
 
 def export_profile(profile_id: str) -> dict[str, Any]:
     profile = get_profile(profile_id)
-    return {"format": "r20-prompt-profile", "version": 3, "exported_at": _now(), "profile": {k: profile.get(k) for k in ("name", "description", "editor_mode", "pipelines", "simple_policy", *TEMPLATE_KEYS)}}
+    return {"format": "r20-prompt-profile", "version": 3, "exported_at": _now(), "profile": {k: profile.get(k) for k in ("name", "description", "editor_mode", "pipelines", "simple_policy", "execution_profile", *TEMPLATE_KEYS)}}
 
 
 def import_profile(payload: dict[str, Any], name_override: str = "") -> dict[str, Any]:
     if payload.get("format") != "r20-prompt-profile" or not isinstance(payload.get("profile"), dict): raise ValueError("无效的 R20 提示词方案文件")
     source = payload["profile"]
+    binding=source.get('execution_profile') or 'standard'
+    if binding not in ('standard','small300'):raise ValueError('Unknown imported execution preset')
+    source_id='small300' if binding=='small300' else 'stable'
     if isinstance(source.get("pipelines"), dict) and any(source.get("pipelines", {}).values()):
-        profile=create_profile(name_override or str(source.get("name") or "导入方案"),str(source.get("description") or ""),"stable","导入模块方案")
+        profile=create_profile(name_override or str(source.get("name") or "导入方案"),str(source.get("description") or ""),source_id,"导入模块方案")
         return update_profile(profile["id"],{"editor_mode":"modules","pipelines":source["pipelines"]},"导入模板构成")
     if source.get("editor_mode") == "simple" or (not source.get("editor_mode") and source.get("simple_policy")):
-        profile = create_profile(name_override or str(source.get("name") or "导入方案"), str(source.get("description") or ""), "stable", "导入简单方案")
+        profile = create_profile(name_override or str(source.get("name") or "导入方案"), str(source.get("description") or ""), source_id, "导入简单方案")
         return update_profile(profile["id"], {"editor_mode": "simple", "simple_policy": source.get("simple_policy") or {}}, "导入简单策略")
-    return create_profile(name_override or str(source.get("name") or "导入方案"), str(source.get("description") or ""), "stable", "导入方案") if not any(source.get(k) for k in TEMPLATE_KEYS) else _import_with_templates(source, name_override)
+    return create_profile(name_override or str(source.get("name") or "导入方案"), str(source.get("description") or ""), source_id, "导入方案") if not any(source.get(k) for k in TEMPLATE_KEYS) else _import_with_templates(source, name_override)
 
 
 def _import_with_templates(source: dict[str, Any], name_override: str) -> dict[str, Any]:
-    profile = create_profile(name_override or str(source.get("name") or "导入方案"), str(source.get("description") or ""), "stable", "导入方案")
+    source_id="small300" if source.get("execution_profile")=="small300" else "stable"
+    profile = create_profile(name_override or str(source.get("name") or "导入方案"), str(source.get("description") or ""), source_id, "导入方案")
     return update_profile(profile["id"], {key: source.get(key, "") for key in TEMPLATE_KEYS}, "导入模板内容")
 
 

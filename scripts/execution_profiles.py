@@ -20,8 +20,20 @@ def settings_for(profile):
 
 def runtime(profile=None):
     if profile is None:
-        from scripts.prompt_library import active_profile
+        from scripts.prompt_library import active_profile, LIBRARY_FILE
+        # The prompt editor's legacy recovery must never silently expand a
+        # small-account budget after a corrupt saved activation record.
+        requested = None
+        if LIBRARY_FILE.exists():
+            try:
+                raw=json.loads(LIBRARY_FILE.read_text(encoding='utf-8'))
+                if not isinstance(raw,dict):raise ValueError('Invalid profile library')
+                requested=raw.get('active_profile_id')
+            except (OSError,ValueError,TypeError):
+                raise ValueError('Execution profile activation unreadable; new risk blocked') from None
         profile=active_profile()
+        if requested and requested!=profile['id']:
+            raise ValueError('Execution profile activation inconsistent; new risk blocked')
     config=settings_for(profile)
     identity={'profile_id':profile['id'],'execution':config}
     return {**identity,'signature':hashlib.sha256(json.dumps(identity,sort_keys=True).encode()).hexdigest()}

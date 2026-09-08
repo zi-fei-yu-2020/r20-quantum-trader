@@ -1136,14 +1136,15 @@ def manage_position_tp_and_trailing(f, curr_pos, trackers, timestamp_full, execu
     # Cost-aware profit lock does not wait for an oversized ATR multiple.
     from scripts.profit_protection import floor_plan
     from scripts.risk_policy import load_policy
-    policy=load_policy()
+    try: policy=load_policy()
+    except (ValueError, OSError, TypeError): policy=None
     if not t.get('initialRiskStopPx'):
         original=float(t.get('exchangeStopPx') or t.get('trailingStopPx') or 0)
         if original>0 and ((is_long and original<entry_px) or (not is_long and original>entry_px)):
             t['initialRiskStopPx']=original
     protection=floor_plan('long' if is_long else 'short',entry_px,cur_px,
         t['highWaterMark'] if is_long else t['lowWaterMark'],t.get('initialRiskStopPx'),
-        f.get('atr_15m') or atr,taker_fee=policy.taker_fee,slippage=policy.slippage)
+        f.get('atr_15m') or atr,taker_fee=policy.taker_fee,slippage=policy.slippage) if policy is not None else {'active':False,'reason':'cost_policy_unavailable'}
     if protection.get('active'):
         desired=protection['stop'];old=float(t.get('trailingStopPx') or 0)
         if not old or (desired>old if is_long else desired<old):
@@ -1450,7 +1451,10 @@ def execute_ai_position_management(real_pos_dict, trackers, timestamp_full, exec
             
             from scripts.profit_protection import allow_ai_tightening
             from scripts.risk_policy import load_policy
-            policy=load_policy()
+            try: policy=load_policy()
+            except (ValueError, OSError, TypeError):
+                executed_actions.append(f"[{name}] Cost policy unavailable; retain existing cloud stop")
+                continue
             tightens_risk=allow_ai_tightening(pos_side,avg_px,current_px,new_sl,atr_val,
                 taker_fee=policy.taker_fee,slippage=policy.slippage)
 
