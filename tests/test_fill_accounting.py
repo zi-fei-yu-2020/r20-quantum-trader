@@ -73,7 +73,7 @@ class FeeReconciliationTests(unittest.TestCase):
 
     def test_nonfinite_and_boolean_fields_are_rejected(self):
         for key in ('fillSz','fee','ts'):
-            for value in ('nan','inf',True,None):
+            for value in ('nan','inf','1e1000',True,None):
                 rows=fills();rows[0][key]=value
                 self.assertIsNone(self.checked(rows)['open_fee'],(key,value))
 
@@ -135,3 +135,27 @@ class LedgerFeeIntegrationTests(unittest.TestCase):
             pending=ledger_monitor.project_rows([row],'mine',positions=[])[0]
             self.assertIsNone(pending['open_fee']);self.assertIsNone(pending['close_fee'])
             self.assertEqual(pending['fee_allocation'],'pending_settlement')
+
+    def test_independent_monitor_updates_mirror_and_reports_partial_failures(self):
+        from scripts import sync_full_ledger, db_manager
+        with tempfile.TemporaryDirectory() as td,ExitStack() as stack:
+            root=Path(td)
+            for module,name,value in ((ledger_monitor,'DATA',root),(db_manager,'DATA_DIR',str(root)),(db_manager,'DB_PATH',str(root/'mirror.db'))):
+                stack.enter_context(patch.object(module,name,value))
+            stack.enter_context(patch('scripts.okx_runtime.selected_environment',return_value=SimpleNamespace(identity='mine',mode='demo')))
+            row={'id':'closed-1','inst':'BTC','status':'closed','close_time':'test','closed_size':2,
+                 'close_px':100,'pnl':None,'gross_pnl':0,'fee':None}
+            def build(**kwargs):
+                (root/'trading_ledger.json').write_text(json.dumps([row]))
+                return [row]
+            stack.enter_context(patch.object(sync_full_ledger,'build_lifecycle_ledger',side_effect=build))
+            status=ledger_monitor.sync_once()
+            self.assertEqual(status['sqlite_mirror'],{'status':'ok','rows':1})
+            with sqlite3.connect(root/'mirror.db') as db:
+                self.assertEqual(db.execute('select size,fee,gross_pnl,pnl from trades').fetchone(),(2,None,0,None))
+            original=(root/'trading_ledger.json').read_bytes()
+            with patch.object(db_manager,'sync_json_to_sqlite',side_effect=sqlite3.OperationalError('test lock')):
+                status=ledger_monitor.sync_once()
+            self.assertEqual(status['status'],'partial')
+            self.assertEqual(status['sqlite_mirror']['error_type'],'OperationalError')
+            self.assertEqual((root/'trading_ledger.json').read_bytes(),original)

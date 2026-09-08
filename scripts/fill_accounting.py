@@ -8,6 +8,7 @@ from collections import defaultdict
 from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation
 import json
+import math
 from pathlib import Path
 import sqlite3
 
@@ -22,7 +23,8 @@ def number(value, *, positive=False, integer=False):
         result = Decimal(str(value))
     except InvalidOperation:
         raise ValueError("invalid_numeric_evidence") from None
-    if not result.is_finite() or (positive and result <= 0) or (integer and result != result.to_integral_value()):
+    if (not result.is_finite() or not math.isfinite(float(result))
+            or (positive and result <= 0) or (integer and result != result.to_integral_value())):
         raise ValueError("invalid_numeric_evidence")
     return result
 

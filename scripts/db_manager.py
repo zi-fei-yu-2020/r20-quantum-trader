@@ -127,9 +127,9 @@ def _reject_json_constant(value):
     raise ValueError(f"Invalid JSON constant: {value}")
 
 
-def sync_json_to_sqlite():
+def sync_json_to_sqlite(ledger_path=None):
     try:
-        with open(LEDGER_JSON_FILE, "r", encoding="utf-8") as f:
+        with open(LEDGER_JSON_FILE if ledger_path is None else ledger_path, "r", encoding="utf-8") as f:
             trades = json.load(f, parse_constant=_reject_json_constant)
     except FileNotFoundError:
         return 0

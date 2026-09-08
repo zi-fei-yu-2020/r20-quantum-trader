@@ -116,9 +116,16 @@ def sync_once():
     env=selected_environment();requested=load('ledger_refresh_request.json',{})
     try:
         rows=sync_full_ledger.build_lifecycle_ledger(notify=False)
+        from scripts.db_manager import sync_json_to_sqlite
+        try:
+            mirror = {'status':'ok','rows':sync_json_to_sqlite(DATA/'trading_ledger.json')}
+        except Exception as exc:
+            # JSON is authoritative and has already been atomically updated.
+            # Report mirror failure separately; never discard the good ledger.
+            mirror = {'status':'error','error_type':type(exc).__name__}
         previous=load('ledger_sync_status.json',{})
         pending=sum(r.get('status')=='closed_pending' for r in rows)
-        state={'status':'ok','last_success':time.time(),'pending_since':(previous.get('pending_since') or time.time()) if pending else None,'environment_id':env.identity,'environment':env.mode,
+        state={'status':'ok' if mirror['status']=='ok' else 'partial','sqlite_mirror':mirror,'last_success':time.time(),'pending_since':(previous.get('pending_since') or time.time()) if pending else None,'environment_id':env.identity,'environment':env.mode,
                'handled_request':requested.get('id'),'pending_settlements':sum(r.get('status')=='closed_pending' for r in rows),'rows':len(rows)}
         atomic('ledger_sync_status.json',state);return state
     except Exception as exc:
@@ -126,4 +133,7 @@ def sync_once():
         atomic('ledger_sync_status.json',{**previous,'status':'error','last_error_at':time.time(),'error':type(exc).__name__})
         raise
 
-if __name__=='__main__':print(json.dumps(sync_once(),ensure_ascii=False))
+if __name__=='__main__':
+    result=sync_once()
+    print(json.dumps(result,ensure_ascii=False))
+    raise SystemExit(0 if result['status']=='ok' else 1)
