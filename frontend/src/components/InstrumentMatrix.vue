@@ -6,6 +6,7 @@ import ScenarioShadowPanel from './ScenarioShadowPanel.vue'
 import { auditLabel } from '../utils/waitAudit'
 import InstrumentSupportNotice from './InstrumentSupportNotice.vue'
 import { canOpen } from '../utils/instrumentSupport'
+import { observedNumber, observedText, observedPercent, observationColor, smartMoneyDisplay } from '../utils/observationDisplay'
 import EmptyState from './ui/EmptyState.vue'
 
 import { ref, computed } from 'vue'
@@ -14,6 +15,15 @@ import { TrendingUp, TrendingDown, ArrowUpRight, Compass, Activity } from 'lucid
 import FactorDetailModal from './FactorDetailModal.vue'
 
 const store = useDashboardStore()
+// The store's factor-library merge drops valid and can replace observations with defaults.
+// Read smart money from the same instrument in the raw response, not the merged fallback.
+const displayFactors = computed(() => {
+  const raw = new Map((store.data?.factors || []).map(item => [item.instId, item.smart_money]))
+  return store.factors.map(item => ({
+    ...item,
+    smartMoneyDisplay: smartMoneyDisplay(raw.get(item.instId), canOpen(item.environment_support)),
+  }))
+})
 const selectedInstrument = ref<any | null>(null)
 const drawerVisible = ref(false)
 const detailInstrument = computed(() => store.factors.find(item => item.instId === selectedInstrument.value?.instId) || selectedInstrument.value)
@@ -127,7 +137,7 @@ function getActionLabel(action?: string, status?: string) {
     <!-- 6-Asset Quantitative Ticker Cards Grid (adaptive 1 col on mobile, 2 cols on tablet, 3 cols on desktop, 6 cols on ultra-wide) -->
     <div v-else class="factor-grid grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4">
       <AppCard
-        v-for="item in store.factors"
+        v-for="item in displayFactors"
         :key="item.instId"
         @click="openDetail(item)"
         role="button"
@@ -165,15 +175,15 @@ function getActionLabel(action?: string, status?: string) {
             </div>
             <div class="text-right font-mono">
               <div class="text-xs font-black num-tabular" style="color: var(--text-main)">
-                ${{ item.price }}
+                {{ observedNumber(item.price) === null ? '--' : `$${observedText(item.price)}` }}
               </div>
               <div
                 class="text-[10px] font-bold font-mono flex items-center justify-end space-x-0.5 num-tabular"
-                :style="{ color: item.chg24h >= 0 ? 'var(--color-up)' : 'var(--color-down)' }"
+                :style="{ color: observationColor(item.chg24h) }"
               >
-                <TrendingUp v-if="item.chg24h >= 0" class="w-2.5 h-2.5" />
-                <TrendingDown v-else class="w-2.5 h-2.5" />
-                <span>{{ item.chg24h >= 0 ? '+' : '' }}{{ item.chg24h }}%</span>
+                <TrendingUp v-if="observedNumber(item.chg24h) !== null && observedNumber(item.chg24h)! >= 0" class="w-2.5 h-2.5" />
+                <TrendingDown v-else-if="observedNumber(item.chg24h) !== null" class="w-2.5 h-2.5" />
+                <span>{{ observedPercent(item.chg24h, true) }}</span>
               </div>
             </div>
           </div>
@@ -188,51 +198,47 @@ function getActionLabel(action?: string, status?: string) {
               <div class="text-[8px] uppercase" style="color: var(--text-faint)">速度 v</div>
               <div
                 class="font-bold num-tabular truncate"
-                :style="{
-                  color:
-                    (item.calculus?.velocity_1h ?? 0) >= 0
-                      ? 'var(--color-up)'
-                      : 'var(--color-down)',
-                }"
+                :style="{ color: observationColor(item.calculus?.velocity_1h) }"
               >
-                {{ item.calculus?.velocity_1h ?? '--' }}
+                {{ observedText(item.calculus?.velocity_1h) }}
               </div>
             </div>
             <div>
               <div class="text-[8px] uppercase" style="color: var(--text-faint)">加速 a</div>
               <div class="font-bold num-tabular truncate" style="color: var(--text-main)">
-                {{ item.calculus?.accel_1h ?? '--' }}
+                {{ observedText(item.calculus?.accel_1h) }}
               </div>
             </div>
             <div>
               <div class="text-[8px] uppercase" style="color: var(--text-faint)">冲击 j</div>
               <div class="font-bold num-tabular truncate" style="color: var(--text-muted)">
-                {{ item.calculus?.jerk_1h ?? '--' }}
+                {{ observedText(item.calculus?.jerk_1h) }}
               </div>
             </div>
             <div>
               <div class="text-[8px] uppercase" style="color: var(--text-faint)">ADX</div>
               <div class="font-bold num-tabular truncate" style="color: var(--color-brand)">
-                {{ canOpen(item.environment_support) ? (item.adx_1h ?? '--') : '--' }}
+                {{ canOpen(item.environment_support) ? observedText(item.adx_1h) : '--' }}
               </div>
             </div>
           </div>
 
           <!-- Microstructure Flow -->
           <div
-            class="flex items-center justify-between text-[10px] font-mono mb-2 px-0.5"
+            class="flex flex-wrap gap-x-2 gap-y-1 items-center justify-between text-[10px] font-mono mb-2 px-0.5"
+            :title="item.smartMoneyDisplay.unavailable ? '未取得数据' : undefined"
             style="color: var(--text-muted)"
           >
             <span
               >聪明钱:
               <strong class="num-tabular" style="color: var(--text-main)"
-                >{{ canOpen(item.environment_support) ? `${item.smart_money?.weighted_long_pct ?? 50}%多` : '--' }}</strong
+                >{{ item.smartMoneyDisplay.long }}</strong
               ></span
             >
             <span
               >净流:
               <strong class="num-tabular" style="color: var(--text-main)">{{
-                canOpen(item.environment_support) ? (item.smart_money?.net_flow_usdt ?? '0 U') : '--'
+                item.smartMoneyDisplay.flow
               }}</strong></span
             >
           </div>
@@ -253,7 +259,7 @@ function getActionLabel(action?: string, status?: string) {
             >
               <span class="text-[10px]" style="color: var(--text-faint)">置信:</span>
               <span class="num-tabular" style="color: var(--text-main)"
-                >{{ canOpen(item.environment_support) ? `${item.decision?.confidence || item.confidence || 0}%` : '--' }}</span
+                >{{ canOpen(item.environment_support) ? observedPercent(item.decision?.confidence ?? item.confidence) : '--' }}</span
               >
               <ArrowUpRight
                 class="w-3.5 h-3.5 opacity-60 group-hover:opacity-100 transition-opacity"

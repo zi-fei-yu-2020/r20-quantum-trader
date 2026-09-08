@@ -10,6 +10,7 @@ import { ref, computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { useApi } from '../../composables/useApi'
 import { overviewConnection } from '../../utils/accountConnections'
+import { dataHealthSource } from '../../utils/dataHealthDisplay'
 import {
   Cpu,
   Database,
@@ -345,10 +346,10 @@ const quickNav = [
       </div>
 
       <!-- Main Dual Panel: LLM Decision Audit & Data Freshness -->
-      <div class="grid grid-cols-1 lg:grid-cols-3 gap-4">
-        <!-- Left: Full Decisions Audit (2 Columns) -->
+      <div class="overview-panels grid gap-4">
+        <!-- Left: Full Decisions Audit -->
         <AppCard
-          class="lg:col-span-2 rounded-xl border p-4 sm:p-5 shadow-xs transition-colors flex flex-col justify-between"
+          class="min-w-0 rounded-xl border p-4 sm:p-5 shadow-xs transition-colors flex flex-col justify-between"
           style="background-color: var(--bg-card); border-color: var(--border-subtle)"
         >
           <div>
@@ -436,18 +437,18 @@ const quickNav = [
           </div>
         </AppCard>
 
-        <!-- Right: Data Health Monitor (1 Column) -->
+        <!-- Right: Data Health Monitor -->
         <AppCard
-          class="rounded-xl border p-4 sm:p-5 shadow-xs transition-colors flex flex-col justify-between"
+          class="data-health min-w-0 rounded-xl border p-4 sm:p-5 shadow-xs transition-colors flex flex-col justify-between"
           style="background-color: var(--bg-card); border-color: var(--border-subtle)"
         >
           <div>
             <div
-              class="flex items-center justify-between pb-3 mb-3 border-b"
+              class="flex flex-wrap gap-2 items-center justify-between pb-3 mb-3 border-b"
               style="border-color: var(--border-subtle)"
             >
               <div class="flex items-center space-x-2">
-                <Clock class="w-4 h-4" style="color: var(--color-brand)" />
+                <Clock class="w-4 h-4 shrink-0" style="color: var(--color-brand)" />
                 <h2
                   class="text-sm font-black font-sans uppercase tracking-wider"
                   style="color: var(--text-main)"
@@ -456,7 +457,7 @@ const quickNav = [
                 </h2>
               </div>
               <span
-                class="px-2 py-0.5 rounded text-xs font-sans font-bold border"
+                class="shrink-0 whitespace-nowrap px-2 py-0.5 rounded text-xs font-sans font-bold border"
                 :style="{
                   backgroundColor:
                     dataHealthOverall === 'LIVE' ? 'var(--color-up-bg)' : 'var(--color-down-bg)',
@@ -471,8 +472,14 @@ const quickNav = [
               </span>
             </div>
 
-            <AppTable label="运行数据"
-              ><table class="w-full text-left font-sans text-sm border-collapse">
+            <AppTable label="运行数据" class="data-health-scroll"
+              ><table class="data-health-table w-full text-left font-sans text-sm border-collapse">
+                <colgroup>
+                  <col style="width: 28%" />
+                  <col style="width: 28%" />
+                  <col style="width: 24%" />
+                  <col style="width: 20%" />
+                </colgroup>
                 <thead>
                   <tr
                     class="border-b text-xs uppercase"
@@ -491,11 +498,13 @@ const quickNav = [
                     class="hover:bg-[var(--bg-card-subtle)] transition-colors"
                   >
                     <td class="py-2.5 font-bold" style="color: var(--text-main)">
-                      {{ x.file || x.name }}
+                      <span class="data-health-source" :title="x.file || x.name" :aria-label="x.file || x.name">
+                        {{ dataHealthSource(x.file || x.name) }}
+                      </span>
                     </td>
                     <td class="py-2.5">
                       <span
-                        class="px-2 py-0.5 rounded text-xs font-bold border inline-flex items-center space-x-1"
+                        class="px-2 py-0.5 rounded text-xs font-bold border inline-flex items-center space-x-1 whitespace-nowrap"
                         :style="{
                           backgroundColor: x.fresh ? 'var(--color-up-bg)' : 'var(--color-down-bg)',
                           borderColor: x.fresh
@@ -504,8 +513,8 @@ const quickNav = [
                           color: x.fresh ? 'var(--color-up)' : 'var(--color-down)',
                         }"
                       >
-                        <CheckCircle2 v-if="x.fresh" class="w-2.5 h-2.5" />
-                        <AlertCircle v-else class="w-2.5 h-2.5" />
+                        <CheckCircle2 v-if="x.fresh" class="w-2.5 h-2.5 shrink-0" />
+                        <AlertCircle v-else class="w-2.5 h-2.5 shrink-0" />
                         <span>{{ x.fresh ? '正常新鲜' : '延迟过期' }}</span>
                       </span>
                     </td>
@@ -583,3 +592,41 @@ const quickNav = [
     />
   </div>
 </template>
+
+<style scoped>
+.overview-panels {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+/* Reserve readable space for all four health columns at desktop widths. */
+@media (min-width: 1200px) {
+  .overview-panels {
+    grid-template-columns: minmax(0, 1.4fr) minmax(460px, 1fr);
+  }
+}
+
+.data-health-scroll {
+  min-width: 0;
+  max-width: 100%;
+  overflow-x: auto;
+}
+
+.data-health-table {
+  min-width: 420px;
+  table-layout: fixed;
+}
+
+.data-health-table th,
+.data-health-table td {
+  padding-inline: 8px;
+  white-space: nowrap;
+  overflow-wrap: normal;
+}
+
+.data-health-source {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+</style>
