@@ -179,6 +179,16 @@ def _clean_pipelines(raw: Any, legacy: dict[str, Any]) -> dict[str, list[dict[st
     return result
 
 
+# Named preset carries an immutable execution binding, not just persuasive text.
+PRESETS['small300'] = {**copy.deepcopy(PRESETS['stable']), 'id':'small300',
+    'name':'300U 小资金 · 风险预算型', 'description':'资金计算基数最多300U，单笔风险0.5%，单标的保证金30U，总保证金90U，最多2个标的，实际杠杆不超过3倍。切换后由执行网关强制生效。',
+    'editor_mode':'advanced', 'execution_profile':'small300', 'pipelines':{},
+    'trading_system':'以小资金成本效率为优先：只提交可以核验的结构计划；按执行预算裁剪数量，最小合约不能满足预算时跳过。评分不是胜率，不追求零不确定性。',
+    'trading_user':'优先审查本轮已触发的程序草案；已满足的等待条件应重新评估。允许明确残余风险，只要结构失效、成本后盈亏比和执行预算均成立。不要为了增加成交而编造依据。',
+    'evolution_system':'仅用真实结算和可追溯成交证据复盘，候选不自动晋级。',
+    'evolution_user':'分别统计费用拖累、错失候选、保护回撤与执行拒绝；小样本保持NO_CHANGE。'}
+
+
 def _clean_profile(raw: dict[str, Any], profile_id: str | None = None) -> dict[str, Any]:
     now = _now()
     result = copy.deepcopy(EMPTY_CUSTOM)
@@ -186,6 +196,8 @@ def _clean_profile(raw: dict[str, Any], profile_id: str | None = None) -> dict[s
     result["id"] = profile_id or str(raw.get("id") or f"custom-{uuid.uuid4().hex[:10]}")
     result["name"] = str(result.get("name") or "自定义方案").strip()[:60]
     result["description"] = str(result.get("description") or "").strip()[:240]
+    result["execution_profile"] = "small300" if result["id"]=="small300" else str(raw.get("execution_profile") or "standard")
+    if result["execution_profile"] not in ("standard","small300"): raise ValueError("Unknown execution preset")
     result["editable"] = True
     result["enabled"] = bool(result.get("enabled", True))
     result["editor_mode"] = str(raw.get("editor_mode") or ("advanced" if any(raw.get(k) for k in TEMPLATE_KEYS) else "simple"))
@@ -459,7 +471,7 @@ def all_profiles() -> list[dict[str, Any]]:
     library = load_library()
     profiles_map = copy.deepcopy(library["profiles"])
     result = []
-    for pid in ("stable",):
+    for pid in ("stable", "small300"):
         if pid in profiles_map:
             result.append(profiles_map.pop(pid))
         elif pid in PRESETS:
@@ -467,6 +479,8 @@ def all_profiles() -> list[dict[str, Any]]:
             preset["editable"] = True
             result.append(preset)
     result.extend(profiles_map.values())
+    from scripts.execution_profiles import settings_for
+    for profile in result: profile["execution_settings"] = settings_for(profile)
     return result
 
 

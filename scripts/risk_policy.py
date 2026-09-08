@@ -42,9 +42,12 @@ def load_policy():
     import json
     from pathlib import Path
     path = Path(__file__).resolve().parents[1]/'data'/'risk_policy.json'
-    if not path.exists(): return Policy()
-    raw=json.loads(path.read_text(encoding='utf-8'))
+    raw=json.loads(path.read_text(encoding='utf-8')) if path.exists() else {}
     if not isinstance(raw,dict) or set(raw)-set(Policy.__dataclass_fields__): raise RiskRejected('Invalid risk policy')
+    from scripts.execution_profiles import runtime
+    preset=runtime()['execution']
+    if preset['id']=='small300':
+        raw.update({key:preset[key] for key in ('per_trade_equity_pct','single_asset_margin_usdt','max_leverage')})
     return Policy(**raw)
 
 def monotonic_stop(side, old, new, current):

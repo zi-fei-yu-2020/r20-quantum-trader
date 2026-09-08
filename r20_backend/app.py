@@ -1702,7 +1702,9 @@ def activate_prompt_profile_api(profile_id: str, x_r20_session: str | None = Hea
     try: profile = activate_profile(profile_id)
     except ValueError as exc: raise HTTPException(status_code=409, detail=str(exc)) from exc
     audit_record("prompt.profile.activate", "success", {"actor": actor["username"], "profile_id": profile_id})
-    return {"active_profile_id": profile_id, "profile": profile}
+    from scripts.execution_profiles import runtime as execution_runtime
+    return {"active_profile_id": profile_id, "profile": profile, "execution_settings": execution_runtime(),
+            "effective_for": "next_fresh_decision", "existing_positions_resized": False}
 
 
 @app.delete("/api/v1/admin/prompt-profiles/{profile_id}")

@@ -91,6 +91,11 @@ def prepare(env, *, inst_id, side, entry, stop, take_profit, requested_size, bud
     expected='BUY_LONG' if side=='long' else 'SELL_SHORT'
     if record.get('instrument')!=inst_id or record.get('decision',{}).get('action')!=expected:
         raise risk.RiskRejected('Decision evidence does not authorize this instrument/direction')
+    from scripts.execution_profiles import runtime as execution_runtime, cap_allocation
+    active_execution=execution_runtime()
+    recorded_execution=record.get("execution_profile_signature")
+    if (recorded_execution and recorded_execution!=active_execution["signature"]) or (active_execution["execution"]["id"]=="small300" and not recorded_execution):
+        raise risk.RiskRejected("Execution preset changed since inference; require a fresh decision")
     policy=risk.load_policy()
     reconcile_intents(env)
     from pathlib import Path
@@ -155,6 +160,7 @@ def prepare(env, *, inst_id, side, entry, stop, take_profit, requested_size, bud
         return found['lever']
     allocation=capital_pool.admit(env,observed_equity,balances[0],positions,pending,metadata,
         inst_id=inst_id,available=available,policy=policy,leverage_reader=pending_leverage)
+    allocation=cap_allocation(allocation,active_execution["execution"],positions,pending,metadata,inst_id,pending_leverage,env=env,observation=observed_equity,balance=balances[0])
     plan=risk.order_plan(metadata=metadata[inst_id],side=side,entry=entry,stop=stop,take_profit=take_profit,
                          requested_size=requested_size,budget_usdt=budget,equity=allocation.equity,available=allocation.available,
                          leverage=lev['lever'],policy=allocation.policy,existing_margin=sum(risk.number(p.get('imr') if p.get('imr') not in (None,'') else p.get('margin') or 0) for p in existing),portfolio=portfolio)
@@ -170,6 +176,9 @@ def prepare(env, *, inst_id, side, entry, stop, take_profit, requested_size, bud
             return sorted((str(r.get('ordId')),str(r.get('instId')),str(r.get('posSide')),str(r.get('sz')),str(r.get('accFillSz')),str(r.get('px'))) for r in capital_pool.entry_orders(rows))
         if pending_identity(fresh_pending)!=pending_identity(pending):raise risk.RiskRejected('Pending reservations changed during pool preflight')
     if capital_pool.config_signature()!=allocation.config_signature:raise risk.RiskRejected('Capital pool configuration changed during preflight; no order authorized')
+    if execution_runtime()['signature']!=active_execution['signature']:
+        raise risk.RiskRejected('Execution preset changed during preflight')
+    plan['execution_profile']=active_execution
     plan['portfolio_before']=portfolio
     plan['decision_id']=decision_id
     plan['scope']=env.identity

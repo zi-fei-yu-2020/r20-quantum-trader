@@ -598,6 +598,7 @@ def construct_full_market_prompt(packages: List[Dict[str, Any]], pos_summary: st
     runtime_vars = {
         'previous_wait_reviews': previous_wait_reviews,
         'capital_pool': capital_context,
+        'execution_profile': __import__('scripts.execution_profiles',fromlist=['runtime']).runtime(),
         "pending_orders_status": "verified" if pending_verified else "unknown",
         "decision_timestamp": f"【推演基准时间】: {now_bj_str}",
         "account_balance": f"【交易所账户可用资金】: {avail_balance_str}" + (f"；策略资金池上限={capital_context.get('configured_cap', 'UNKNOWN')} USDT，风险净值={capital_context.get('risk_equity', '待初始化')}；不是额外现金，不能借用池外权益放大建议。" if capital_context.get("enabled") else ""),
@@ -733,6 +734,8 @@ def execute_batch_ai_brain_cycle(pos_summary: str = "当前总持仓 0/6", activ
 
     try:
         profile = active_profile()  # One immutable profile selection for the entire inference.
+        from scripts.execution_profiles import runtime as execution_runtime
+        cycle_execution=execution_runtime(profile)
         prompt_bundle = construct_full_market_prompt(packages, pos_summary, active_positions_detail,
             pending_orders_detail=pending_orders_list, current_time_str=time_str, usdt_available=usdt_available,
             profile=profile, return_bundle=True, pending_verified=pending_verified)
@@ -961,6 +964,7 @@ def execute_batch_ai_brain_cycle(pos_summary: str = "当前总持仓 0/6", activ
                 "name": p["name"],
                 "timestamp": int(time.time()),
                 "data_as_of": p.get("data_as_of", market.signal_as_of()),
+                "execution_profile_signature": cycle_execution["signature"],
                 "position_basis": {"side": active_position_sides.get(inst_id), "size": next((abs(safe_float(x.get("pos", x.get("size", 0)))) for x in (active_positions_detail or []) if x.get("instId") == inst_id), 0.0)},
                 "time_str": time_str,
                 "macro_assessment": macro_summary,

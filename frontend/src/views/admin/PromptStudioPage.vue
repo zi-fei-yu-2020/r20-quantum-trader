@@ -195,6 +195,7 @@ async function saveProfile() {
 }
 
 async function activateProfile() {
+  if (selectedProfile.value?.execution_settings?.id === 'small300' && !(await confirm('启用300U小资金预设：下一轮新决策使用最多300U风险基数、单笔0.5%风险、单标的30U保证金、总90U、最多2个标的和最高3倍实际杠杆。已有仓位不自动缩小；超限或首次非空仓将阻止新增风险。继续？'))) return
   try {
     await api(
       `/api/v1/admin/prompt-profiles/${encodeURIComponent(selectedProfileId.value)}/activate`,
@@ -591,6 +592,12 @@ const { confirm, prompt } = useDialogs()
         class="rounded-xl border p-4 min-w-0 shadow-xs space-y-3 transition-colors flex flex-col"
         style="background-color: var(--bg-card); border-color: var(--border-subtle)"
       >
+        <section v-if="selectedProfile?.execution_settings?.id === 'small300'" class="rounded-lg border p-3 text-sm space-y-2" style="border-color:var(--color-brand-border);background:var(--color-brand-bg)" data-small300-preset>
+          <strong>300U 小资金 · 执行风控绑定</strong>
+          <p>最多300U风险基数 · 单笔风险0.5%（最多1.5U） · 单标的保证金30U · 总保证金90U · 最多2个标的 · 实际杠杆≤3倍</p>
+          <p class="text-xs">{{ selectedProfileId === lib.active_profile_id ? '已启用：下一轮新决策和最终网关强制使用此预算。' : '当前仅预览，点击“设为当前策略”后才生效。' }} 已有仓位不自动调整；首次资金基线需空仓，最小合约不满足预算则不下单。超额实际杠杆会被拒绝，不静默放大风险。</p>
+          <p class="text-xs">切回其他方案恢复该方案原有风控配置；此预设的损益基线不因切换而清零。</p>
+        </section>
         <!-- Pipeline Navigation Tabs -->
         <div
           class="flex items-center justify-between border-b pb-2"
