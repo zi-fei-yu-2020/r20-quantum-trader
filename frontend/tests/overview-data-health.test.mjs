@@ -37,3 +37,9 @@ test('all four columns and full filenames remain accessible while status badges 
   assert.match(overview, /\.data-health-table td\s*\{[^}]*white-space: nowrap;[^}]*overflow-wrap: normal/)
   assert.match(overview, /\.data-health-source\s*\{[^}]*text-overflow: ellipsis;[^}]*white-space: nowrap/)
 })
+
+test('operator pause is explicit and never promises exchange connectivity', () => {
+  assert.ok(overview.includes('data-runtime-controls'))
+  assert.ok(overview.includes('???????????'))
+  assert.ok(overview.includes('??????????????'))
+})

@@ -49,6 +49,14 @@ def backup_job_specs() -> tuple[JobSpec, ...]:
     return tuple(specs)
 
 
+def runtime_controls() -> dict[str, bool]:
+    """Read-only operator controls; enabled is not proof of exchange connectivity."""
+    from scripts.okx_runtime import _load_dotenv
+    values = _load_dotenv()
+    return {"gateway_autostart": values.get("R20_GATEWAY_AUTOSTART", "1") == "1",
+            "automatic_trader": values.get("R20_AUTOTRADE_ENABLED", "1") == "1"}
+
+
 def current_jobs() -> tuple[JobSpec, ...]:
     # Operator pause stops scheduled inference/new entries, never position protection.
     # Read the writable configuration each tick so a pause does not need a restart.

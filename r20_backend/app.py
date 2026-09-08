@@ -553,6 +553,7 @@ def get_admin_configuration() -> dict[str, str]:
 
 
 def runtime_overview() -> dict[str, Any]:
+    from r20_gateway.scheduler import runtime_controls
     from r20_backend.account_connections import runtime_credentials, trading_connection_summary
     health_files = [
         file_health("ai_brain_decisions.json", 15 * 60),
@@ -568,6 +569,7 @@ def runtime_overview() -> dict[str, Any]:
     positions_payload = read_json("position_trackers.json", {})
     return {
         "service": {"version": "7.3.0", "pid": os.getpid(), "uptime_seconds": int(time.time() - STARTED_AT)},
+        "runtime_controls": runtime_controls(),
         "credentials": runtime_credentials(bool(settings.llm_api_key)),
         "trading_connection": trading_connection_summary(),
         "configuration": get_admin_configuration(),

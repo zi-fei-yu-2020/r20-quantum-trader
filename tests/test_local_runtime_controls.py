@@ -34,3 +34,8 @@ class LocalRuntimeControlsTests(unittest.TestCase):
              patch.object(scheduler, "backup_job_specs", return_value=()):
             self.assertIn("trader", {job.name for job in scheduler.current_jobs()})
             self.assertNotIn("trader", {job.name for job in scheduler.current_jobs()})
+
+    def test_status_exposes_controls_without_secrets(self):
+        with patch("scripts.okx_runtime._load_dotenv", return_value={
+                "R20_GATEWAY_AUTOSTART":"1", "R20_AUTOTRADE_ENABLED":"0", "LLM_API_KEY":"DO-NOT-RETURN"}):
+            self.assertEqual(scheduler.runtime_controls(), {"gateway_autostart":True,"automatic_trader":False})
