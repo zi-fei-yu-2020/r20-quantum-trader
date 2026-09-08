@@ -68,7 +68,7 @@ export interface PendingOrderItem {
 export interface InstrumentSupport {
   instId: string
   environment: 'demo' | 'live'
-  status: 'supported' | 'unsupported' | 'unavailable' | 'unknown'
+  status: 'supported' | 'unsupported' | 'unavailable' | 'unknown' | 'refreshing'
   can_open: boolean
   label: string
   message: string
@@ -76,7 +76,7 @@ export interface InstrumentSupport {
 }
 export interface InstrumentSupportSummary {
   environment: 'demo' | 'live'
-  status: 'verified' | 'unknown'
+  status: 'verified' | 'unknown' | 'refreshing'
   checked_at: number | null
   items: Record<string, InstrumentSupport>
   supported_count: number

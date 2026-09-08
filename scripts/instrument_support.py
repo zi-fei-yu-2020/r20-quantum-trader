@@ -17,6 +17,7 @@ except ImportError:
 ROOT = Path(__file__).resolve().parents[1]
 DATA_DIR = ROOT / "data"
 MAX_AGE = 60
+DISPLAY_MAX_AGE = 300  # Display-only grace; opening_status always uses MAX_AGE.
 _WORKERS = set()
 _WORKER_LOCK = threading.Lock()
 _FAILED_UNTIL = {}
@@ -32,30 +33,30 @@ def _path(environment):
     return DATA_DIR / f"instrument_support_{_mode(environment)}.json"
 
 
-def _read(environment):
+def _read(environment, *, max_age=MAX_AGE):
     try:
         value = json.loads(_path(environment).read_text(encoding="utf-8"))
         if (value.get("version") == 1 and value.get("environment") == environment
                 and value.get("ok") is True and isinstance(value.get("instruments"), dict)
                 and value["instruments"]
                 and all(isinstance(r, dict) and r.get("state") for r in value["instruments"].values())
-                and 0 <= time.time() - value["checked_at"] < MAX_AGE):
+                and 0 <= time.time() - value["checked_at"] < max_age):
             return value
     except (OSError, ValueError, TypeError, KeyError, AttributeError):
         pass
     return None
 
 
-def refresh_catalog(environment):
+def refresh_catalog(environment, *, force=False):
     environment = _mode(environment)
     cached = _read(environment)
-    if cached:
+    if cached and not force:
         return cached
     deadline = time.monotonic() + 8
     try:
         with market.file_lock(("instrument-support", environment), deadline):
             cached = _read(environment)
-            if cached:
+            if cached and not force:
                 return cached
             @market.observe_collection
             def collect():
@@ -85,7 +86,7 @@ def _background(environment):
         _WORKERS.add(environment)
     def work():
         try:
-            if refresh_catalog(environment) is None:
+            if refresh_catalog(environment, force=True) is None:
                 _FAILED_UNTIL[environment] = time.monotonic() + 5
         finally:
             with _WORKER_LOCK:
@@ -114,11 +115,22 @@ def _status(inst_id, environment, catalog):
 def pool_support(instruments, environment, *, refresh=False):
     environment = _mode(environment)
     catalog = refresh_catalog(environment) if refresh else _read(environment)
-    if catalog is None and not refresh:
-        _background(environment)
+    display_stale = False
+    if not refresh:
+        if catalog is None:
+            catalog = _read(environment, max_age=DISPLAY_MAX_AGE)
+            display_stale = catalog is not None
+            _background(environment)
+        elif time.time()-catalog['checked_at'] >= MAX_AGE/2:
+            _background(environment)
     items = {item["instId"]: _status(item["instId"], environment, catalog) for item in instruments}
+    if display_stale:
+        for row in items.values():
+            row.update(previous_status=row['status'], status='refreshing', can_open=False,
+                       label=row['label']+' · 更新中',
+                       message='沿用最近合约核验结果展示，后台刷新中；这不是新增交易授权。')
     return {"environment": environment, "checked_at": catalog["checked_at"] if catalog else None,
-            "status": "verified" if catalog else "unknown", "items": items,
+            "status": "refreshing" if display_stale else "verified" if catalog else "unknown", "items": items,
             "supported_count": sum(v["can_open"] for v in items.values()),
             "observation_count": sum(not v["can_open"] for v in items.values())}
 

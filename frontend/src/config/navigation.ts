@@ -141,3 +141,13 @@ export const adminNavigation = [
   },
 ]
 export const adminPages = adminNavigation.flatMap((group) => group.items)
+
+export const publicPages: Record<string, string> = {
+  '/': '交易概览', '/trading': '交易概览', '/factors': 'AI 决策',
+  '/news': '市场情报', '/lab': '策略复盘', '/history': '交易记录', '/docs': '使用文档',
+}
+export function pageTitle(path: string) {
+  if (path === '/admin/login') return '登录控制台'
+  if (path.startsWith('/admin/')) return adminPages.find(p=>'/admin/'+p.id===path)?.label || '控制台'
+  return publicPages[path] || (path.startsWith('/docs/') ? '使用文档' : 'R20 Quantum')
+}

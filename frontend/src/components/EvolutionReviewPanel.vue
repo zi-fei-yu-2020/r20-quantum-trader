@@ -42,11 +42,11 @@ const label = computed(() => ({ success: '复盘已完成', no_new_evidence: '�
       <li v-for="(insight,i) in review.insights" :key="i">{{ insight }}</li>
     </ul>
     <p v-else class="text-sm" style="color:var(--text-muted)">暂无可展示的复盘结论，不推断策略处于最优状态。</p>
-    <details v-if="review?.recommendations?.length" class="min-w-0 text-sm">
+    <details v-if="review?.recommendations?.length" class="action-disclosure min-w-0 text-sm">
       <summary class="cursor-pointer min-h-11 flex items-center">改进建议（未自动执行）</summary>
       <ul class="space-y-2 list-disc pl-5" style="overflow-wrap:anywhere"><li v-for="(item,i) in review.recommendations" :key="i">{{ item }}</li></ul>
     </details>
-    <details v-if="review?.review_markdown" class="min-w-0 text-sm">
+    <details v-if="review?.review_markdown" class="action-disclosure min-w-0 text-sm">
       <summary class="cursor-pointer min-h-11 flex items-center">原始复盘报告（模型文本，不是执行记录）</summary>
       <pre class="max-h-80 overflow-y-auto whitespace-pre-wrap text-xs leading-relaxed" style="overflow-wrap:anywhere">{{ review.review_markdown }}</pre>
     </details>

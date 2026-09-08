@@ -1309,3 +1309,18 @@ body:has(dialog[open]) > .ui-toasts {
 .text-neutral-300 {
   color: var(--text-muted);
 }
+
+/* A disclosure is an action, not paragraph text. */
+.action-disclosure > summary {
+  list-style: none; display: flex; align-items: center; gap: .6rem;
+  min-height: 44px; padding: .7rem .9rem; border: 1px solid var(--border-medium);
+  border-radius: .6rem; background: var(--bg-card-subtle); color: var(--text-main);
+  font-weight: 600; cursor: pointer; transition: background-color .15s;
+}
+.action-disclosure > summary::-webkit-details-marker { display: none; }
+.action-disclosure > summary::before { content: '▸'; color: var(--color-brand); }
+.action-disclosure[open] > summary::before { content: '▾'; }
+.action-disclosure > summary::after { content: '查看详情'; margin-left: auto; white-space: nowrap; font-size: .75rem; color: var(--color-brand); }
+.action-disclosure[open] > summary::after { content: '收起'; }
+.action-disclosure > summary:hover { background: var(--bg-card-hover); }
+.action-disclosure > summary:focus-visible { outline: 2px solid var(--color-brand); outline-offset: 2px; }

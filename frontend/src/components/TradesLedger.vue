@@ -1,5 +1,7 @@
 <script setup lang="ts">
 import AppCard from './ui/AppCard.vue'
+import AppDialog from './ui/AppDialog.vue'
+import AppButton from './ui/AppButton.vue'
 import AppTable from './ui/AppTable.vue'
 import { isSettlementPending } from '../utils/tradeSettlement'
 import { feeAccounting, feeText, ledgerValue, ledgerNumberText, ledgerNumberColor } from '../utils/feeAccounting'
@@ -11,6 +13,9 @@ import { Receipt, Search } from 'lucide-vue-next'
 const store = useDashboardStore()
 const filter = ref<'all' | 'active' | 'closed'>('all')
 const keyword = ref('')
+const feeTrade = ref<any>(null)
+const feeDialogOpen = ref(false)
+function showFees(trade: any) { feeTrade.value = trade; feeDialogOpen.value = true }
 
 const trades = computed(() => {
   const all: any[] = store.data?.trades || []
@@ -237,7 +242,7 @@ function clean(v: any, fallback = '--'): string {
                 </span>
               </td>
               <td class="py-3 px-3 font-bold num-tabular" style="color: var(--text-main)">
-                {{ t.margin ? num(t.margin).toFixed(1) + ' U' : '--' }}
+                {{ t.margin ? num(t.margin).toFixed(2) + ' U' : '--' }}
               </td>
               <td class="py-3 px-3">
                 <span class="num-tabular" style="color: var(--text-main)">{{
@@ -273,18 +278,9 @@ function clean(v: any, fallback = '--'): string {
                   class="text-[10px] ml-1 num-tabular"
                   :style="{ color: ledgerNumberColor(getRoi(t)) }"
                 >
-                  ({{ ledgerNumberText(getRoi(t), 1, '%') }})
+                  ({{ ledgerNumberText(getRoi(t), 2, '%') }})
                 </span>
                 </template>
-                <details v-if="t.status === 'closed'" class="trade-ledger__fees text-left mt-1" data-fee-reconciliation>
-                  <summary class="cursor-pointer text-[10px]" style="color:var(--text-muted)">{{ feeAccounting(t).label }}</summary>
-                  <div class="text-[10px] leading-relaxed" style="color:var(--text-muted)">
-                    开仓手续费：{{ feeText(feeAccounting(t).opening) }}<br>
-                    平仓手续费：{{ feeText(feeAccounting(t).closing) }}<br>
-                    <span v-if="feeAccounting(t).verified">按本账户成交量及官方总手续费核对，负值为扣费、正值为返佣；不改写官方净盈亏。</span>
-                    <span v-else>成交证据尚不完整或不一致，不按比例猜测费用。</span>
-                  </div>
-                </details>
               </td>
               <td class="py-3 px-3 text-center num-tabular" style="color: var(--text-muted)">
                 {{ clean(t.hold_duration || t.duration, '--') }}
@@ -303,6 +299,7 @@ function clean(v: any, fallback = '--'): string {
                   {{ t.status === 'holding' ? '在途' : isSettlementPending(t) ? '已平·待结算' : '已平' }}
                 </span>
                 <span class="trade-ledger__reason" :title="t.attribution_note || t.exit_evidence || ''">{{ clean(t.exit_reason, '持仓中') }}</span>
+                <AppButton v-if="t.status === 'closed'" size="sm" class="ml-2" :aria-label="t.inst + '费用明细'" @click="showFees(t)">费用明细</AppButton>
               </td>
             </tr>
           </tbody>
@@ -323,6 +320,16 @@ function clean(v: any, fallback = '--'): string {
         <span class="hidden sm:inline">OKX 当前账户历史履历</span>
       </div>
     </AppCard>
+    <AppDialog v-model:open="feeDialogOpen" :title="(feeTrade?.inst || '') + ' 费用明细'" description="已结算交易的手续费证据；与订单操作无关。">
+      <div v-if="feeTrade" class="space-y-3 text-sm" data-fee-reconciliation>
+        <p class="font-semibold" style="color:var(--text-main)">{{ feeAccounting(feeTrade).label }}</p>
+        <dl class="grid grid-cols-2 gap-3"><dt>开仓手续费</dt><dd class="text-right break-all">{{ feeText(feeAccounting(feeTrade).opening) }}</dd>
+          <dt>平仓手续费</dt><dd class="text-right break-all">{{ feeText(feeAccounting(feeTrade).closing) }}</dd></dl>
+        <p v-if="feeAccounting(feeTrade).verified" style="color:var(--text-muted)">按本账户成交量及官方总手续费核对，负值为扣费、正值为返佣；不改写官方净盈亏。</p>
+        <p v-else style="color:var(--text-muted)">成交证据尚不完整或不一致，不按比例猜测费用。</p>
+      </div>
+      <template #footer><AppButton @click="feeDialogOpen=false">关闭</AppButton></template>
+    </AppDialog>
   </div>
 </template>
 

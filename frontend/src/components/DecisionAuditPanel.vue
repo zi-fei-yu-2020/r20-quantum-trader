@@ -30,7 +30,7 @@ const timestamp = computed(() => props.audit?.updated_at
     <p v-if="!rows.length" class="text-xs" style="color: var(--text-muted)">
       {{ cycle?.unavailable_reason || '尚未取得结构化审计，不能将旧版 WAIT 视为已通过审查。' }}
     </p>
-    <details v-if="planRows.length" class="min-w-0 text-xs" data-entry-plan-review>
+    <details v-if="planRows.length" class="action-disclosure min-w-0 text-xs" data-entry-plan-review>
       <summary class="cursor-pointer min-h-11 flex items-center" style="color:var(--text-main)">程序草案与模型选择（{{ cycle?.counts?.program_plans || 0 }} 个草案，不等于订单）</summary>
       <div class="grid grid-cols-1 xl:grid-cols-2 items-start gap-2 min-w-0 mt-2">
         <section v-for="item in planRows" :key="item.instId" class="min-w-0 border rounded-lg p-3 space-y-2" style="border-color:var(--border-subtle);overflow-wrap:anywhere">
@@ -46,7 +46,7 @@ const timestamp = computed(() => props.audit?.updated_at
       </div>
     </details>
     <div class="grid min-w-0 grid-cols-1 items-start gap-2 xl:grid-cols-2">
-      <details v-for="row in rows" :key="row.instId" :data-wait-audit-card="row.instId" class="min-w-0 self-start rounded-lg border p-2.5"
+      <details v-for="row in rows" :key="row.instId" :data-wait-audit-card="row.instId" class="action-disclosure min-w-0 self-start rounded-lg border p-2.5"
         style="border-color: var(--border-subtle); background: var(--bg-card-subtle)">
         <summary class="cursor-pointer text-xs leading-relaxed break-words" style="color: var(--text-main)">
           <strong>{{ row.instId.split('-')[0] }}</strong> · {{ auditLabel(row.status) }}
@@ -70,7 +70,7 @@ const timestamp = computed(() => props.audit?.updated_at
         </div>
       </details>
     </div>
-    <details v-if="cycle?.executed_actions?.length" class="text-xs min-w-0">
+    <details v-if="cycle?.executed_actions?.length" class="action-disclosure text-xs min-w-0">
       <summary class="cursor-pointer" style="color: var(--text-main)">本轮完整执行记录（{{ cycle.executed_actions.length }}）</summary>
       <ul class="mt-2 space-y-1 leading-relaxed break-words" style="color: var(--text-muted); overflow-wrap: anywhere">
         <li v-for="(action, index) in cycle.executed_actions" :key="index">{{ action }}</li>

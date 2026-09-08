@@ -110,6 +110,28 @@ def load_position_trackers():
         return {}
 
 
+def project_live_holding_rows(rows, positions, scope, captured_at):
+    """One response uses one account position snapshot for every holding view.
+
+    Do not rewrite settled history or persist estimates into the lifecycle ledger.
+    Missing/replaced positions remain settlement work, never guessed live PnL.
+    """
+    by_key = {(str(p.get('instId')), str(p.get('posSide') or p.get('side'))): p for p in positions}
+    result = []
+    for raw in rows:
+        row = dict(raw)
+        if row.get('status') == 'holding' and row.get('environment_id') in (None, '', scope):
+            side = {'多':'long','空':'short'}.get(row.get('side'),row.get('side'))
+            live = by_key.get((str(row.get('instId') or str(row.get('inst',''))+'-USDT-SWAP'),side))
+            if live and (not row.get('pos_id') or not live.get('posId') or str(row['pos_id'])==str(live['posId'])):
+                row.update(margin=live.get('margin_usdt'), pnl=live.get('upl'), net_pnl=live.get('upl'),
+                    gross_pnl=live.get('upl'), roi_pct=live.get('roi_pct'), roi=live.get('roi_pct'),
+                    close_px=live.get('markPx'), sz=live.get('pos_sz'), open_px=live.get('avgPx'),
+                    valuation_at=captured_at, valuation_source='shared_position_snapshot')
+        result.append(row)
+    return result
+
+
 def enrich_position_risk_fields(positions, trackers=None):
     """Add margin and stop-line fields even when OKX protection lookup is unavailable."""
     trackers = trackers if isinstance(trackers, dict) else load_position_trackers()
@@ -577,6 +599,7 @@ def _update_cache_cycle():
                 "posSide": pos_side,
                 "side": pos_side,
                 "pos": p.get("pos"),
+                "posId": p.get("posId"),
                 "pos_sz": pos_sz,
                 "notional_usdt": notional_usdt,
                 "margin_usdt": margin_usdt_val,
@@ -1445,6 +1468,8 @@ def monitoring_snapshot():
         }
     # Copy only envelopes; never mutate the cached snapshot while serving it.
     data = dict(cached)
+    data['trades'] = project_live_holding_rows(cached.get('trades') or [],
+        (cached.get('positions_summary') or {}).get('items') or [], environment.identity, cached.get('timestamp'))
     from scripts.instrument_pool import load_instruments
     from scripts.instrument_support import pool_support
     data["instrument_support"] = pool_support(load_instruments(), environment.mode)

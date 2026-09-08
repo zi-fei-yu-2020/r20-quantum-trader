@@ -8,9 +8,9 @@ const allowed = computed(() => canOpen(props.support))
 const checked = computed(() => props.support?.checked_at ? new Date(props.support.checked_at * 1000).toLocaleString() : '')
 </script>
 <template>
-  <div class="instrument-support-notice" :class="{ 'instrument-support-notice--blocked': !allowed }" :data-support-status="support?.status || 'unknown'">
+  <div class="instrument-support-notice" :class="{ 'instrument-support-notice--blocked': !allowed && support?.status !== 'refreshing' }" :data-support-status="support?.status || 'unknown'">
     <AppBadge :tone="supportTone(support)" dot>{{ support?.label || '支持状态待确认' }}</AppBadge>
-    <p v-if="!allowed" class="instrument-support-notice__message">{{ compact ? (support?.status === 'unknown' || !support ? '核验前暂停新开仓 · 公共行情仅供观察' : '仅供公共行情观察 · 不参与当前环境开仓或加仓') : (support?.message || '正在确认当前交易环境的合约支持情况，请稍后重试。') }}</p>
+    <p v-if="!allowed && support?.status !== 'refreshing'" class="instrument-support-notice__message">{{ compact ? (support?.status === 'unknown' || !support ? '核验前暂停新开仓 · 公共行情仅供观察' : '仅供公共行情观察 · 不参与当前环境开仓或加仓') : (support?.message || '正在确认当前交易环境的合约支持情况，请稍后重试。') }}</p>
     <p v-if="!compact && checked" class="instrument-support-notice__time">目录核验：{{ checked }}</p>
   </div>
 </template>

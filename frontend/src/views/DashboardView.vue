@@ -77,9 +77,9 @@ function setLayout(mode: 'dual' | 'stacked') {
             dot
             >{{
               store.error
-                ? '连接异常'
+                ? (hasAccount && !store.showConnectionNotice ? '后台重连中' : '连接异常')
                 : !hasAccount || store.isStale
-                  ? '等待有效数据'
+                  ? (hasAccount && !store.showConnectionNotice ? '后台更新中' : '数据更新延迟')
                   : '数据已更新'
             }}</AppBadge
           ><button
@@ -113,7 +113,7 @@ function setLayout(mode: 'dual' | 'stacked') {
             </button></div></template
       ></PageHeader>
       <div
-        v-if="store.error || !hasAccount || store.isStale"
+        v-if="store.showConnectionNotice && (store.error || !hasAccount || store.isStale)"
         class="connection-notice"
         role="status"
       >

@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import AppCard from './ui/AppCard.vue'
+import { readableLog } from '../utils/logText'
 
 import { useDashboardStore } from '../stores/dashboard'
 import { Terminal } from 'lucide-vue-next'
@@ -35,7 +36,7 @@ const store = useDashboardStore()
         class="[overflow-wrap:anywhere] border-l-2 pl-2 py-0.5 leading-relaxed transition-colors hover:bg-[var(--bg-card-hover)]"
         style="border-color: var(--border-medium); color: var(--text-muted)"
       >
-        {{ log }}
+        {{ readableLog(log) }}
       </div>
       <div v-if="store.logs.length === 0" class="text-center py-4" style="color: var(--text-faint)">
         暂无巡检日志

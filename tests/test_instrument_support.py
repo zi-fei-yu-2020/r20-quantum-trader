@@ -75,6 +75,18 @@ class InstrumentSupportTests(unittest.TestCase):
         read.assert_not_called(); background.assert_called_once_with('demo')
         self.assertEqual(result['status'], 'unknown')
 
+    def test_display_grace_does_not_grant_opening_authority(self):
+        with patch.object(support.market,'get_json',return_value=CATALOG):support.pool_support(POOL,'demo',refresh=True)
+        path=support._path('demo');snapshot=json.loads(path.read_text());snapshot['checked_at']-=90;path.write_text(json.dumps(snapshot))
+        with patch.object(support,'_background') as background:
+            display=support.pool_support(POOL,'demo')
+        self.assertEqual(display['items']['BTC-USDT-SWAP']['status'],'refreshing')
+        self.assertFalse(display['items']['BTC-USDT-SWAP']['can_open'])
+        self.assertEqual(display['checked_at'],snapshot['checked_at'])
+        background.assert_called_once()
+        with patch.object(support.market,'get_json',side_effect=TimeoutError()):
+            self.assertEqual(support.opening_status('BTC-USDT-SWAP','demo')['status'],'unknown')
+
     def test_new_pool_item_uses_existing_catalog_not_old_pool_snapshot(self):
         with patch.object(support.market, 'get_json', return_value=CATALOG):
             support.pool_support(POOL[:1], 'demo', refresh=True)

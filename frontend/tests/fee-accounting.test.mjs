@@ -51,15 +51,15 @@ async function render(row){
 }
 test('actual ledger SFC exposes verified opening and closing fee amounts', async()=>{
   const html=await render({...verified,net_pnl:0,roi_pct:0})
-  assert.ok(html.includes('成交费用已核对'))
-  assert.ok(html.includes('-0.00786281 USDT'))
-  assert.ok(html.includes('-0.00785893 USDT'))
+  assert.ok(html.includes('费用明细'))
+  assert.ok(!html.includes('-0.00786281 USDT'))
+  assert.ok(source.includes('showFees(t)'))
   assert.ok(html.includes('+0.00 U'))
-  assert.ok(html.includes('data-fee-reconciliation'))
+  assert.ok(source.includes('v-model:open="feeDialogOpen"'))
 })
 test('unverified and pending entries never fabricate fee allocation or financial zero', async()=>{
   const html=await render({...verified,fee_allocation:'unknown',net_pnl:null,pnl:10,roi_pct:null})
-  assert.ok(html.includes('费用分摊待核对'))
+  assert.ok(html.includes('费用明细'))
   assert.ok(!html.includes('-0.00786281 USDT'))
   assert.ok(!html.includes('+10.00 U'));assert.ok(!html.includes('+0.00 U'))
   const pending=await render({...verified,status:'closed_pending',net_pnl:10})

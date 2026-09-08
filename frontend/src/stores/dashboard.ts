@@ -16,6 +16,10 @@ export const useDashboardStore = defineStore('dashboard', () => {
   const isConnected = ref<boolean>(true)
   const pollingTimer = ref<any>(null)
   const showAboutModal = ref<boolean>(false)
+  const degradedSince = ref<number | null>(null)
+  const statusCheckedAt = ref(Date.now())
+  const showConnectionNotice = computed(() => !data.value?.account || data.value.account.total_eq == null ||
+    (degradedSince.value !== null && statusCheckedAt.value-degradedSince.value >= 90000))
 
   // Getters
   const account = computed(() => data.value?.account || null)
@@ -86,8 +90,11 @@ export const useDashboardStore = defineStore('dashboard', () => {
   }
 
   async function refreshDashboard() {
+    const controller = new AbortController()
+    const timeout = setTimeout(() => controller.abort(), 8000)
     try {
       const resp = await fetch(`/api/all?_t=${Date.now()}`, {
+        signal: controller.signal,
         headers: {
           'Accept': 'application/json',
         },
@@ -100,11 +107,17 @@ export const useDashboardStore = defineStore('dashboard', () => {
       lastUpdated.value = new Date()
       isConnected.value = true
       error.value = null
+      statusCheckedAt.value = Date.now()
+      if (['STALE','OFFLINE'].includes(json.data_health?.status || '')) degradedSince.value ??= statusCheckedAt.value
+      else degradedSince.value = null
     } catch (err: any) {
       console.error('[DashboardStore] fetch failed:', err)
       error.value = err.message || '获取数据失败'
       isConnected.value = false
+      statusCheckedAt.value = Date.now()
+      degradedSince.value ??= statusCheckedAt.value
     } finally {
+      clearTimeout(timeout)
       loading.value = false
     }
   }
@@ -149,6 +162,7 @@ export const useDashboardStore = defineStore('dashboard', () => {
     logs,
     isStale,
     showAboutModal,
+    showConnectionNotice,
     fetchDashboard,
     startPolling,
     stopPolling,
