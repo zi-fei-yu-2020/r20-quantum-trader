@@ -145,8 +145,9 @@ class GatewayScheduler:
             result = subprocess.run(
                 command,
                 cwd=ROOT,
-                text=True,
+                text=True, encoding="utf-8", errors="strict",
                 capture_output=True,
+                env={**__import__("os").environ,"PYTHONUTF8":"1","PYTHONIOENCODING":"utf-8"},
                 timeout=spec.timeout_seconds,
             )
             detail = (result.stderr if result.returncode else result.stdout)[-2000:]
