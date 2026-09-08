@@ -164,6 +164,44 @@ class TradingOutputTests(unittest.TestCase):
             result=self.validate(response(d))['decisions']['BTC-USDT-SWAP']
             self.assertEqual(result['action'],'WAIT');self.assertFalse(result['contract_valid'])
 
+    def test_unverified_smart_money_neutral_defaults_cannot_be_cited(self):
+        for validity in (None, False, 1, "true"):
+            with self.subTest(validity=validity):
+                p=package();p['smart_money']={'weighted_long_pct':50.,'net_flow_usdt':'0 U'}
+                if validity is not None:p['smart_money']['valid']=validity
+                bundle=contract.compose({'id':'test'}, {}, [p])
+                facts=json.JSONDecoder().raw_decode(bundle.user)[0]['facts'][p['instId']]
+                self.assertFalse(any(k.startswith('/smart_money/') for k in facts))
+                for path,value in [('/smart_money/weighted_long_pct',50.),('/smart_money/net_flow_usdt','0 U')]:
+                    d=candidate();d['supporting_evidence']=[ref('/price',100),ref(path,value)]
+                    checked=contract.validate_response(response(d),[p])['decisions'][p['instId']]
+                    self.assertEqual(checked['action'],'WAIT')
+                    self.assertFalse(checked['contract_valid'])
+
+    def test_verified_smart_money_zero_and_neutral_observations_remain_facts(self):
+        p=package();p['smart_money']={'valid':True,'weighted_long_pct':50.,'net_flow_usdt':'0 U',
+            'avg_long_entry':'99.125','avg_short_entry':'101.25'}
+        bundle=contract.compose({'id':'test'}, {}, [p])
+        facts=json.JSONDecoder().raw_decode(bundle.user)[0]['facts'][p['instId']]
+        for key,value in [('weighted_long_pct',50.),('net_flow_usdt','0 U'),('avg_long_entry',99.125),('avg_short_entry',101.25)]:
+            with self.subTest(key=key):
+                path='/smart_money/'+key
+                self.assertEqual(facts[path],{'value':value,'group':'flow'})
+                d=candidate();d['supporting_evidence']=[ref('/price',100),ref(path,value)]
+                checked=contract.validate_response(response(d),[p])['decisions'][p['instId']]
+                self.assertEqual(checked['action'],'BUY_LONG')
+                self.assertTrue(checked['contract_valid'])
+
+    def test_partial_smart_money_only_exposes_observed_fields(self):
+        p=package();p['smart_money']={'valid':True,'weighted_long_pct':'UNKNOWN','net_flow_usdt':'0 U',
+            'avg_long_entry':None,'avg_short_entry':'--'}
+        facts=contract.facts_for(p)
+        self.assertEqual({k:v for k,v in facts.items() if k.startswith('/smart_money/')},
+            {'/smart_money/net_flow_usdt':{'value':'0 U','group':'flow'}})
+        d=candidate();d['supporting_evidence']=[ref('/price',100),ref('/smart_money/weighted_long_pct',50)]
+        checked=contract.validate_response(response(d),[p])['decisions'][p['instId']]
+        self.assertEqual(checked['action'],'WAIT')
+
     def test_observed_counter_evidence_needs_an_explanation_not_fake_agreement(self):
         d=candidate();d['counter_evidence_status']='observed';d['counter_evidence']=[ref('/adx_1h',25)]
         self.assertEqual(self.validate(response(d))['decisions']['BTC-USDT-SWAP']['action'],'WAIT')

@@ -157,6 +157,41 @@ def get_user_prompt_override() -> str:
     return ''
 
 
+def normalize_smart_money(item=None) -> Dict[str, Any]:
+    """Keep observed fields only; missing/malformed data is not neutral flow."""
+    result = {"valid": False, **dict.fromkeys((
+        "weighted_long_pct", "net_flow_usdt", "avg_long_entry",
+        "avg_short_entry", "top_win_rate"), "UNKNOWN")}
+    if not isinstance(item, dict) or item.get("valid", True) is not True:
+        return result
+    fields = (
+        ("longShortRatio", "weightedLongRatio", "weighted_long_pct"),
+        ("notional", "netNotionalUsdt", "net_flow_usdt"),
+        ("notional", "smartMoneyLongAvgEntry", "avg_long_entry"),
+        ("notional", "smartMoneyShortAvgEntry", "avg_short_entry"),
+        ("winRate", "avgLongWinRate", "top_win_rate"),
+    )
+    for section, source, target in fields:
+        data = item.get(section)
+        if not isinstance(data, dict) or data.get("valid", True) is not True:
+            continue
+        try:
+            value = trading_prompt.numeric(data.get(source))
+        except trading_prompt.ContractError:
+            continue
+        if target in ("weighted_long_pct", "top_win_rate"):
+            if not 0 <= value <= 1:
+                continue
+            value = round(value * 100, 1)
+            result[target] = value if target == "weighted_long_pct" else f"多胜率{value}%"
+        elif target == "net_flow_usdt":
+            result[target] = f"{round(value / 1e4, 1)}万 U" if abs(value) >= 1e4 else f"{round(value, 0)} U"
+        elif value > 0:
+            result[target] = str(data[source])
+    result["valid"] = any(value != "UNKNOWN" for key, value in result.items() if key != "valid")
+    return result
+
+
 def fetch_single_instrument_package(item: Dict[str, Any]) -> Dict[str, Any]:
     inst_id = item["instId"]
     name = item["name"]
@@ -185,13 +220,7 @@ def fetch_single_instrument_package(item: Dict[str, Any]) -> Dict[str, Any]:
         "vol_ratio": 1.0,
         "obv_flow": "NEUTRAL",
         "adx_1h": 0.0,
-        "smart_money": {
-            "weighted_long_pct": 50.0,
-            "net_flow_usdt": "0 U",
-            "avg_long_entry": "--",
-            "avg_short_entry": "--",
-            "top_win_rate": "--"
-        },
+        "smart_money": normalize_smart_money(),
         "entry_candles": {},
         "recent_15m": [],
         "recent_1h": [],
@@ -412,7 +441,9 @@ def construct_full_market_prompt(packages: List[Dict[str, Any]], pos_summary: st
         k4h = p.get("recent_4h", [])
         quality = p.get("data_quality", "invalid")
 
-        sm = p.get("smart_money", {})
+        sm = p.get("smart_money") or {}
+        if not isinstance(sm, dict) or sm.get("valid") is not True:
+            sm = normalize_smart_money()
         adx_val = p.get("adx_1h", "--")
         calc = p.get("calculus", {})
         calc_tfs = calc.get("timeframes", {}) if isinstance(calc, dict) else {}
@@ -640,30 +671,14 @@ def execute_batch_ai_brain_cycle(pos_summary: str = "当前总持仓 0/6", activ
         package["environment_support"] = availability["items"][package["instId"]]
 
     # Fetch OKX Smart Money Signals
+    for p in packages:
+        p["smart_money"] = normalize_smart_money()
     try:
         sm_data = market.smart_money_overview([p["name"] for p in packages])
-        sm_dict = {item.get("ccy"): item for item in sm_data if item.get("ccy")}
+        sm_dict = {item.get("ccy"): item for item in sm_data
+                   if isinstance(item, dict) and item.get("ccy")}
         for p in packages:
-            ccy = p["name"]
-            if ccy in sm_dict:
-                item = sm_dict[ccy]
-                ls = item.get("longShortRatio", {})
-                notional = item.get("notional", {})
-                win = item.get("winRate", {})
-                w_long = round(float(ls.get("weightedLongRatio", 0.5)) * 100, 1)
-                net_usdt = float(notional.get("netNotionalUsdt", 0) or 0)
-                net_flow_str = f"{round(net_usdt / 1e4, 1)}万 U" if abs(net_usdt) >= 1e4 else f"{round(net_usdt, 0)} U"
-                long_cost = notional.get("smartMoneyLongAvgEntry") or "--"
-                short_cost = notional.get("smartMoneyShortAvgEntry") or "--"
-                top_win = f"多胜率{round(float(win.get('avgLongWinRate', 0))*100, 1)}%" if win.get('avgLongWinRate') else "--"
-
-                p["smart_money"] = {
-                    "weighted_long_pct": w_long,
-                    "net_flow_usdt": net_flow_str,
-                    "avg_long_entry": str(long_cost)[:10],
-                    "avg_short_entry": str(short_cost)[:10],
-                    "top_win_rate": top_win
-                }
+            p["smart_money"] = normalize_smart_money(sm_dict.get(p["name"]))
     except Exception as e:
         print(f"[AI Brain Batch] SmartMoney fetch warning: {e}")
 
@@ -765,6 +780,7 @@ def execute_batch_ai_brain_cycle(pos_summary: str = "当前总持仓 0/6", activ
     try:
         t0 = time.time()
         raw_res = None
+        content = None  # Council returns structured output, not single-model text.
         brain_output = None
 
         # Transparent check: is Multi-Agent Council enabled?
@@ -836,6 +852,7 @@ def execute_batch_ai_brain_cycle(pos_summary: str = "当前总持仓 0/6", activ
             positions=active_positions_detail, pending=pending_orders_list,
             allow_open=prompt_bundle.allow_open and not brain_output.get('prompt_conflicts'),
             previous_wait_reviews=prompt_bundle.previous_wait_reviews, risk_contract=prompt_bundle.risk_contract)
+        output_chars = len(content) if content is not None else len(trading_prompt.canonical(original_brain_output))
         atomic_write_json(os.path.join(DATA_DIR, 'trading_output_validation.json'), brain_output['validation'])
         decisions_dict = brain_output.get("decisions", {})
         pos_mgmt_list = brain_output.get("position_management", [])
@@ -1067,7 +1084,7 @@ def execute_batch_ai_brain_cycle(pos_summary: str = "当前总持仓 0/6", activ
         atomic_write_json(AI_DECISION_HISTORY_FILE, history_list)
 
         latency = round(time.time() - t0, 2)
-        telemetry.finish("success", raw_res, output_chars=len(content))
+        telemetry.finish("success", raw_res, output_chars=output_chars)
         print(f"[AI Brain Batch] ✅ {len(packages)} 标的全景决策完成 (耗时 {latency}s, 宏观基调: {macro_summary})")
         return standard_cache
 

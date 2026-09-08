@@ -212,7 +212,8 @@ def facts_for(package,position=None):
             for subsection,keys in [('definite_integrals',('energy_integral','deviation_area_integral','volume_action_integral')),('probability_theory',('continuation_prob_pct','breakdown_prob_pct','var_95_pct','cvar_95_pct','skewness','kurtosis'))]:
                 for key in keys:add('/calculus/timeframes/'+tf+'/'+subsection+'/'+key,(data.get(subsection) or {}).get(key),'risk' if subsection=='probability_theory' else 'momentum')
     smart=package.get('smart_money') or {}
-    if smart.get('valid',True):
+    # Only this cycle's explicitly verified observations may be cited.
+    if isinstance(smart,dict) and smart.get('valid') is True:
         for key in ('weighted_long_pct','net_flow_usdt','avg_long_entry','avg_short_entry'):add('/smart_money/'+key,smart.get(key),'flow')
     for key in ('avgPx','markPx','pos','size','upl','uplRatio','trailingStopPx'):
         add('/position/'+key,(position or {}).get(key),'position')
