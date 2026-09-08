@@ -13,7 +13,7 @@ test('single-column terminal grids have zero minimum tracks, not implicit min-co
 test('trade history remains a complete keyboard-scrollable table, with an explicit phone hint',()=>{
  assert.match(ledger,/<AppTable\s+label="交易记录明细"[^>]*aria-describedby="trade-ledger-scroll-hint"/)
  assert.match(ledger,/id="trade-ledger-scroll-hint"/)
- assert.equal((ledger.match(/<th\s/g)||[]).length,8)
+ assert.equal((ledger.match(/<th\s/g)||[]).length,9)
  assert.match(appTable,/role="region"/)
  assert.match(appTable,/tabindex="0"/)
  assert.match(css,/\.table-scroll-container:focus-visible\s*\{[^}]*outline-offset:\s*-3px/)

@@ -54,12 +54,13 @@ def public_status(data_dir=None):
         'review_change_status': report.get('proposed_change_status') or report.get('change_status'),
         'memory_preserved': report.get('memory_preserved', True),
         'sample_size': report.get('total_trades'),
+        'evidence_feedback': report.get('evidence_feedback') if report.get('account_scope') == scope else None,
         'win_rate': report.get('win_rate'),
         'insights': report.get('insights') or [],
         # Legacy actions_taken are recommendations, not proof of executed changes.
         'recommendations': report.get('recommendations') or report.get('actions_taken') or [],
         'pending_candidates': published.get('pending_count',0) if published.get('managed') else sum(c.get('audit_passed') is True and c.get('status') != 'approved' for c in candidates),
         'rejected_candidates': published.get('rejected_count',0) if published.get('managed') else sum(c.get('audit_passed') is False for c in candidates),
-        'review_markdown': '' if scope_mismatch else text('self_improvement_review.md'),
+        'review_markdown': '' if scope_mismatch else report['review_markdown'] if isinstance(report.get('review_markdown'), str) else text('self_improvement_review.md'),
         'message': '复盘结果与运行记忆分开保存；NO_CHANGE 或候选未审核通过时，运行记忆日期不推进。',
     }

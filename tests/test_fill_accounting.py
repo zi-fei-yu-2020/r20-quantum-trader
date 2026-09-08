@@ -101,6 +101,16 @@ class FeeReconciliationTests(unittest.TestCase):
                 self.assertEqual(accounting.read_archive('mine',path).status,'capacity_exceeded')
             before=path.read_bytes();accounting.read_archive('none',path);self.assertEqual(path.read_bytes(),before)
 
+    def test_tampered_archived_payload_cannot_verify_fees(self):
+        with tempfile.TemporaryDirectory() as td:
+            path=Path(td)/'e.db'
+            with patch.object(evidence,'DB_PATH',path):
+                for row in fills():evidence.append('mine','fill',row)
+            with sqlite3.connect(path) as db:db.execute("UPDATE events SET digest='bad'")
+            result=accounting.read_archive('mine',path)
+            self.assertEqual(result.status,'invalid_digest')
+            self.assertIsNone(accounting.reconcile(history(),result)['open_fee'])
+
     def test_missing_archive_and_malformed_receipt_preserve_unknown(self):
         self.assertIsNone(accounting.reconcile(history(),accounting.FillArchive('missing',{}))['open_fee'])
         for changes in ({'closeTotalPos':None},{'fee':None},{'uTime':'999'},{'cTime':'1000.2'}):

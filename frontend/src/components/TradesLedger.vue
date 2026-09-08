@@ -4,6 +4,7 @@ import AppDialog from './ui/AppDialog.vue'
 import AppButton from './ui/AppButton.vue'
 import AppTable from './ui/AppTable.vue'
 import { isSettlementPending } from '../utils/tradeSettlement'
+import { observedNumber } from '../utils/observationDisplay'
 import { feeAccounting, feeText, ledgerValue, ledgerNumberText, ledgerNumberColor } from '../utils/feeAccounting'
 
 import { ref, computed } from 'vue'
@@ -40,8 +41,9 @@ const closedCount = computed(
   () => (store.data?.trades || []).filter((t: any) => t.status !== 'holding').length,
 )
 
-function num(v: any): number {
-  return Number(v) || 0
+function marginText(value: unknown): string {
+  const n = observedNumber(value)
+  return n === null ? '--' : n.toFixed(2) + ' U'
 }
 
 function getPnl(t: any): number | null {
@@ -53,9 +55,8 @@ function getRoi(t: any): number | null {
 }
 
 function formatPx(v: any): string {
-  if (v == null || v === '') return '--'
-  const n = Number(v)
-  if (isNaN(n)) return String(v)
+  const n = observedNumber(v)
+  if (n === null) return '--'
   return n >= 100 ? n.toFixed(2) : n >= 1 ? n.toFixed(4) : n.toFixed(6)
 }
 
@@ -90,7 +91,7 @@ function clean(v: any, fallback = '--'): string {
             完整成交台账与生命周期履历
           </h2>
           <p class="text-xs font-mono mt-0.5" style="color: var(--text-muted)">
-            真实撮合成交记录，已扣除交易所手续费与资金费率净额
+            以交易所已结算净额为准；缺失金额保留未知，费用可单独核对
           </p>
         </div>
       </div>
@@ -205,6 +206,7 @@ function clean(v: any, fallback = '--'): string {
               <th class="py-3 px-3 text-right font-bold">净盈亏 / ROI</th>
               <th class="py-3 px-3 text-center font-bold">时长</th>
               <th class="py-3 px-4 font-bold">状态 / 平仓原因</th>
+              <th scope="col" class="trade-ledger__fee-column py-3 px-3 text-center font-bold">费用明细</th>
             </tr>
           </thead>
           <tbody>
@@ -242,7 +244,7 @@ function clean(v: any, fallback = '--'): string {
                 </span>
               </td>
               <td class="py-3 px-3 font-bold num-tabular" style="color: var(--text-main)">
-                {{ t.margin ? num(t.margin).toFixed(2) + ' U' : '--' }}
+                {{ marginText(t.margin) }}
               </td>
               <td class="py-3 px-3">
                 <span class="num-tabular" style="color: var(--text-main)">{{
@@ -299,7 +301,13 @@ function clean(v: any, fallback = '--'): string {
                   {{ t.status === 'holding' ? '在途' : isSettlementPending(t) ? '已平·待结算' : '已平' }}
                 </span>
                 <span class="trade-ledger__reason" :title="t.attribution_note || t.exit_evidence || ''">{{ clean(t.exit_reason, '持仓中') }}</span>
-                <AppButton v-if="t.status === 'closed'" size="sm" class="ml-2" :aria-label="t.inst + '费用明细'" @click="showFees(t)">费用明细</AppButton>
+              </td>
+              <td class="trade-ledger__fee-column py-2 px-3 text-center align-middle">
+                <AppButton v-if="t.status === 'closed'" variant="ghost" size="sm" class="trade-ledger__fee-button" :aria-label="t.inst + '费用明细'" aria-haspopup="dialog" @click="showFees(t)">
+                  <Receipt class="size-3.5 shrink-0" aria-hidden="true" />
+                  <span>费用明细</span>
+                </AppButton>
+                <span v-else class="text-xs" style="color: var(--text-faint)" aria-label="平仓后可查看费用明细">—</span>
               </td>
             </tr>
           </tbody>
@@ -334,7 +342,9 @@ function clean(v: any, fallback = '--'): string {
 </template>
 
 <style scoped>
-.trade-ledger__fees { max-width: 16rem; white-space: normal; overflow-wrap: anywhere; }
+.trade-ledger__fee-column { width: 7.5rem; white-space: nowrap; }
+.trade-ledger__fee-button { min-height: 2.75rem; margin-inline: auto; gap: 0.375rem; color: var(--text-muted); border-color: var(--border-subtle); background: var(--bg-card-subtle); font-family: inherit; font-weight: 500; }
+.trade-ledger__fee-button:hover { color: var(--text-main); border-color: var(--border-medium); background: var(--bg-card-hover); }
 .trade-ledger__strategy { display: inline-block; max-width: 15rem; white-space: normal; overflow-wrap: anywhere; }
 .trade-ledger__reason { display: inline-block; max-width: 22rem; white-space: normal; overflow-wrap: anywhere; vertical-align: middle; }
 </style>

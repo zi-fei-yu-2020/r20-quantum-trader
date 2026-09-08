@@ -8,6 +8,7 @@ from collections import defaultdict
 from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation
 import json
+import hashlib
 import math
 from pathlib import Path
 import sqlite3
@@ -60,14 +61,16 @@ def read_archive(scope, path=None):
     try:
         db = sqlite3.connect(path.resolve().as_uri()+"?mode=ro", uri=True, timeout=2)
         try:
-            rows = db.execute("SELECT payload FROM events WHERE scope=? AND kind='fill' LIMIT ?",
+            rows = db.execute("SELECT payload,digest FROM events WHERE scope=? AND kind='fill' LIMIT ?",
                               (scope, MAX_ARCHIVED_FILLS+1)).fetchall()
         finally:
             db.close()
         if len(rows) > MAX_ARCHIVED_FILLS:
             return FillArchive("capacity_exceeded", {})
         grouped = defaultdict(list)
-        for raw, in rows:
+        for raw, digest in rows:
+            if not isinstance(raw, str) or hashlib.sha256(raw.encode()).hexdigest() != digest:
+                return FillArchive("invalid_digest", {})
             row = json.loads(raw)
             if not isinstance(row, dict) or not isinstance(row.get("instId"), str):
                 return FillArchive("invalid", {})

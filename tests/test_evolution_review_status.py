@@ -68,6 +68,32 @@ class EvolutionReviewTests(unittest.TestCase):
         self.assertEqual(row['net_pnl'], -2)
         self.assertEqual(row['trade_id'], 't1')
 
+    def test_corrupt_source_retains_previous_report_and_marks_failed(self):
+        old={'timestamp':'2026-09-06 20:00:05','total_trades':8}
+        self.write('self_improvement_report.json',old)
+        with patch.object(engine,'load_closed_trades',side_effect=ValueError('corrupt')), patch.object(engine,'call_llm_evolution_review') as model:
+            with self.assertRaises(RuntimeError):engine.run_self_evolution()
+            model.assert_not_called()
+        self.assertEqual(json.loads((self.root/'self_improvement_report.json').read_text()),old)
+        self.assertEqual(public_status(self.root)['status'],'failed')
+
+    def test_feedback_is_computed_from_rows_not_model_claims_and_survives_no_change(self):
+        rows=[{'trade_id':'a','net_pnl':1,'gross_pnl':2,'fee':-.1,'time':'2026-09-08 10:00:00'}]
+        answer={'change_status':'NO_CHANGE','evidence_feedback':{'fee_cost':999}}
+        with patch.object(engine,'load_closed_trades',return_value=rows), patch.object(engine,'call_llm_evolution_review',return_value=answer) as model:
+            first=engine.run_self_evolution();second=engine.run_self_evolution()
+        self.assertEqual(model.call_count,1)
+        self.assertEqual(first,second)
+        self.assertEqual(first['evidence_feedback']['fee_cost'],.1)
+        self.assertIsNone(first['profit_factor'])
+        self.assertEqual(public_status(self.root)['evidence_feedback']['settled_samples'],1)
+
+    def test_embedded_review_markdown_wins_over_stale_derived_file(self):
+        from scripts.memory_registry import scope_of
+        self.write('self_improvement_report.json',{'account_scope':scope_of(),'timestamp':'2026-09-08 20:00:00','review_markdown':'CURRENT REPORT'})
+        (self.root/'self_improvement_review.md').write_text('STALE REPORT')
+        self.assertEqual(public_status(self.root)['review_markdown'],'CURRENT REPORT')
+
     def test_latest_failed_job_does_not_hide_previous_successful_report(self):
         self.write('self_improvement_report.json', {'timestamp': '2026-09-06 20:00:05', 'total_trades': 8})
         with sqlite3.connect(self.root / 'r20_gateway.db') as db:

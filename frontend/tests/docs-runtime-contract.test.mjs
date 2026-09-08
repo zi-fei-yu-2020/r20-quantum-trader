@@ -79,7 +79,7 @@ test('evolution is configurable daily review-only, never a six-hour memory promo
   }
   includesAll(section('self_evolution'), [
     'NO_CHANGE', '立即复盘', '显式人工修改', 'self_improvement_review.md',
-    'memory_candidates.json', '待证据审核或被拒绝', 'data/AI_TRADING_MEMORY.md', '权重或风险参数',
+    'data/memory_registry.db', '待证据审核或被拒绝', '旧 Markdown/JSON', '权重或风险参数',
     '复盘成功不代表策略已改善或已应用', 'demo 样本不等于 live 结果',
   ])
   includesAll(section('prompt_studio'), ['注入当前运行记忆', '新复盘候选不会自动进入该插槽'])

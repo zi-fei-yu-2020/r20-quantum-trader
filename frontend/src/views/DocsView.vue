@@ -354,7 +354,7 @@ onUnmounted(() => {
               </div>
               <p class="text-xs leading-relaxed" style="color: var(--text-muted)">
                 自进化按配置时间调度，默认每日北京时间 20:00，基于当前账户已平仓台账生成 review-only 复盘与候选。
-                候选不自动推广，也不覆盖现有运行记忆 <code>AI_TRADING_MEMORY.md</code>、权重或风险参数。
+                候选不自动推广，也不覆盖现有运行记忆；纳管后统一读取 <code>data/memory_registry.db</code> 的已发布版本，不自动修改权重或风险参数。
               </p>
             </div>
           </div>
@@ -943,13 +943,16 @@ onUnmounted(() => {
             </div>
             <div>
               •
-              <strong style="color: var(--text-main)">实战心法 CRUD 面板</strong
-              >：管理员可在线添加、删除运行心法；这是显式人工修改，不是复盘候选自动推广，也不能覆盖风控；
+              <strong style="color: var(--text-main)">版本化候选审核面板</strong
+              >：超级管理员先提交新增、修订或停用候选，核验成交证据、说明理由并确认后发布。显式人工修改也必须走审核发布，不支持直接覆盖运行文件；
             </div>
             <div>
               • <strong style="color: var(--text-main)">报告、候选与运行记忆分离</strong>：复盘报告写入
-              <code>self_improvement_review.md</code>，候选写入 <code>memory_candidates.json</code>，
-              待证据审核或被拒绝，不自动推广，不自动覆盖现有运行记忆 <code>data/AI_TRADING_MEMORY.md</code>、权重或风险参数。
+              <code>self_improvement_review.md</code>，候选、发布历史与当前有效版本统一保存于 <code>data/memory_registry.db</code>。
+              候选待证据审核或被拒绝，不自动推广，不自动覆盖现有运行记忆、权重或风险参数。旧 Markdown/JSON 仅作为兼容迁移来源，纳管后不再作为生效入口。
+            </div>
+            <div>
+              • <strong style="color: var(--text-main)">自动证据反馈</strong>：剔除未结算、未知盈亏、账户不匹配或重复样本；只通过真实成交与原始决策精确关联开仓快照，按实际记忆、代码与执行预设追踪费用后结果。未关联不等于零值，分组盈亏不等于策略因果优势。进一步自动推广需要独立前向对照、灰度和回退验证，目前不自动启用。
             </div>
           </div>
 

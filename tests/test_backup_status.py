@@ -146,13 +146,13 @@ class BackupStatusTests(unittest.TestCase):
             self.config()
         self.assertEqual(error.exception.status_code, 404)
 
-    def test_memory_header_has_no_periodic_overwrite_promise(self):
-        self.ns["_save_memory_items"](["  人工采用心法  ", "", "第二条"])
-        text = self.ns["MEMORY_FILE"].read_text(encoding="utf-8")
-        self.assertNotIn("每 6 小时", text)
-        self.assertIn("经审核后采用", text)
-        self.assertIn("不会按固定周期自动覆盖", text)
-        self.assertTrue(text.endswith("- 人工采用心法\n- 第二条\n"))
+    def test_legacy_memory_writer_cannot_bypass_reviewed_publication(self):
+        path = self.ns["MEMORY_FILE"]
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("保留当前实际模型记忆", encoding="utf-8")
+        with self.assertRaisesRegex(ValueError, "候选审核发布"):
+            self.ns["_save_memory_items"](["  人工采用心法  ", "", "第二条"])
+        self.assertEqual(path.read_text(encoding="utf-8"), "保留当前实际模型记忆")
 
 
 class RestoreAPIGuardTests(unittest.TestCase):

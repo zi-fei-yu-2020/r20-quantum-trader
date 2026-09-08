@@ -45,6 +45,22 @@ def validate_dataset(dataset):
         raise ValueError('Need aligned candles plus baseline and at least one recorded variant')
     if len({v['id'] for v in variants})!=len(variants):raise ValueError('Duplicate variant identity')
     if dataset.get('baseline') not in {v['id'] for v in variants}:raise ValueError('Baseline missing')
+    # Validate the full clock before slicing. Otherwise a longer asset history or
+    # malformed training prefix can silently disappear when n=min(lengths).
+    width = bar_seconds(dataset.get('bar', '1H')) * 1000
+    clocks = []
+    for inst, rows in series.items():
+        if not isinstance(rows, list) or not rows or any(not isinstance(r, dict) for r in rows):
+            raise ValueError('Research candle series must be nonempty lists')
+        times = [r.get('timestamp') for r in rows]
+        if any(not isinstance(t, str) or not t for t in times) or len(set(times)) != len(times):
+            raise ValueError('Research candle identities must be unique')
+        stamps = [number(r.get('ts_ms'), positive=True) for r in rows]
+        if any(b-a != width for a,b in zip(stamps, stamps[1:])):
+            raise ValueError('Research clock must be ordered and gap-free')
+        clocks.append((times, stamps))
+    if any(clock != clocks[0] for clock in clocks[1:]):
+        raise ValueError('All research instruments must use the complete same clock')
     by_inst={inst:{r['timestamp']:r for r in rows} for inst,rows in series.items()}
     for variant in variants:
         if set(variant.get('features',[]))-FEATURES:raise ValueError('Unknown feature flag')

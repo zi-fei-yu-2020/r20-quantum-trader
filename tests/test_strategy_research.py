@@ -39,6 +39,16 @@ class StrategyResearchTests(unittest.TestCase):
         for c in d['candles']['TEST']:c['source']='test_fixture'
         self.assertEqual(research_lab.evaluate(d,minimum_test_trades=0,minimum_test_days=0)['status'],'insufficient_evidence')
 
+    def test_training_clock_corruption_and_unequal_series_cannot_be_sliced_away(self):
+        for change in ('duplicate', 'gap', 'longer'):
+            d=dataset()
+            if change=='duplicate':d['candles']['TEST'][0]['timestamp']='1'
+            if change=='gap':d['candles']['TEST'][1]['ts_ms']=1
+            if change=='longer':
+                d['candles']['OTHER']=copy.deepcopy(d['candles']['TEST'][:-1])
+                for v in d['variants']:v['signals']['OTHER']=[]
+            with self.assertRaises(ValueError):research_lab.evaluate(d)
+
     def test_missing_model_bill_blocks_claim_of_incremental_net_profit(self):
         d=dataset()
         d['variants'][1]['signals']['TEST']=[{'timestamp':'170','action':'WAIT','generated_at_ms':171*3600000,'features_as_of_ms':170*3600000,'model_cost_usdt':None}]

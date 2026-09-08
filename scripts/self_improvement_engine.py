@@ -56,7 +56,7 @@ def atomic_write_json(path: str, payload: Any) -> None:
     fd, tmp_path = tempfile.mkstemp(prefix=".evolution-", suffix=".tmp", dir=os.path.dirname(path))
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as f:
-            json.dump(payload, f, ensure_ascii=False, indent=2)
+            json.dump(payload, f, ensure_ascii=False, indent=2, allow_nan=False)
             f.flush()
             os.fsync(f.fileno())
         os.replace(tmp_path, path)
@@ -132,46 +132,14 @@ def load_closed_trades(scope=None):
         except Exception:
             pass
 
-    closed_trades = []
-    if os.path.exists(LEDGER_JSON_FILE):
-        try:
-            with open(LEDGER_JSON_FILE, "r", encoding="utf-8") as f:
-                t_list = json.load(f)
-                for t in t_list:
-                    if t.get("status") != "closed":
-                        continue
-                    if {t[k] for k in ('environment_id','account_source_id') if t.get(k)} != {scope}:
-                        continue
-
-                    c_time = str(t.get("close_time") or t.get("time") or "")
-                    if c_time and c_time < reset_time_str:
-                        continue
-
-                    inst = str(t.get("inst") or t.get("name") or "OTHER")
-                    if inst not in TARGET_INSTRUMENTS:
-                        continue
-                    pnl = float(t['net_pnl'] if t.get('net_pnl') is not None else (t.get('pnl', 0.0) or 0.0))
-                    gross = float(t["gross_pnl"]) if t.get("gross_pnl") is not None else pnl
-                    fee = abs(float(t.get("fee", 0.0) or 0.0))
-                    strat = str(t.get("strategy") or "⚡ 趋势")
-                    reason = str(t.get("exit_reason") or t.get("remark") or "")
-
-                    closed_trades.append({
-                        "inst": inst,
-                        "trade_id": str(t.get('id') or ''),
-                        "time": c_time,
-                        "open_time": t.get("open_time", ""),
-                        "strategy": strat,
-                        "margin": t.get("margin", "--"),
-                        "gross_pnl": round(gross, 2),
-                        "fee": round(fee, 2),
-                        "net_pnl": round(pnl, 2),
-                        "exit_reason": reason
-                    })
-        except Exception as e:
-            log_msg(f"读取交易台账异常: {e}")
-
-    return closed_trades
+    from scripts.evolution_evidence import review_rows, enrich
+    if not os.path.exists(LEDGER_JSON_FILE):
+        return []
+    with open(LEDGER_JSON_FILE, "r", encoding="utf-8") as f:
+        rows, excluded = review_rows(json.load(f), scope, TARGET_INSTRUMENTS, reset_time_str)
+    if excluded:
+        log_msg("Review excluded non-evidence rows: " + json.dumps(excluded, sort_keys=True))
+    return enrich(rows, scope, DATA_DIR)
 
 EVOLUTION_SYSTEM_PROMPT = """你是 R20 Quantum Trader 的首席投资官，负责基于真实已平仓交易证据进行认知复盘。模型只输出严格 JSON；宿主程序负责北京时间戳与 Markdown 渲染。
 
@@ -213,10 +181,13 @@ def call_llm_evolution_review(closed_trades: List[Dict[str, Any]], existing_memo
 
     total = len(closed_trades)
     wins = [t for t in closed_trades if t["net_pnl"] > 0]
-    losses = [t for t in closed_trades if t["net_pnl"] <= 0]
+    losses = [t for t in closed_trades if t["net_pnl"] < 0]
     win_rate = round(len(wins) / total * 100, 1) if total > 0 else 0.0
     total_net = round(sum(t["net_pnl"] for t in closed_trades), 2)
-    total_fees = round(sum(t["fee"] for t in closed_trades), 2)
+    from scripts.evolution_evidence import feedback
+    evidence_feedback = feedback(closed_trades)
+    total_fees = evidence_feedback['fee_cost']
+    fee_summary = f"{total_fees:.8f} USDT" if total_fees is not None else "unknown (incomplete fee evidence)"
 
     memory_context = f"""======================= 【当前系统已有的历史长期记忆库】 =======================
 {existing_memory_md.strip()}
@@ -227,18 +198,24 @@ def call_llm_evolution_review(closed_trades: List[Dict[str, Any]], existing_memo
 
 {memory_context}
 
-======================= 【R20 加密量化实盘战绩与历史交易台账】 =======================
+======================= 【当前账户已结算交易证据（模拟盘不等于实盘）】 =======================
 【统计汇总】:
-- 总平仓笔数: {total} 笔 (胜 {len(wins)} / 负 {len(losses)} | 胜率: {win_rate}%)
-- 累计净盈亏: {total_net:+.2f} USDT | 累计手续费消耗: {total_fees:.2f} USDT
+- 总平仓笔数: {total} 笔 (胜 {len(wins)} / 负 {len(losses)} / 平 {total-len(wins)-len(losses)} | 胜率: {win_rate}%)
+- 累计净盈亏: {total_net:+.2f} USDT | 累计手续费消耗: {fee_summary}
 - 当前聚焦标的池: {TARGET_INSTRUMENTS}
+
+【程序计算的费用与证据反馈（不得以模型估算替换）】：
+{json.dumps(evidence_feedback, ensure_ascii=False, allow_nan=False)}
+手续费 fee 为负代表扣费、为正代表返佣；null 表示不可观测，不得补成零。零净盈亏是持平，不是亏损。
+memory_cohorts 按实际记忆指纹、代码版本及执行预设分组，仅是描述性结果；禁止据此宣称某条心法导致盈利或已通过对照实验。
+decision_evidence 只来自同账户真实成交 → 客户端订单意图 → 原始决策的精确链路。linked 表示开仓链路完整，partial 表示仅部分加仓/开仓可关联；缺失字段仍不可观测。它不包含退出时的行情快照，不得补写退出指标。
 
 【逐笔历史交易明细 (按时间排序)】:
 {json.dumps(closed_trades, indent=2, ensure_ascii=False)}
 
 【复盘与长期记忆进化任务】:
 规则变更必须通过 memory_proposals 提交待审核候选，不能宣称已经应用。ADD 为新增；REVISE/DEACTIVATE 必须引用当前已发布正文中的 rule_ 规则ID，不能猜测旧报告里的类别名。supporting_trade_ids 只能引用输入台账的 trade_id，引用不等于程序已认可该经验。NO_CHANGE 必须提交空候选列表。宿主会保存候选，但只有管理员核验真实成交证据并发布后才生效。
-请严格基于可观测台账证据复盘。当前输入若未提供交易发生时的 v/a/j/I、定积分、概率或 VaR 快照，不得将盈亏事后归因于这些指标，只能标注“数理快照不可观测”。证据不足时使用 NO_CHANGE，不得强行生成新规律。输出标准 JSON：
+请严格基于可观测台账证据复盘。仅可描述 decision_evidence.entries.features 中已归档的开仓指标；时间匹配不是因果证明。未提供的 v/a/j/I、定积分、概率、VaR 或退出快照必须标注不可观测。提出候选时，rationale 应写清适用条件、反例、与当前基线如何比较、费用后验证指标及何时撤回；优先提出单变量、可前向验证的假设。证据不足时使用 NO_CHANGE，不得强行生成新规律。输出标准 JSON：
 {{
   "change_status": "NO_CHANGE" | "ADD" | "REVISE" | "INVALIDATE",
   "diagnosis_insights": [
@@ -252,7 +229,7 @@ def call_llm_evolution_review(closed_trades: List[Dict[str, Any]], existing_memo
   ],
   "memory_proposals": [
     {{"action": "ADD", "text": "待审核的软经验", "target_rule_id": null,
-      "supporting_trade_ids": ["只能填写输入中真实trade_id"], "rationale": "解释对应证据与反例"}}
+      "supporting_trade_ids": ["只能填写输入中真实trade_id"], "rationale": "适用条件；证据与反例；单变量对照；费用后验证指标；撤回条件"}}
   ],
   "memory_overwrites_reason": "说明证据支持何种变更；NO_CHANGE 时明确为何不覆盖旧记忆"
 }}
@@ -362,8 +339,12 @@ def run_self_evolution(force: bool = False):
     def record_status(status, **details):
         atomic_write_json(status_file, {'status': status, 'last_attempt_at': timestamp_str, 'account_scope':memory_scope, **details})
     record_status('running')
-    memory_state=memory_registry.view(DATA_DIR,scope=memory_scope,legacy_paths={'md':AI_MEMORY_MD_FILE,'json':AI_MEMORY_FILE})
-    closed_trades = load_closed_trades(scope=memory_scope)
+    try:
+        memory_state=memory_registry.view(DATA_DIR,scope=memory_scope,legacy_paths={'md':AI_MEMORY_MD_FILE,'json':AI_MEMORY_FILE})
+        closed_trades = load_closed_trades(scope=memory_scope)
+    except Exception as exc:
+        record_status('failed', error_type=type(exc).__name__)
+        raise RuntimeError('Review source unavailable; previous report and memory preserved') from exc
     total_trades = len(closed_trades)
     ledger_revision = hashlib.sha256(
         json.dumps(closed_trades, sort_keys=True, ensure_ascii=False).encode("utf-8")
@@ -372,7 +353,8 @@ def run_self_evolution(force: bool = False):
         try:
             with open(REPORT_JSON_FILE, "r", encoding="utf-8") as f:
                 previous_report = json.load(f)
-            if (previous_report.get('review_status') == 'success' and previous_report.get("ledger_revision") == ledger_revision
+            if (previous_report.get('review_status') == 'success' and previous_report.get('review_protocol') == 'evidence-feedback-v1'
+                    and previous_report.get("ledger_revision") == ledger_revision
                     and previous_report.get('account_scope') == memory_scope
                     and previous_report.get('memory_version_at_review') == memory_state['active_version']):
                 record_status('no_new_evidence', ledger_revision=ledger_revision)
@@ -388,8 +370,7 @@ def run_self_evolution(force: bool = False):
     win_rate = round(win_count / total_trades * 100, 1) if total_trades > 0 else 0.0
     total_win_amt = sum(t["net_pnl"] for t in win_trades)
     total_loss_amt = abs(sum(t["net_pnl"] for t in loss_trades))
-    total_fees_amt = sum(t["fee"] for t in closed_trades)
-    profit_factor = round(total_win_amt / total_loss_amt, 2) if total_loss_amt > 0 else (99.0 if total_win_amt > 0 else 0.0)
+    profit_factor = round(total_win_amt / total_loss_amt, 6) if total_loss_amt > 0 else None
 
     existing_memory_md=memory_state['content']
     existing_core_lessons=[r['text'] for r in memory_state['rules'] if r.get('enabled',True)]
@@ -411,10 +392,8 @@ def run_self_evolution(force: bool = False):
     change_status, _, _ = resolve_memory_update(llm_review.get("change_status", "NO_CHANGE"), [], [])
     insights = llm_review.get("diagnosis_insights", [])
     actions_taken = llm_review.get("evolution_actions", [])
-    if not isinstance(insights, list):
-        insights = []
-    if not isinstance(actions_taken, list):
-        actions_taken = []
+    insights = [x.strip()[:3000] for x in insights if isinstance(x, str) and x.strip()][:4] if isinstance(insights, list) else []
+    actions_taken = [x.strip()[:3000] for x in actions_taken if isinstance(x, str) and x.strip()][:4] if isinstance(actions_taken, list) else []
 
     raw_asset_mults = llm_review.get("asset_multipliers", {})
     if not isinstance(raw_asset_mults, dict):
@@ -494,14 +473,18 @@ def run_self_evolution(force: bool = False):
         log_msg(f"Markdown 记忆写入异常: {e}")
 
     # 4. Save Dashboard Report
+    from scripts.evolution_evidence import feedback
     report_payload = {
         "timestamp": timestamp_str,
         "ledger_revision": ledger_revision,
         "total_trades": total_trades,
+        "evidence_feedback": feedback(closed_trades),
         "win_rate": win_rate,
         "profit_factor": profit_factor,
         "mode": "review_only",
         "review_status": "success",
+        "review_protocol": "evidence-feedback-v1",
+        "review_markdown": md_content,
         "completed_at": datetime.datetime.now(tz_bj).strftime('%Y-%m-%d %H:%M:%S'),
         "proposed_change_status": proposed_change_status,
         "pending_candidate_count": sum(c['status']=='pending' for c in candidates),

@@ -7,6 +7,7 @@ import { parse, compileScript } from '@vue/compiler-sfc'
 import ts from 'typescript'
 import * as accounting from '../src/utils/feeAccounting.ts'
 import { isSettlementPending } from '../src/utils/tradeSettlement.ts'
+import { observedNumber } from '../src/utils/observationDisplay.ts'
 
 const verified = { status: 'closed', fee_allocation: 'verified_from_archived_fills', fee_reconciliation: {status:'verified'}, open_fee:-.00786281,close_fee:-.00785893 }
 test('fee allocation needs explicit proven status and finite amounts', () => {
@@ -41,6 +42,7 @@ async function render(row){
     if(name==='vue')return Vue
     if(name==='lucide-vue-next')return {Receipt:Empty,Search:Empty}
     if(name.includes('useDashboard')||name.includes('stores/dashboard'))return {useDashboardStore:()=>({data:{trades:[{id:'test',inst:'BTC',side:'long',open_px:100,close_px:101,...row}]}})}
+    if(name.includes('observationDisplay'))return {observedNumber}
     if(name.includes('feeAccounting'))return accounting
     if(name.includes('tradeSettlement'))return {isSettlementPending}
     if(name.endsWith('.vue'))return {__esModule:true,default:Box}
@@ -66,8 +68,26 @@ test('unverified and pending entries never fabricate fee allocation or financial
   assert.ok(pending.includes('结算同步中'))
   assert.ok(!pending.includes('data-fee-reconciliation'))
 })
-test('fee details stay within the existing scrollable ledger, not an extra wide column',()=>{
-  assert.ok(source.includes('trade-ledger__fees'))
-  assert.ok(source.includes('max-width: 16rem'))
-  assert.ok(source.includes('overflow-wrap: anywhere'))
+test('fee actions occupy a dedicated centered column inside the scroll region', async()=>{
+  const html=await render({...verified,net_pnl:1})
+  const headers=html.match(/<th\b[^>]*>[\s\S]*?<\/th>/g)
+  const cells=html.match(/<td\b[^>]*>[\s\S]*?<\/td>/g)
+  assert.equal(headers.length,9);assert.equal(cells.length,9)
+  assert.ok(headers[8].includes('text-center'))
+  assert.ok(cells[8].includes('trade-ledger__fee-button'))
+  assert.ok(!cells[7].includes('trade-ledger__fee-button'))
+  assert.ok(cells[8].includes('text-center'))
+  assert.ok(source.includes('variant="ghost"'))
+  assert.ok(source.includes('min-height: 2.75rem'))
+  assert.ok(source.includes('aria-haspopup="dialog"'))
+  assert.ok(source.includes('<AppTable'))
+})
+
+test('margin and price rendering distinguish zero from invalid observations',async()=>{
+ const zero=await render({...verified,margin:0,open_px:0})
+ assert.ok(zero.includes('0.00 U'));assert.ok(zero.includes('0.000000'))
+ for(const value of [true,Infinity,'bad']){
+  const html=await render({...verified,margin:value,open_px:value,net_pnl:null,roi_pct:null})
+  assert.ok(!html.includes('Infinity'));assert.ok(!html.includes('1.000000'));assert.ok(!html.includes('0.00 U'))
+ }
 })

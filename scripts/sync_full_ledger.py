@@ -153,7 +153,7 @@ def build_lifecycle_ledger(*, notify=True):
             "instId":inst_id,"pos_id":str(p.get("posId") or ""),"environment_id":env.identity,"environment":env.mode,
             "inst": inst,
             "side": side,
-            "lever": f"{lever}x",
+            "lever": f"{lever:g}x" if lever is not None else "--",
             "strategy": strat_tag,
             "margin": margin_usdt,
             "sz": pos_sz,
@@ -192,28 +192,16 @@ def build_lifecycle_ledger(*, notify=True):
         
         open_px = float(h.get("openAvgPx", 0) or 0)
         close_px = float(h.get("closeAvgPx", 0) or 0)
-        gross_pnl = float(h.get("pnl", 0) or 0)
-        fee = float(h.get("fee", 0) or 0)
-        funding_fee = float(h.get("fundingFee", 0) or 0)
-        realized = h.get("realizedPnl")
-        net_pnl = round(float(realized) if realized not in (None, "") else gross_pnl + fee + funding_fee, 2)
-        lever = int(float(h.get("lever", "3") or 3))
-        
-        # Calculate Margin & Real Position Size
+        from scripts.ledger_accounting import receipt_financials
+        from scripts.evolution_evidence import observed
+        actual_leverage = observed(h.get("lever"))
+        lever = actual_leverage if actual_leverage is not None and actual_leverage > 0 else None
         ct_val = get_ct_val(inst)
-        close_pos_sz = float(h.get("closeTotalPos", 0) or h.get("openMaxPos", 0) or 0)
-        
-        if close_pos_sz > 0 and open_px > 0 and ct_val > 0:
-            notional = close_pos_sz * ct_val * open_px
-            margin_usdt = round(notional / lever, 2) if lever > 0 else round(notional, 2)
-        else:
-            pnl_ratio = float(h.get("pnlRatio", 0) or 0)
-            margin_usdt = 500.0 # Standard fallback
-            if pnl_ratio != 0:
-                est_margin = abs(gross_pnl / pnl_ratio)
-                margin_usdt = round(est_margin, 2)
-        
-        roi_pct = round((net_pnl / margin_usdt * 100) if margin_usdt > 0 else 0.0, 2)
+        close_pos_sz = observed(h.get("closeTotalPos"))
+        amounts = receipt_financials(h, entry_price=open_px, size=close_pos_sz,
+                                    contract_value=ct_val, leverage=lever)
+        gross_pnl, fee, funding_fee, net_pnl, margin_usdt, roi_pct = (
+            amounts[k] for k in ('gross_pnl', 'fee', 'funding_fee', 'net_pnl', 'margin', 'roi_pct'))
 
         # Duration
         try:
@@ -240,7 +228,7 @@ def build_lifecycle_ledger(*, notify=True):
             "instId":inst_id,"pos_id":str(h.get("posId") or ""),"closed_size":close_pos_sz,"environment_id":env.identity,"environment":env.mode,
             "inst": inst,
             "side": side,
-            "lever": f"{lever}x",
+            "lever": f"{lever:g}x" if lever is not None else "--",
             "strategy": strat_tag,
             "margin": margin_usdt,
             "sz": 0,
@@ -248,13 +236,13 @@ def build_lifecycle_ledger(*, notify=True):
             "open_px": round(open_px, 4),
             "close_time": close_time,
             "close_px": round(close_px, 4),
-            "gross_pnl": round(gross_pnl, 2),
+            "gross_pnl": gross_pnl,
             "open_fee": None,
             "close_fee": None,
             "funding_fee": funding_fee,
-            "accounting_basis": "exchange_realized_pnl" if realized not in (None, "") else "gross_plus_fee_plus_funding",
+            "accounting_basis": amounts["accounting_basis"],
             "fee_allocation": "unknown_until_fill_reconciliation",
-            "fee": round(fee, 2),
+            "fee": fee,
             "pnl": net_pnl,
             "net_pnl": net_pnl,
             "roi": roi_pct,
@@ -300,12 +288,14 @@ def build_lifecycle_ledger(*, notify=True):
         from qq_notifier import notify_trade_close
         for t in trades_lifecycle:
             if t.get("status") == "closed" and (t.get("close_notification_status") == "pending" or t["id"] not in existing_closed_ids):
+                if t.get("net_pnl") is None:
+                    continue  # Keep notification pending until settlement is observable.
                 notify_trade_close(
                     inst=t.get("inst", "CRYPTO"),
                     pnl=float(t.get("pnl", 0.0) or 0.0),
                     stage=t.get("exit_reason", "平仓结清"),
                     exit_px=float(t.get("close_px", 0.0) or 0.0),
-                    roi_pct=float(t.get("roi_pct", 0.0) or 0.0),
+                    roi_pct=t.get("roi_pct"),
                     duration_str=str(t.get("duration", "")),
                 )
                 t["close_notification_status"] = "sent"
