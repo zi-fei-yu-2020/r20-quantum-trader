@@ -38,6 +38,32 @@ class StrategyIntegrationTests(unittest.TestCase):
         self.assertEqual(evidence.unresolved(self.env.identity)[0][0],client)
         self.assertTrue(evidence.export_events(self.env.identity,'equity'))
 
+    def test_gateway_rounds_real_tick_and_cli_sends_identical_verified_prices(self):
+        from scripts import risk_policy
+        identity=evidence.append(self.env.identity,'decision',{'instrument':META['instId'],
+            'decision':{'action':'BUY_LONG','contract_version':'trading-evidence-v1','contract_valid':True,'valid_until':time.time()+300}})
+        meta={**META,'tickSz':'0.00001'}
+        def private(method,path,params,env):
+            self.assertEqual(method,'GET')
+            if path.endswith('/positions') or path.endswith('/orders-pending'):return []
+            if path.endswith('/balance'):return [{'totalEq':'10000','uTime':str(int(time.time()*1000)),'details':[{'ccy':'USDT','availEq':'5000'}]}]
+            if path.endswith('/leverage-info'):return [{'posSide':'long','lever':'3'}]
+            self.fail(path)
+        def public(url,**kwargs):
+            return {'data':[meta] if '/instruments?' in url else [{'last':'100','ts':str(int(time.time()*1000))}]}
+        with patch.object(entry_gateway,'_request',side_effect=private),patch.object(entry_gateway.public_market,'get_json',side_effect=public):
+            plan,client=entry_gateway.prepare(self.env,inst_id=META['instId'],side='long',entry=100.000024,stop=94.000016,take_profit=125.000023,
+                requested_size=1,budget=15,decision_id=identity,decision_at=time.time())
+        self.assertEqual((plan['entry'],plan['stop'],plan['take_profit']),(100.00002,94.00002,125.00002))
+        with patch.object(trader.market,'_selected',return_value=self.env),patch.object(trader.support,'opening_status',return_value={'can_open':True}), \
+             patch.object(trader,'run_json_cmd',return_value=[]),patch.object(trader.entry_gateway,'prepare',return_value=(plan,client)), \
+             patch.object(trader,'okx_private_command',side_effect=lambda x:x), \
+             patch.object(trader,'run_cmd_result',return_value={'ok':True,'data':[{'ordId':'verified'}]}) as wire:
+            self.assertTrue(trader.submit_protected_limit_order(META['instId'],'buy','long',1,100.000024,125.000023,94.000016)[0])
+        command=wire.call_args.args[0]
+        for token in ('--px 100.00002','--tpTriggerPx 125.00002','--slTriggerPx 94.00002'):
+            self.assertIn(token,command)
+
     def test_final_entry_accepts_profitable_stop_using_mark_and_preserves_budget(self):
         position = {'instId': META['instId'], 'posSide': 'long', 'pos': '2',
                     'markPx': '120', 'avgPx': '100', 'imr': '10'}

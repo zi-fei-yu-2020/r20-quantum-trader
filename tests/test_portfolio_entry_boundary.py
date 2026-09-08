@@ -16,10 +16,10 @@ from test_entry_candidates import package, selection
 
 
 class PortfolioEntryBoundaryTests(unittest.TestCase):
-    def exercise(self, side, score, *, pending=False, position=None, model_wait=False, demo_last=100):
+    def exercise(self, side, score, *, pending=False, position=None, model_wait=False, demo_last=100, quote_delta=0):
         with tempfile.TemporaryDirectory() as tmp, ExitStack() as stack:
             root=Path(tmp);env=OKXEnvironment('demo','fake','fake','fake')
-            p=package(side);plan=entry_candidates.catalog(p)['plans'][0]
+            p=package(side);p['askPx']+=quote_delta;p['bidPx']-=quote_delta;plan=entry_candidates.catalog(p)['plans'][0]
             raw=selection(plan);raw['confidence']=score
             decision=trading_prompt.candidate(p,raw,trading_prompt.facts_for(p))
             self.assertTrue(decision['contract_valid'])
@@ -70,6 +70,13 @@ class PortfolioEntryBoundaryTests(unittest.TestCase):
                 self.assertEqual(len(calls),1,(side,score))
                 self.assertEqual(calls[0].kwargs['side'],side)
                 self.assertEqual(calls[0].kwargs['decision_id'],'TEST_DECISION')
+
+    def test_program_prices_are_not_rounded_by_stale_pool_precision(self):
+        for side in ('long','short'):
+            calls=self.exercise(side,0,quote_delta=.000024)
+            self.assertEqual(len(calls),1)
+            raw=calls[0].kwargs['entry']
+            self.assertNotEqual(raw,round(raw,4))
 
     def test_wait_and_existing_pending_order_do_not_send_an_entry(self):
         for side in ('long','short'):

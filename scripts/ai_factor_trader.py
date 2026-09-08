@@ -475,6 +475,7 @@ def submit_protected_limit_order(inst_id: str, side: str, pos_side: str, size: f
         return False, f"Final risk preflight rejected: {type(exc).__name__}: {exc}"
     LAST_ENTRY_PLAN.clear(); LAST_ENTRY_PLAN.update(plan)
     size = plan['size']
+    effective_px, effective_sl, effective_tp = plan['entry'], plan['stop'], plan['take_profit']
     command = okx_private_command(
         f"okx swap place --instId {inst_id} --tdMode cross --side {side} --clOrdId {client_id} "
         f"--posSide {pos_side} --ordType limit --px {effective_px} --sz {size} "
@@ -2081,9 +2082,9 @@ def execute_portfolio():
                             print(f"[Pyramiding 拦截] {f['name']} 数理数据无效、动能衰竭或延续概率偏低 (加速度={c_accel:+.2f}, 概率={p_cont:.1f}%)，禁止追多加仓")
 
                 if allow_entry:
-                    limit_px = round(ai_decision.get("entry_price") if (ai_decision and ai_decision.get("entry_price", 0) > 0) else (f.get("bidPx") or f["price"]), prec)
-                    tp_px = round(ai_decision.get("take_profit_price") if (ai_decision and ai_decision.get("take_profit_price", 0) > 0) else (limit_px + tp_dist), prec)
-                    sl_px = round(ai_decision.get("stop_loss_price") if (ai_decision and ai_decision.get("stop_loss_price", 0) > 0) else (limit_px - sl_dist), prec)
+                    limit_px = float(ai_decision.get("entry_price") or f.get("bidPx") or f["price"])
+                    tp_px = float(ai_decision.get("take_profit_price") or (limit_px + tp_dist))
+                    sl_px = float(ai_decision.get("stop_loss_price") or (limit_px - sl_dist))
 
                     # Program-selected plans may be rounded to ticks, never silently repaired into another setup.
                     if ai_decision.get('candidate_id') and not 0 < sl_px < limit_px < tp_px:
@@ -2098,6 +2099,7 @@ def execute_portfolio():
                     accepted, order_ref = submit_protected_limit_order(inst_id, "buy", "long", actual_sz, limit_px, tp_px, sl_px, risk_budget_usdt=f["risk_per_trade_usd"], decision_id=ai_info.get("decision_id"), decision_at=ai_info.get("data_as_of"), allow_demo_translation=not bool(ai_decision.get('candidate_id')))
                     if accepted:
                         actual_sz = LAST_ENTRY_PLAN['size']
+                        limit_px, sl_px, tp_px = LAST_ENTRY_PLAN['entry'], LAST_ENTRY_PLAN['stop'], LAST_ENTRY_PLAN['take_profit']
                         if is_scale_in:
                             tracker = trackers.get(f"{inst_id}_long", {})
                             tracker["scale_count"] = tracker.get("scale_count", 0) + 1
@@ -2175,9 +2177,9 @@ def execute_portfolio():
                             print(f"[Pyramiding 拦截] {f['name']} 数理数据无效、动能失速企稳或击穿概率偏低 (加速度={c_accel:+.2f}, 概率={p_break:.1f}%)，禁止追空加仓")
 
                 if allow_entry:
-                    limit_px = round(ai_decision.get("entry_price") if (ai_decision and ai_decision.get("entry_price", 0) > 0) else (f.get("askPx") or f["price"]), prec)
-                    tp_px = round(ai_decision.get("take_profit_price") if (ai_decision and ai_decision.get("take_profit_price", 0) > 0) else (limit_px - tp_dist), prec)
-                    sl_px = round(ai_decision.get("stop_loss_price") if (ai_decision and ai_decision.get("stop_loss_price", 0) > 0) else (limit_px + sl_dist), prec)
+                    limit_px = float(ai_decision.get("entry_price") or f.get("askPx") or f["price"])
+                    tp_px = float(ai_decision.get("take_profit_price") or (limit_px - tp_dist))
+                    sl_px = float(ai_decision.get("stop_loss_price") or (limit_px + sl_dist))
 
                     # Hard check: For SELL SHORT, OKX strictly requires tp_px < limit_px < sl_px
                     if ai_decision.get('candidate_id') and not 0 < tp_px < limit_px < sl_px:
@@ -2191,6 +2193,7 @@ def execute_portfolio():
                     accepted, order_ref = submit_protected_limit_order(inst_id, "sell", "short", actual_sz, limit_px, tp_px, sl_px, risk_budget_usdt=f["risk_per_trade_usd"], decision_id=ai_info.get("decision_id"), decision_at=ai_info.get("data_as_of"), allow_demo_translation=not bool(ai_decision.get("candidate_id")))
                     if accepted:
                         actual_sz = LAST_ENTRY_PLAN['size']
+                        limit_px, sl_px, tp_px = LAST_ENTRY_PLAN['entry'], LAST_ENTRY_PLAN['stop'], LAST_ENTRY_PLAN['take_profit']
                         if is_scale_in:
                             tracker = trackers.get(f"{inst_id}_short", {})
                             tracker["scale_count"] = tracker.get("scale_count", 0) + 1

@@ -103,6 +103,16 @@ def prepare(env, *, inst_id, side, entry, stop, take_profit, requested_size, bud
     instruments=public_market.get_json('https://www.okx.com/api/v5/public/instruments?instType=SWAP',simulated=env.simulated)['data']
     metadata={i['instId']:i for i in instruments}
     if inst_id not in metadata: raise risk.RiskRejected('Missing exchange instrument metadata')
+    # The exchange tick grid, not a stale instrument-pool decimal precision,
+    # determines final prices. Program geometry is checked against frozen values
+    # after this bounded rounding; risk is recalculated on the same prices sent.
+    from decimal import Decimal, ROUND_HALF_EVEN
+    tick = risk.linear_metadata(metadata[inst_id])[3]
+    def tick_price(value):
+        value = risk.number(value, positive=True)
+        step = Decimal(str(tick))
+        return float((Decimal(str(value))/step).to_integral_value(rounding=ROUND_HALF_EVEN)*step)
+    entry, stop, take_profit = [tick_price(v) for v in (entry, stop, take_profit)]
     positions=_request('GET','/api/v5/account/positions',{'instType':'SWAP'},env)
     pending=_request('GET','/api/v5/trade/orders-pending',{'instType':'SWAP'},env)
     balances=_request('GET','/api/v5/account/balance',{},env)
