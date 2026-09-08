@@ -731,6 +731,43 @@ def calc_bollinger_squeeze(closes, period=20, mult=2.0):
 # =============================================================================
 # 🚀 High-Alpha Multi-Factor Extraction & Quantitative Feature Assembly
 # =============================================================================
+def _execution_calculus_candles(rows):
+    """Strip OKX timestamps/metadata, preserving newest-first calculator order."""
+    normalized = []
+    for row in rows:
+        candle = [float(row[i]) for i in range(1, 6)]
+        if not all(math.isfinite(value) for value in candle):
+            raise ValueError("Non-finite execution calculus candle")
+        normalized.append(candle)
+    return normalized
+
+
+def _scale_in_calculus_gate(calculus, side):
+    """Fail closed on unavailable momentum/probability evidence; retain thresholds."""
+    unavailable = (False, math.nan, math.nan)
+    if not isinstance(calculus, dict) or calculus.get("valid") is not True:
+        return unavailable
+    probability = calculus.get("probability_theory")
+    # The aggregate calculator does not currently emit a nested valid flag.
+    if not isinstance(probability, dict) or probability.get("valid", True) is not True:
+        return unavailable
+    if side not in ("long", "short"):
+        return unavailable
+    key = "continuation_prob_pct" if side == "long" else "breakdown_prob_pct"
+    try:
+        acceleration = calculus["acceleration"]
+        chance = probability[key]
+        if isinstance(acceleration, bool) or isinstance(chance, bool):
+            return unavailable
+        acceleration, chance = float(acceleration), float(chance)
+    except (KeyError, TypeError, ValueError, OverflowError):
+        return unavailable
+    if not math.isfinite(acceleration) or not math.isfinite(chance) or not 0 <= chance <= 100:
+        return unavailable
+    momentum_ok = acceleration >= -0.25 if side == "long" else acceleration <= 0.25
+    return momentum_ok and chance >= 40.0, acceleration, chance
+
+
 def fetch_single_instrument_data(item, all_positions, usdt_available):
     inst_id = item["instId"]
     name = item["name"]
@@ -948,9 +985,9 @@ def fetch_single_instrument_data(item, all_positions, usdt_available):
     try:
         from calculus_engine import calculate_multi_timeframe
         f["calculus"] = calculate_multi_timeframe({
-            "15M": raw_15m,
-            "1H": raw_1h,
-            "4H": raw_4h
+            "15M": _execution_calculus_candles(raw_15m),
+            "1H": _execution_calculus_candles(raw_1h),
+            "4H": _execution_calculus_candles(raw_4h)
         })
     except Exception:
         pass
@@ -1900,11 +1937,7 @@ def execute_portfolio():
                     # 3. Combined margin must not exceed MAX_SINGLE_ASSET_MARGIN.
                     # 4. Model score is diagnostic only; final account risk is authoritative.
                     # 5. Calculus Momentum & Probability Gateway: Acceleration a >= -0.25 and Continuation Prob >= 40%
-                    c_dyn = f.get("calculus", {})
-                    c_accel = float(c_dyn.get("acceleration", 0.0) or 0.0)
-                    p_th = c_dyn.get("probability_theory", {})
-                    p_cont = float(p_th.get("continuation_prob_pct", 50.0) or 50.0)
-                    calculus_accel_ok = (c_accel >= -0.25 and p_cont >= 40.0)
+                    calculus_accel_ok, c_accel, p_cont = _scale_in_calculus_gate(f.get("calculus"), "long")
 
                     is_profit_or_breakeven = (pos_upl > 0 and pos_upl_ratio >= MIN_SCALE_IN_PROFIT_RATIO) or (trailing_sl > 0 and trailing_sl >= pos_avg_px)
                     planned_margin = ai_margin if ai_margin > 0 else (actual_sz * ct_val * f["price"] / max(1.0, ai_lever))
@@ -1922,7 +1955,7 @@ def execute_portfolio():
                         elif not within_margin_cap:
                             print(f"[Pyramiding 拦截] {f['name']} 加仓后总保证金将超限 ({curr_margin + planned_margin:.1f} > {MAX_SINGLE_ASSET_MARGIN}U)")
                         elif not calculus_accel_ok:
-                            print(f"[Pyramiding 拦截] {f['name']} 数理动能衰竭或延续概率偏低 (加速度={c_accel:+.2f}, 概率={p_cont:.1f}%)，禁止追多加仓")
+                            print(f"[Pyramiding 拦截] {f['name']} 数理数据无效、动能衰竭或延续概率偏低 (加速度={c_accel:+.2f}, 概率={p_cont:.1f}%)，禁止追多加仓")
 
                 if allow_entry:
                     limit_px = round(ai_decision.get("entry_price") if (ai_decision and ai_decision.get("entry_price", 0) > 0) else (f.get("bidPx") or f["price"]), prec)
@@ -2002,11 +2035,7 @@ def execute_portfolio():
                     planned_margin = ai_margin if ai_margin > 0 else (actual_sz * ct_val * f["price"] / max(1.0, ai_lever))
                     within_margin_cap = (curr_margin + planned_margin) <= MAX_SINGLE_ASSET_MARGIN
 
-                    c_dyn = f.get("calculus", {})
-                    c_accel = float(c_dyn.get("acceleration", 0.0) or 0.0)
-                    p_th = c_dyn.get("probability_theory", {})
-                    p_break = float(p_th.get("breakdown_prob_pct", 50.0) or 50.0)
-                    calculus_accel_ok = (c_accel <= 0.25 and p_break >= 40.0)
+                    calculus_accel_ok, c_accel, p_break = _scale_in_calculus_gate(f.get("calculus"), "short")
 
                     if is_profit_or_breakeven and scale_count < MAX_SCALE_IN_COUNT and within_margin_cap and calculus_accel_ok:
                         allow_entry = True
@@ -2020,7 +2049,7 @@ def execute_portfolio():
                         elif not within_margin_cap:
                             print(f"[Pyramiding 拦截] {f['name']} 加仓后总保证金将超限 ({curr_margin + planned_margin:.1f} > {MAX_SINGLE_ASSET_MARGIN}U)")
                         elif not calculus_accel_ok:
-                            print(f"[Pyramiding 拦截] {f['name']} 数理动能失速企稳或击穿概率偏低 (加速度={c_accel:+.2f}, 概率={p_break:.1f}%)，禁止追空加仓")
+                            print(f"[Pyramiding 拦截] {f['name']} 数理数据无效、动能失速企稳或击穿概率偏低 (加速度={c_accel:+.2f}, 概率={p_break:.1f}%)，禁止追空加仓")
 
                 if allow_entry:
                     limit_px = round(ai_decision.get("entry_price") if (ai_decision and ai_decision.get("entry_price", 0) > 0) else (f.get("askPx") or f["price"]), prec)
