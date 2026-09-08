@@ -22,6 +22,7 @@ import tempfile
 from scripts import ledger_monitor
 from scripts.close_attribution import reason as close_reason
 from scripts.close_evidence import load_inputs as close_inputs
+from scripts.fill_accounting import read_archive as read_fill_archive, reconcile as reconcile_fill_fees
 
 WORKSPACE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DATA_DIR = os.path.join(WORKSPACE_DIR, "data")
@@ -106,6 +107,7 @@ def build_lifecycle_ledger(*, notify=True):
         attribution_inputs=close_inputs(env,orders_history)
     except Exception:
         attribution_inputs={'orders':orders_history,'algos':[],'executions':[]}
+    fill_archive = read_fill_archive(env.identity)
     trades_lifecycle = []
 
     # Process Active Holding Positions FIRST
@@ -232,6 +234,7 @@ def build_lifecycle_ledger(*, notify=True):
             for field in ('exit_reason','exit_source','exit_evidence','attribution_status','close_order_ids','close_order_sources','attribution_note'):
                 if field in previous:attribution[field]=previous[field]
 
+        allocation = reconcile_fill_fees(h, fill_archive, peers=pos_history, active_positions=pos_data)
         trades_lifecycle.append({
             "id": f"pos_hist_{u_ts}_{inst}",
             "instId":inst_id,"pos_id":str(h.get("posId") or ""),"closed_size":close_pos_sz,"environment_id":env.identity,"environment":env.mode,
@@ -259,7 +262,8 @@ def build_lifecycle_ledger(*, notify=True):
             "duration": duration_str,
             "status": "closed",
             "close_notification_status": previous.get("close_notification_status", "legacy") if previous else "pending",
-            **attribution
+            **attribution,
+            **allocation
         })
 
     # Preserve old finalized history; replace stale holding rows only with verified data.

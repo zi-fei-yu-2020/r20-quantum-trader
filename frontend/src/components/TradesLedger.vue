@@ -2,6 +2,7 @@
 import AppCard from './ui/AppCard.vue'
 import AppTable from './ui/AppTable.vue'
 import { isSettlementPending } from '../utils/tradeSettlement'
+import { feeAccounting, feeText, ledgerValue, ledgerNumberText, ledgerNumberColor } from '../utils/feeAccounting'
 
 import { ref, computed } from 'vue'
 import { useDashboardStore } from '../stores/dashboard'
@@ -38,12 +39,12 @@ function num(v: any): number {
   return Number(v) || 0
 }
 
-function getPnl(t: any): number {
-  return Number(t.pnl ?? t.net_pnl ?? t.gross_pnl ?? 0)
+function getPnl(t: any): number | null {
+  return ledgerValue(t, ['net_pnl', 'pnl'])
 }
 
-function getRoi(t: any): number {
-  return Number(t.roi_pct ?? t.roi ?? 0)
+function getRoi(t: any): number | null {
+  return ledgerValue(t, ['roi_pct', 'roi'])
 }
 
 function formatPx(v: any): string {
@@ -264,17 +265,26 @@ function clean(v: any, fallback = '--'): string {
                 <template v-else>
                 <span
                   class="font-bold text-sm num-tabular"
-                  :style="{ color: getPnl(t) >= 0 ? 'var(--color-up)' : 'var(--color-down)' }"
+                  :style="{ color: ledgerNumberColor(getPnl(t)) }"
                 >
-                  {{ getPnl(t) >= 0 ? '+' : '' }}{{ getPnl(t).toFixed(2) }} U
+                  {{ ledgerNumberText(getPnl(t), 2, ' U') }}
                 </span>
                 <span
                   class="text-[10px] ml-1 num-tabular"
-                  :style="{ color: getRoi(t) >= 0 ? 'var(--color-up)' : 'var(--color-down)' }"
+                  :style="{ color: ledgerNumberColor(getRoi(t)) }"
                 >
-                  ({{ getRoi(t) >= 0 ? '+' : '' }}{{ getRoi(t).toFixed(1) }}%)
+                  ({{ ledgerNumberText(getRoi(t), 1, '%') }})
                 </span>
                 </template>
+                <details v-if="t.status === 'closed'" class="trade-ledger__fees text-left mt-1" data-fee-reconciliation>
+                  <summary class="cursor-pointer text-[10px]" style="color:var(--text-muted)">{{ feeAccounting(t).label }}</summary>
+                  <div class="text-[10px] leading-relaxed" style="color:var(--text-muted)">
+                    开仓手续费：{{ feeText(feeAccounting(t).opening) }}<br>
+                    平仓手续费：{{ feeText(feeAccounting(t).closing) }}<br>
+                    <span v-if="feeAccounting(t).verified">按本账户成交量及官方总手续费核对，负值为扣费、正值为返佣；不改写官方净盈亏。</span>
+                    <span v-else>成交证据尚不完整或不一致，不按比例猜测费用。</span>
+                  </div>
+                </details>
               </td>
               <td class="py-3 px-3 text-center num-tabular" style="color: var(--text-muted)">
                 {{ clean(t.hold_duration || t.duration, '--') }}
@@ -317,6 +327,7 @@ function clean(v: any, fallback = '--'): string {
 </template>
 
 <style scoped>
+.trade-ledger__fees { max-width: 16rem; white-space: normal; overflow-wrap: anywhere; }
 .trade-ledger__strategy { display: inline-block; max-width: 15rem; white-space: normal; overflow-wrap: anywhere; }
 .trade-ledger__reason { display: inline-block; max-width: 22rem; white-space: normal; overflow-wrap: anywhere; vertical-align: middle; }
 </style>

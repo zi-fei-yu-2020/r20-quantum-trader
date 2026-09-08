@@ -91,7 +91,8 @@ def project_rows(rows,scope,*,positions=None):
             absent=positions is not None and row.get('environment_id')==scope and key not in current
             if event or absent:
                 row.update(status='closed_pending',settlement_status='pending',pnl=None,net_pnl=None,gross_pnl=None,
-                    roi=None,roi_pct=None,fee=None,close_px=None,sz=0,
+                    roi=None,roi_pct=None,fee=None,open_fee=None,close_fee=None,close_px=None,sz=0,
+                    fee_allocation="pending_settlement",fee_reconciliation={"status":"unverified","reason":"pending_settlement"},
                     close_time='--',confirmed_close_at=bj(event['confirmed_at']*1000) if event else '',
                     exit_reason='手动平仓（结算同步中）' if event else '持仓已归零，等待交易所结算',
                     exit_source='manual_admin' if event else 'unknown')
