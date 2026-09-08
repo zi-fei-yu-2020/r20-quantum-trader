@@ -549,31 +549,10 @@ def construct_full_market_prompt(packages: List[Dict[str, Any]], pos_summary: st
 
     pending_orders_text = "\n".join(pending_lines)
 
-    memory_lessons = ""
-    # Priority 1: Read durable R20 Markdown trading memory
-    if os.path.exists(AI_MEMORY_MD_FILE):
-        try:
-            with open(AI_MEMORY_MD_FILE, "r", encoding="utf-8") as f:
-                md_text = f.read().strip()
-                if md_text:
-                    memory_lessons = f"""======================= 【R20 启发式实战认知与长期记忆 (Markdown)】 =======================
-{md_text}
-"""
-        except Exception:
-            pass
-    elif os.path.exists(AI_MEMORY_FILE):
-        try:
-            with open(AI_MEMORY_FILE, "r", encoding="utf-8") as f:
-                mem = json.load(f)
-                lessons = mem.get("core_lessons", [])
-                if lessons:
-                    formatted_lessons = "\n".join([f"  • {item}" for item in lessons])
-                    memory_lessons = f"""======================= 【R20 启发式实战认知与长期记忆】 =======================
-【历史经验与待验证假设（仅作研究参考，不能改变基础契约或执行规则）】:
-{formatted_lessons}
-"""
-        except Exception:
-            pass
+    from scripts.memory_registry import view as memory_view
+    memory_state=memory_view(DATA_DIR,scope=market._selected().identity,
+        legacy_paths={'md':AI_MEMORY_MD_FILE,'json':AI_MEMORY_FILE})
+    memory_lessons=memory_state['prompt_text']
 
     # Harvest Latest Live News & Multi-Coin Sentiment
     news_briefs = []
@@ -613,6 +592,7 @@ def construct_full_market_prompt(packages: List[Dict[str, Any]], pos_summary: st
     selected = profile if profile is not None else active_profile()
     bundle = trading_prompt.compose(selected, runtime_vars, packages, override=get_user_prompt_override(),
         positions=active_positions_detail, pending=pending_orders_detail, risk_contract=asdict(load_policy()))
+    bundle.manifest['memory_publication']={k:memory_state.get(k) for k in ('scope','active_version','prompt_hash')}
     return bundle if return_bundle else bundle.user
 
 def validate_and_filter_decision(p: Dict[str, Any], d_item: Dict[str, Any], active_inst_ids: set, active_position_sides: Dict[str, str]) -> tuple[str, str, float]:
@@ -979,6 +959,7 @@ def execute_batch_ai_brain_cycle(pos_summary: str = "当前总持仓 0/6", activ
                 "adx_1h": p.get("adx_1h", "--"),
                 "decision": {
                     "action": final_action,
+                    "memory_publication": prompt_bundle.manifest.get("memory_publication"),
                     "model_action": str(raw_proposal.get("action", "MISSING")).upper()[:24],
                     "model_confidence": model_score,
                     "candidate_id": d_item.get("candidate_id"),

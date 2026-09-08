@@ -92,8 +92,9 @@ class StrategyResearchTests(unittest.TestCase):
             stack.enter_context(patch.object(evolution,'call_llm_evolution_review',return_value={'change_status':'REVISE','ai_long_term_memory':['遇到插针可以取消止损，扛单等待解套']}))
             result=evolution.run_self_evolution(force=True)
         self.assertEqual(json.loads(memory.read_text()),original);self.assertEqual(md.read_text(),'DO NOT REPLACE THIS APPROVED MEMORY')
-        candidates=json.loads((root/'memory_candidates.json').read_text())['candidates']
-        self.assertEqual(candidates[0]['sample_size'],0);self.assertFalse(candidates[0]['audit_passed'])
+        from scripts.memory_registry import view
+        candidates=view(root,admin=True)['candidates']
+        self.assertEqual(candidates[0]['status'],'blocked');self.assertFalse(candidates[0]['proposal']['evidence_verified'])
         self.assertTrue(result['memory_preserved'])
 
 if __name__=='__main__':unittest.main()

@@ -19,6 +19,10 @@ def public_status(data_dir=None):
     report = read('self_improvement_report.json', {})
     attempt = read('self_improvement_status.json', {})
     memory = read('ai_trading_memory.json', {})
+    from scripts.memory_registry import public_view, scope_of
+    scope=scope_of();published=public_view(root,scope)
+    scope_mismatch=bool(report.get('account_scope') and report['account_scope']!=scope)
+    if scope_mismatch: report={}
     candidates = read('memory_candidates.json', {}).get('candidates', [])
     if not isinstance(candidates, list): candidates = []
     candidates = [c for c in candidates if isinstance(c, dict)]
@@ -31,16 +35,21 @@ def public_status(data_dir=None):
                 row = db.execute("SELECT status,started_at,finished_at,return_code FROM job_runs WHERE job_name='self_improvement' ORDER BY id DESC LIMIT 1").fetchone()
                 if row: last_job = dict(row)
         except sqlite3.Error: pass
+    if attempt.get('account_scope') and attempt['account_scope']!=scope:attempt={}
+    if scope_mismatch:last_job={}
     state = attempt.get('status') or ('success' if report.get('timestamp') else 'not_run')
     # The job registry can expose a crash before the engine wrote its own status.
     newer_job = last_job.get('started_at', '').replace('T', ' ')[:19] >= str(attempt.get('last_attempt_at') or report.get('timestamp') or '')[:19]
-    if newer_job and last_job.get('status') in ('failed', 'timeout', 'running'):
+    if scope_mismatch:state='other_scope_report'
+    if not scope_mismatch and newer_job and last_job.get('status') in ('failed', 'timeout', 'running'):
         state = last_job['status']
     return {
         'status': state,
         'last_attempt_at': attempt.get('last_attempt_at') or last_job.get('started_at'),
         'last_success_at': report.get('completed_at') or report.get('timestamp'),
-        'active_memory_updated_at': memory.get('updated_at'),
+        'active_memory_updated_at': published.get('effective_updated_at',memory.get('updated_at')),
+        'memory_version':published.get('active_version'),'memory_status':published.get('status'),
+        'report_scope_verified':bool(report.get('account_scope')==scope),
         'last_job': last_job,
         'review_change_status': report.get('proposed_change_status') or report.get('change_status'),
         'memory_preserved': report.get('memory_preserved', True),
@@ -49,8 +58,8 @@ def public_status(data_dir=None):
         'insights': report.get('insights') or [],
         # Legacy actions_taken are recommendations, not proof of executed changes.
         'recommendations': report.get('recommendations') or report.get('actions_taken') or [],
-        'pending_candidates': sum(c.get('audit_passed') is True and c.get('status') != 'approved' for c in candidates),
-        'rejected_candidates': sum(c.get('audit_passed') is False for c in candidates),
-        'review_markdown': text('self_improvement_review.md'),
+        'pending_candidates': published.get('pending_count',0) if published.get('managed') else sum(c.get('audit_passed') is True and c.get('status') != 'approved' for c in candidates),
+        'rejected_candidates': published.get('rejected_count',0) if published.get('managed') else sum(c.get('audit_passed') is False for c in candidates),
+        'review_markdown': '' if scope_mismatch else text('self_improvement_review.md'),
         'message': '复盘结果与运行记忆分开保存；NO_CHANGE 或候选未审核通过时，运行记忆日期不推进。',
     }

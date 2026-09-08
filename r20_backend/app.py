@@ -2466,114 +2466,69 @@ def restore_backup_archive(payload: BackupRestoreRequest, x_r20_admin_token: str
 # -------------------------------------------------------------
 # AI Trading Heuristic Memory APIs (Self-Improvement Memory CRUD)
 # -------------------------------------------------------------
-MEMORY_FILE = DATA_DIR / "AI_TRADING_MEMORY.md"
+MEMORY_FILE = DATA_DIR / "AI_TRADING_MEMORY.md"  # legacy snapshot input only
 
 def _parse_memory_items() -> list[str]:
-    if not MEMORY_FILE.exists():
-        return []
-    text = MEMORY_FILE.read_text(encoding="utf-8")
-    items = []
-    for line in text.splitlines():
-        line = line.strip()
-        if line.startswith("- "):
-            clean = line[2:].strip()
-            if clean:
-                items.append(clean)
-    return items
+    from scripts.memory_registry import view
+    return [r['text'] for r in view(DATA_DIR)['rules'] if r.get('enabled',True)]
+
 
 def _save_memory_items(items: list[str]) -> None:
-    header = "# R20 AI 交易实战长期心法 (Heuristic Long-Term Memory)\n\n> 状态：候选心法经审核后采用，管理员可在后台增删维护；不会按固定周期自动覆盖已采用心法。\n\n"
-    body = "\n".join(f"- {it.strip()}" for it in items if it.strip())
-    MEMORY_FILE.parent.mkdir(parents=True, exist_ok=True)
-    MEMORY_FILE.write_text(header + body + "\n", encoding="utf-8")
+    raise ValueError('请通过记忆候选审核发布，禁止直接覆盖运行 Markdown')
 
 
 @app.get("/api/v1/admin/memory")
 def get_admin_memory(x_r20_admin_token: str | None = Header(default=None), x_r20_session: str | None = Header(default=None, alias="X-R20-Session")) -> dict[str, Any]:
     refresh_settings()
     require_admin_header(x_r20_admin_token, x_r20_session)
+    from scripts import memory_registry
     from scripts.evolution_status import public_status as evolution_status
-    items = _parse_memory_items()
-    raw_content = MEMORY_FILE.read_text(encoding="utf-8") if MEMORY_FILE.exists() else ""
-    
-    # Structured white-box evolution shield data
-    structured_lessons = []
     try:
-        from scripts.evolution_shield import load_structured_memory
-        structured_lessons = load_structured_memory()
-    except Exception:
-        pass
-    return {
-        "items": items,
-        "count": len(items),
-        "raw": raw_content,
-        "structured_lessons": structured_lessons,
-        "evolution_review": evolution_status(DATA_DIR),
-    }
-
-
-@app.post("/api/v1/admin/memory/toggle/{lesson_id}")
-def toggle_admin_memory_lesson(lesson_id: str, x_r20_admin_token: str | None = Header(default=None), x_r20_session: str | None = Header(default=None, alias="X-R20-Session")) -> dict[str, Any]:
-    refresh_settings()
-    actor = require_admin_header(x_r20_admin_token, x_r20_session)
-    try:
-        from scripts.evolution_shield import toggle_lesson, load_structured_memory
-        target = toggle_lesson(lesson_id)
-        if not target:
-            raise HTTPException(status_code=404, detail="未找到指定心法条目")
-        audit_record("memory.lesson.toggle", "success", {"actor": actor.get("username", "admin"), "id": lesson_id, "enabled": target.get("enabled")})
-        return {"ok": True, "target": target, "structured_lessons": load_structured_memory()}
-    except HTTPException:
-        raise
-    except Exception as exc:
-        raise HTTPException(status_code=500, detail=f"心法切换失败: {exc}") from exc
-
-
-@app.post("/api/v1/admin/memory/rollback")
-def rollback_admin_memory_lessons(x_r20_admin_token: str | None = Header(default=None), x_r20_session: str | None = Header(default=None, alias="X-R20-Session")) -> dict[str, Any]:
-    refresh_settings()
-    actor = require_admin_header(x_r20_admin_token, x_r20_session)
-    try:
-        from scripts.evolution_shield import rollback_to_baseline
-        res = rollback_to_baseline()
-        audit_record("memory.rollback_baseline", "success", {"actor": actor.get("username", "admin"), "count": len(res)})
-        return {"ok": True, "message": "已成功防污染回滚至官方基准心法库", "structured_lessons": res}
-    except Exception as exc:
-        raise HTTPException(status_code=500, detail=f"回滚失败: {exc}") from exc
+        state=memory_registry.view(DATA_DIR,admin=True)
+    except memory_registry.MemoryError as exc:
+        raise HTTPException(503,str(exc)) from None
+    items=[r['text'] for r in state['rules'] if r.get('enabled',True)]
+    from r20_backend.schedule_store import load_schedule
+    return {'items':items,'count':len(items),'raw':state['content'],
+            'structured_lessons':[{**r,'rule_text':r['text']} for r in state['rules']],
+            'publication':state,'evolution_review':evolution_status(DATA_DIR),
+            'self_improvement_schedule':load_schedule().get('self_improvement_time')}
 
 
 @app.post("/api/v1/admin/memory")
 def add_admin_memory_item(payload: MemoryItemRequest, x_r20_admin_token: str | None = Header(default=None), x_r20_session: str | None = Header(default=None, alias="X-R20-Session")) -> dict[str, Any]:
-    refresh_settings()
-    actor = require_admin_header(x_r20_admin_token, x_r20_session)
-    items = _parse_memory_items()
-    new_item = payload.text.strip()
-    if new_item in items:
-        return {"saved": True, "items": items, "message": "条目已存在"}
-    items.insert(0, new_item)
-    _save_memory_items(items)
-    audit_record("memory.item.add", "success", {"actor": actor.get("username", "admin"), "item": new_item[:50]})
-    return {"saved": True, "items": items}
+    actor=require_superadmin(x_r20_session)
+    from scripts import memory_registry
+    try:
+        result=memory_registry.propose({'action':'ADD','text':payload.text},data_dir=DATA_DIR,actor=actor['username'])
+        audit_record('memory.candidate.create','success',{'actor':actor['username']})
+        return {'saved':False,'pending':True,**result}
+    except memory_registry.MemoryError as exc:raise HTTPException(400,str(exc)) from None
+
+
+def _retired_memory_write(session):
+    require_superadmin(session)
+    raise HTTPException(410,'旧记忆直写/按索引删除/黄金基准回滚已停用，请在记忆候选中审核发布或选择真实历史版本回滚。')
+
+
+@app.post("/api/v1/admin/memory/toggle/{lesson_id}")
+def toggle_admin_memory_lesson(lesson_id: str, x_r20_admin_token: str | None = Header(default=None), x_r20_session: str | None = Header(default=None, alias="X-R20-Session")):
+    _retired_memory_write(x_r20_session)
+
+
+@app.post("/api/v1/admin/memory/rollback")
+def rollback_admin_memory_lessons(x_r20_admin_token: str | None = Header(default=None), x_r20_session: str | None = Header(default=None, alias="X-R20-Session")):
+    _retired_memory_write(x_r20_session)
+
 
 @app.delete("/api/v1/admin/memory/{index}")
-def delete_admin_memory_item(index: int, x_r20_admin_token: str | None = Header(default=None), x_r20_session: str | None = Header(default=None, alias="X-R20-Session")) -> dict[str, Any]:
-    refresh_settings()
-    actor = require_admin_header(x_r20_admin_token, x_r20_session)
-    items = _parse_memory_items()
-    if index < 0 or index >= len(items):
-        raise HTTPException(status_code=404, detail="指定索引的记忆条目不存在")
-    removed = items.pop(index)
-    _save_memory_items(items)
-    audit_record("memory.item.delete", "success", {"actor": actor.get("username", "admin"), "item": removed[:50]})
-    return {"saved": True, "items": items, "removed": removed}
+def delete_admin_memory_item(index: int, x_r20_admin_token: str | None = Header(default=None), x_r20_session: str | None = Header(default=None, alias="X-R20-Session")):
+    _retired_memory_write(x_r20_session)
+
 
 @app.put("/api/v1/admin/memory")
-def update_admin_memory_all(payload: MemoryUpdateAllRequest, x_r20_admin_token: str | None = Header(default=None), x_r20_session: str | None = Header(default=None, alias="X-R20-Session")) -> dict[str, Any]:
-    refresh_settings()
-    actor = require_admin_header(x_r20_admin_token, x_r20_session)
-    _save_memory_items(payload.items)
-    audit_record("memory.update_all", "success", {"actor": actor.get("username", "admin"), "count": len(payload.items)})
-    return {"saved": True, "items": payload.items}
+def update_admin_memory_all(payload: MemoryUpdateAllRequest, x_r20_admin_token: str | None = Header(default=None), x_r20_session: str | None = Header(default=None, alias="X-R20-Session")):
+    _retired_memory_write(x_r20_session)
 
 
 @app.get("/health", include_in_schema=False)
@@ -2651,6 +2606,8 @@ def positions(x_r20_admin_token: str | None = Header(default=None)) -> dict[str,
 
 from r20_backend.account_routes import install as install_account_routes
 install_account_routes(app, require_superadmin, audit_record)
+from r20_backend.memory_routes import install as install_memory_routes
+install_memory_routes(app, require_superadmin, audit_record, lambda: DATA_DIR)
 
 # Preserve the existing public dashboard and its relative-path API contract at /.
 # Admin and /api/v1 routes above are evaluated before this catch-all mount.
