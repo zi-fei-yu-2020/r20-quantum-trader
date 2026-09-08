@@ -38,6 +38,92 @@ class StrategyIntegrationTests(unittest.TestCase):
         self.assertEqual(evidence.unresolved(self.env.identity)[0][0],client)
         self.assertTrue(evidence.export_events(self.env.identity,'equity'))
 
+    def test_final_entry_accepts_profitable_stop_using_mark_and_preserves_budget(self):
+        position = {'instId': META['instId'], 'posSide': 'long', 'pos': '2',
+                    'markPx': '120', 'avgPx': '100', 'imr': '10'}
+        oco = {'algoId': 'existing-oco', 'instId': META['instId'], 'ordType': 'oco',
+               'state': 'live', 'reduceOnly': 'true', 'posSide': 'long', 'side': 'sell',
+               'sz': '2', 'slTriggerPx': '110', 'tpTriggerPx': '150'}
+        identity = evidence.append(self.env.identity, 'decision', {
+            'instrument': META['instId'], 'position_basis': {'size': 2},
+            'decision': {'action': 'BUY_LONG', 'contract_version': 'trading-evidence-v1',
+                         'contract_valid': True, 'valid_until': time.time() + 300}})
+
+        def private(method, path, params, env):
+            self.assertEqual(method, 'GET')
+            if path.endswith('/positions'): return [position]
+            if path.endswith('/orders-pending'): return []
+            if path.endswith('/balance'):
+                return [{'totalEq': '10000', 'uTime': str(int(time.time() * 1000)),
+                         'details': [{'ccy': 'USDT', 'availEq': '5000'}]}]
+            if path.endswith('/leverage-info'): return [{'posSide': 'long', 'lever': '3'}]
+            self.fail('Unexpected private endpoint ' + path)
+
+        def public(url, **kwargs):
+            self.assertTrue(kwargs.get('simulated'))
+            return {'data': [META] if '/instruments?' in url else [{'last': '120', 'ts': str(int(time.time() * 1000))}]}
+
+        with (
+            patch.object(entry_gateway, '_request', side_effect=private),
+            patch.object(entry_gateway.public_market, 'get_json', side_effect=public),
+            patch.object(entry_gateway, 'read_algo_orders', return_value=[oco]) as read,
+        ):
+            plan, client = entry_gateway.prepare(self.env, inst_id=META['instId'], side='long',
+                entry=120, stop=114, take_profit=145, requested_size=16, budget=15,
+                decision_id=identity, decision_at=time.time())
+        read.assert_called_once_with(self.env, priority='risk', force=True)
+        self.assertAlmostEqual(plan['portfolio_before']['total'], 20.72)
+        self.assertEqual(plan['portfolio_before']['long'], plan['portfolio_before']['group'])
+        self.assertEqual(plan['leverage'], 3)
+        self.assertLessEqual(plan['risk_usdt'], 15)
+        self.assertEqual(evidence.unresolved(self.env.identity)[0][0], client)
+
+    def test_invalid_existing_oco_blocks_final_entry_before_reservation(self):
+        position = {'instId': META['instId'], 'posSide': 'long', 'pos': '2',
+                    'markPx': '120', 'avgPx': '100', 'imr': '10'}
+        oco = {'algoId': 'existing-oco', 'instId': META['instId'], 'ordType': 'oco',
+               'state': 'live', 'reduceOnly': 'true', 'posSide': 'long', 'side': 'sell',
+               'sz': '2', 'slTriggerPx': '110', 'tpTriggerPx': '150'}
+        cases = [[{key: value for key, value in oco.items() if key != field}]
+                 for field in ('ordType', 'state', 'reduceOnly', 'side', 'tpTriggerPx')]
+        cases += [[{**oco, **changes}] for changes in (
+            {'state': 'effective'}, {'ordType': 'conditional'}, {'sz': 'nan'},
+            {'slTriggerPx': '120'}, {'tpTriggerPx': '119'})]
+        cases += [[{**oco, 'sz': '1'}, {**oco, 'sz': '1'}],
+                  [oco, {**oco, 'algoId': 'unknown', 'state': 'effective'}]]
+        identity = evidence.append(self.env.identity, 'decision', {
+            'instrument': META['instId'], 'position_basis': {'size': 2},
+            'decision': {'action': 'BUY_LONG', 'contract_version': 'trading-evidence-v1',
+                         'contract_valid': True, 'valid_until': time.time() + 300}})
+
+        snapshot_ts = str(int(time.time() * 1000))
+
+        def private(method, path, params, env):
+            self.assertEqual(method, 'GET')
+            self.assertEqual(env, self.env)
+            if path.endswith('/positions'): return [position]
+            if path.endswith('/orders-pending'): return []
+            if path.endswith('/balance'):
+                return [{'totalEq': '10000', 'uTime': snapshot_ts,
+                         'details': [{'ccy': 'USDT', 'availEq': '5000'}]}]
+            self.fail('Invalid coverage must reject before later preflight reads: ' + path)
+
+        for rows in cases:
+            with (
+                self.subTest(rows=rows),
+                patch.object(entry_gateway, '_request', side_effect=private),
+                patch.object(entry_gateway.public_market, 'get_json', return_value={'data': [META]}),
+                patch.object(entry_gateway, 'read_algo_orders', return_value=rows) as read,
+                patch.object(evidence, 'begin_intent', wraps=evidence.begin_intent) as reserve,
+            ):
+                with self.assertRaisesRegex(RiskRejected, 'coverage'):
+                    entry_gateway.prepare(self.env, inst_id=META['instId'], side='long',
+                        entry=120, stop=114, take_profit=145, requested_size=1, budget=15,
+                        decision_id=identity, decision_at=time.time())
+                read.assert_called_once_with(self.env, priority='risk', force=True)
+                reserve.assert_not_called()
+                self.assertEqual(evidence.unresolved(self.env.identity), [])
+
     def test_stale_or_foreign_decision_stops_before_private_reads(self):
         with patch.object(entry_gateway,'_request') as get:
             for identity,at in [('missing',time.time()),('old',time.time()-301)]:

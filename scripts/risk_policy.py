@@ -99,9 +99,15 @@ def exposure(positions, pending, algos, metadata, policy=None):
         if side=='net': side='long' if number(p['pos'])>0 else 'short'
         if side not in {'long','short'}: raise RiskRejected('Unknown position direction')
         mark=number(p.get('markPx'),positive=True)
-        rows=[a for a in algos if a.get('instId')==inst and a.get('posSide') in {side,'net'} and a.get('side')==('sell' if side=='long' else 'buy') and str(a.get('state','live')) in {'live','effective'} and str(a.get('reduceOnly','true')).lower() in {'true','1'} and number(a.get('slTriggerPx') or 0)>0]
-        covered=sum(number(a.get('sz') or 0) for a in rows)
-        if covered < size*.999: raise RiskRejected('Unknown/incomplete stop coverage on existing position')
+        from scripts.protection_policy import oco_coverage
+        if not isinstance(algos, (list, tuple)) or any(not isinstance(a, dict) or not a.get('instId') for a in algos):
+            raise RiskRejected('Unknown/incomplete stop coverage on existing position')
+        # Marked equity includes unrealized profit: a trailing stop may cross entry,
+        # but ambiguous/triggered orders cannot authorize additional exposure.
+        coverage = oco_coverage([a for a in algos if a.get('instId') == inst], side, mark_px=mark)
+        if coverage.unknown or coverage.size < size:
+            raise RiskRejected('Unknown/incomplete stop coverage on existing position')
+        rows = coverage.orders
         stop=min(number(a['slTriggerPx']) for a in rows) if side=='long' else max(number(a['slTriggerPx']) for a in rows)
         loss=max(0,mark-stop if side=='long' else stop-mark)
         liq=number(p.get('liqPx') or 0)

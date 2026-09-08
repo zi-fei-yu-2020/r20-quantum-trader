@@ -128,7 +128,7 @@ class StrategyRiskTests(unittest.TestCase):
     def test_unknown_existing_or_pending_stop_blocks_exposure(self):
         position={'instId':META['instId'],'pos':'1','posSide':'long','markPx':'100'}
         with self.assertRaises(risk.RiskRejected):risk.exposure([position],[],[],{META['instId']:META})
-        algo={'instId':META['instId'],'side':'sell','posSide':'long','sz':'1','slTriggerPx':'90'}
+        algo={'algoId':'existing-oco','instId':META['instId'],'ordType':'oco','state':'live','reduceOnly':'true','side':'sell','posSide':'long','sz':'1','slTriggerPx':'90','tpTriggerPx':'125'}
         x=risk.exposure([position],[],[algo],{META['instId']:META});self.assertGreater(x['total'],10)
         with self.assertRaises(risk.RiskRejected):risk.exposure([],[{'instId':META['instId'],'posSide':'long','sz':'1','px':'100'}],[],{META['instId']:META})
 
@@ -160,5 +160,125 @@ class StrategyRiskTests(unittest.TestCase):
         with patch.object(entry_gateway,'_request',side_effect=RuntimeError('not found')) as get:
             with self.assertRaises(risk.RiskRejected):entry_gateway.reconcile_intents(self.env)
         get.assert_called_once();self.assertEqual(get.call_args.args[0],'GET')
+
+class ExposureCoverageTests(unittest.TestCase):
+    def setUp(self):
+        self.position = {'instId': META['instId'], 'posSide': 'long', 'pos': '2',
+                         'markPx': '120', 'avgPx': '100'}
+        self.oco = {'algoId': 'existing-oco', 'instId': META['instId'], 'ordType': 'oco',
+                    'state': 'live', 'reduceOnly': 'true', 'posSide': 'long', 'side': 'sell',
+                    'sz': '2', 'slTriggerPx': '110', 'tpTriggerPx': '150'}
+
+    def exposure(self, rows, position=None, **kwargs):
+        return risk.exposure([self.position if position is None else position], [], rows,
+                             {META['instId']: META}, **kwargs)
+
+    def test_every_required_oco_field_is_explicit(self):
+        for field in ('algoId', 'instId', 'ordType', 'state', 'reduceOnly', 'posSide',
+                      'side', 'sz', 'slTriggerPx', 'tpTriggerPx'):
+            row = dict(self.oco); row.pop(field)
+            with self.subTest(missing=field), self.assertRaisesRegex(risk.RiskRejected, 'coverage'):
+                self.exposure([row])
+
+    def test_invalid_types_states_and_reduce_only_block_final_risk(self):
+        for changes in ({'ordType': 'conditional'}, {'ordType': 'trigger'}, {'ordType': 'limit'},
+                        {'state': 'effective'}, {'state': 'partially_filled'}, {'state': 'unknown'},
+                        {'state': 'canceled'}, {'reduceOnly': False}, {'reduceOnly': 'yes'},
+                        {'posSide': 'short'}, {'side': 'buy'}):
+            with self.subTest(changes=changes), self.assertRaisesRegex(risk.RiskRejected, 'coverage'):
+                self.exposure([{**self.oco, **changes}])
+
+    def test_nonpositive_nonfinite_or_missing_quantities_and_triggers_are_rejected(self):
+        for field in ('sz', 'slTriggerPx', 'tpTriggerPx'):
+            for value in (None, '', True, False, 'invalid', '-1', '0', 'nan', 'inf', '-inf'):
+                with self.subTest(field=field, value=value), self.assertRaisesRegex(risk.RiskRejected, 'coverage'):
+                    self.exposure([{**self.oco, field: value}])
+        with self.assertRaisesRegex(risk.RiskRejected, 'coverage'):
+            self.exposure([{**self.oco, 'sz': '', 'actualSz': '2'}])
+        with self.assertRaisesRegex(risk.RiskRejected, 'coverage'):
+            self.exposure([{**self.oco, 'actualSz': '1'}])
+
+    def test_duplicate_rows_cannot_fill_a_gap_or_inflate_risk(self):
+        half = {**self.oco, 'sz': '1'}
+        with self.assertRaisesRegex(risk.RiskRejected, 'coverage'):
+            self.exposure([half, dict(half)])
+        self.assertEqual(self.exposure([self.oco, dict(self.oco)]), self.exposure([self.oco]))
+        with self.assertRaisesRegex(risk.RiskRejected, 'coverage'):
+            self.exposure([self.oco, {**self.oco, 'slTriggerPx': '109'}])
+
+    def test_unknown_rows_block_even_when_valid_rows_cover_the_whole_position(self):
+        for changes in ({'state': 'effective'}, {'reduceOnly': None}, {'ordType': 'conditional'},
+                        {'side': None}, {'posSide': None}, {'sz': 'nan'}):
+            with self.subTest(changes=changes), self.assertRaisesRegex(risk.RiskRejected, 'coverage'):
+                self.exposure([self.oco, {**self.oco, 'algoId': 'ambiguous', **changes}])
+        for rows in (None, {}, [None], [self.oco, {'algoId': 'missing-instrument'}]):
+            with self.subTest(rows=rows), self.assertRaisesRegex(risk.RiskRejected, 'coverage'):
+                self.exposure(rows)
+
+    def test_real_gap_below_old_point_one_percent_tolerance_is_rejected(self):
+        with self.assertRaisesRegex(risk.RiskRejected, 'coverage'):
+            self.exposure([{**self.oco, 'sz': '1.9995'}])
+
+    def test_mark_not_entry_controls_profitable_stop_geometry_in_both_directions(self):
+        for side, mark, stop, tp, expected in [('long', '120', '110', '150', 20.72),
+                                               ('short', '80', '90', '60', 20.48)]:
+            with self.subTest(side=side):
+                position = {**self.position, 'posSide': side, 'markPx': mark}
+                row = {**self.oco, 'posSide': side, 'side': 'sell' if side == 'long' else 'buy',
+                       'slTriggerPx': stop, 'tpTriggerPx': tp}
+                result = self.exposure([row], position)
+                self.assertAlmostEqual(result['total'], expected)
+                self.assertEqual(result[side], result['total'])
+                self.assertEqual(result['group'], result['total'])
+                self.assertEqual(result['short' if side == 'long' else 'long'], 0)
+                for field, prices in [('slTriggerPx', (mark, '121' if side == 'long' else '79')),
+                                      ('tpTriggerPx', (mark, '119' if side == 'long' else '81'))]:
+                    for price in prices:
+                        with self.subTest(field=field, price=price), self.assertRaisesRegex(risk.RiskRejected, 'coverage'):
+                            self.exposure([{**row, field: price}], position)
+
+    def test_net_position_sign_and_close_side_are_preserved(self):
+        for signed_size, mark, stop, tp, close_side in [('2', '120', '110', '150', 'sell'),
+                                                       ('-2', '80', '90', '60', 'buy')]:
+            with self.subTest(size=signed_size):
+                position = {**self.position, 'posSide': 'net', 'pos': signed_size, 'markPx': mark}
+                row = {**self.oco, 'posSide': 'net', 'side': close_side,
+                       'slTriggerPx': stop, 'tpTriggerPx': tp}
+                self.assertGreater(self.exposure([row], position)['total'], 20)
+                with self.assertRaisesRegex(risk.RiskRejected, 'coverage'):
+                    self.exposure([{**row, 'side': 'buy' if close_side == 'sell' else 'sell'}], position)
+
+    def test_segment_worst_stop_contract_multiplier_and_cost_budget_are_unchanged(self):
+        metadata = {META['instId']: {**META, 'ctVal': '3', 'ctMult': '2'}}
+        policy = risk.Policy(taker_fee=.0007, slippage=.0013)
+        for side, mark, stops, tp, expected in [('long', '120', ('105', '110'), '150', 185.76),
+                                               ('short', '80', ('90', '95'), '60', 183.84)]:
+            with self.subTest(side=side):
+                position = {**self.position, 'posSide': side, 'markPx': mark}
+                rows = [{**self.oco, 'algoId': str(index), 'sz': '1', 'posSide': side,
+                         'side': 'sell' if side == 'long' else 'buy', 'slTriggerPx': stop, 'tpTriggerPx': tp}
+                        for index, stop in enumerate(stops)]
+                result = risk.exposure([position], [], rows, metadata, policy)
+                self.assertAlmostEqual(result['total'], expected)
+                self.assertEqual(result['group'], result[side])
+                self.assertEqual(result['total'], result[side])
+
+    def test_missing_or_invalid_mark_never_falls_back_to_entry(self):
+        for mark in (None, '', 'nan', 'inf', '-1', '0'):
+            with self.subTest(mark=mark), self.assertRaises(risk.RiskRejected):
+                self.exposure([self.oco], {**self.position, 'markPx': mark})
+
+    def test_valid_oco_still_must_respect_liquidation_boundary(self):
+        with self.assertRaisesRegex(risk.RiskRejected, 'liquidation'):
+            self.exposure([self.oco], {**self.position, 'liqPx': '111'})
+        row = {**self.oco, 'posSide': 'short', 'side': 'buy', 'slTriggerPx': '90', 'tpTriggerPx': '60'}
+        with self.assertRaisesRegex(risk.RiskRejected, 'liquidation'):
+            self.exposure([row], {**self.position, 'posSide': 'short', 'markPx': '80', 'liqPx': '89'})
+
+    def test_other_instrument_and_opposite_position_do_not_pollute_valid_coverage(self):
+        unrelated = {**self.oco, 'algoId': 'other', 'instId': 'OTHER-USDT-SWAP', 'state': 'effective'}
+        opposite = {**self.oco, 'algoId': 'opposite', 'posSide': 'short', 'side': 'buy'}
+        self.assertEqual(self.exposure([self.oco, unrelated, opposite]), self.exposure([self.oco]))
+
 
 if __name__=='__main__':unittest.main()
