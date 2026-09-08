@@ -112,9 +112,11 @@ def run_guard(*, observe_only=False):
                         'entryTs':int(float(position.get('cTime') or time.time()*1000)/1000),'entryTime':timestamp,
                         'initialSz':abs(float(position['pos'])),'currentSz':abs(float(position['pos'])),
                         'highWaterMark':mark,'lowWaterMark':mark,'trailingStopPx':stop,
-                        'takeProfitPx':float(matching[0]['tpTriggerPx']),'exchangeStopPx':stop}
+                        'takeProfitPx':float(matching[0]['tpTriggerPx']),'exchangeStopPx':stop,'initialRiskStopPx':stop}
                 changed,detail=trader.manage_position_tp_and_trailing(factors,factors['position'],trackers,timestamp,actions)
                 if key not in trackers:continue
+                if trackers[key].get('pendingStopAmendment'):
+                    actions.append({'instrument':inst,'status':'unresolved_stop_amendment_no_retry'});continue
                 desired=float(trackers[key].get('localTrailingStopPx') or trackers[key].get('trailingStopPx') or 0)
                 for algo in matching:
                     old=float(algo['slTriggerPx'])
@@ -125,6 +127,10 @@ def run_guard(*, observe_only=False):
                         actions.append({'instrument':inst,'status':'stop_read_unknown_no_amend'});break
                     current=next((o for o in fresh if o.get('algoId')==algo['algoId']),None)
                     if not current or not monotonic_stop(side,float(current.get('slTriggerPx') or 0),desired,mark):continue
+                    from scripts.protection_policy import rounded_stop
+                    rounded=rounded_stop(side,desired,float(current['slTriggerPx']),mark,items[inst]['tickSz'])
+                    if rounded is None:continue
+                    desired=float(rounded)
                     result=trader.run_cmd_result(trader.okx_private_command(f"okx swap algo amend --instId {inst} --algoId {algo['algoId']} --newSlTriggerPx {desired} --newSlOrdPx=-1 --json"))
                     verified=False
                     try:

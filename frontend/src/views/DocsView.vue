@@ -776,7 +776,7 @@ onUnmounted(() => {
                 >
               </div>
               <p class="text-[11px]" style="color: var(--text-muted)">
-                默认 ADX 插件在 0 &lt; 1H ADX &lt; 18 时拦截开仓；ADX 衡量趋势强度，不代表流动性或胜率，数据有效性仍由其他 gate 检查。
+                默认 ADX 插件对低于18的普通信号保持拦截；已通过证据契约、可重建的收盘触发程序计划可以继续接受最终风控。ADX不是胜率，也不是单独的下单授权。
               </p>
             </div>
 

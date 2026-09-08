@@ -1113,6 +1113,7 @@ def manage_position_tp_and_trailing(f, curr_pos, trackers, timestamp_full, execu
             "lowWaterMark": cur_px,
             "trailingStopPx": adopted_stop,
             "exchangeStopPx": adopted_stop,
+            "initialRiskStopPx": adopted_stop,
             "takeProfitPx": adopted_tp,
             "stage_desc": "持有监控中"
         }
@@ -1132,6 +1133,23 @@ def manage_position_tp_and_trailing(f, curr_pos, trackers, timestamp_full, execu
         cur_profit_px = entry_px - cur_px
         peak_profit_px = entry_px - t["lowWaterMark"]
 
+    # Cost-aware profit lock does not wait for an oversized ATR multiple.
+    from scripts.profit_protection import floor_plan
+    from scripts.risk_policy import load_policy
+    policy=load_policy()
+    if not t.get('initialRiskStopPx'):
+        original=float(t.get('exchangeStopPx') or t.get('trailingStopPx') or 0)
+        if original>0 and ((is_long and original<entry_px) or (not is_long and original>entry_px)):
+            t['initialRiskStopPx']=original
+    protection=floor_plan('long' if is_long else 'short',entry_px,cur_px,
+        t['highWaterMark'] if is_long else t['lowWaterMark'],t.get('initialRiskStopPx'),
+        f.get('atr_15m') or atr,taker_fee=policy.taker_fee,slippage=policy.slippage)
+    if protection.get('active'):
+        desired=protection['stop'];old=float(t.get('trailingStopPx') or 0)
+        if not old or (desired>old if is_long else desired<old):
+            t['trailingStopPx']=desired;t['localTrailingStopPx']=desired
+            t['profitProtection']=protection;t['stage_desc']='成本覆盖后的浮盈保护'
+
     # 1. Hard Stop Loss (loss protection is independent of profit-lock activation).
     # The tracker stop is the exchange-protection source of truth; if a legacy or
     # partially migrated position has no live cloud OCO, the local 15-minute
@@ -1139,7 +1157,7 @@ def manage_position_tp_and_trailing(f, curr_pos, trackers, timestamp_full, execu
     hard_stop_px = float(t.get("trailingStopPx", 0.0) or 0.0)
     hard_stop_hit = hard_stop_px > 0 and ((is_long and cur_px <= hard_stop_px) or (not is_long and cur_px >= hard_stop_px))
     if hard_stop_hit:
-        closed, close_detail = close_position_confirmed(inst_id, "long" if is_long else "short", pos_sz, exit_reason='hard_stop', position=curr_pos)
+        closed, close_detail = close_position_confirmed(inst_id, "long" if is_long else "short", pos_sz, exit_reason='profit_lock' if t.get('profitProtection',{}).get('active') else 'hard_stop', position=curr_pos)
         if not closed:
             executed_actions.append(f"[{name}] 硬止损平仓失败，仓位仍保留: {close_detail}")
             return False, "硬止损平仓失败"
@@ -1229,7 +1247,7 @@ def manage_position_tp_and_trailing(f, curr_pos, trackers, timestamp_full, execu
         return True, "时间止损"
 
     # 3. Three-Tier Ratchet Profit-Locking & Momentum Take-Profit Engine
-    # Tier 1: Breakeven Lock at +1.0x ATR profit (Guarantee 100% risk-free trade)
+    # Legacy ATR ratchet can further tighten the cost-aware floor; no guarantee.
     # Tier 2: 50% Profit Lock-In at +1.8x ATR profit (Lock in at least +0.9x ATR solid profit)
     # Tier 3: Kinetic Reversal Exit from Peak (Protect accumulated big wins)
     
@@ -1244,7 +1262,7 @@ def manage_position_tp_and_trailing(f, curr_pos, trackers, timestamp_full, execu
             t["stage_desc"] = f"锁定大波段利润 (保底止损 {dynamic_floor_sl})"
         elif peak_profit_px >= tier1_breakeven_trigger:
             dynamic_floor_sl = max(dynamic_floor_sl, entry_px + 0.0020 * entry_px)
-            t["stage_desc"] = f"已推保本无风险 (保底止损 {dynamic_floor_sl})"
+            t["stage_desc"] = f"已收紧保本保护 (保底止损 {dynamic_floor_sl})"
         t["localTrailingStopPx"] = dynamic_floor_sl
         t["trailingStopPx"] = dynamic_floor_sl  # local fail-safe; cloud confirmation is separate
 
@@ -1429,22 +1447,14 @@ def execute_ai_position_management(real_pos_dict, trackers, timestamp_full, exec
                 continue
             atr_val = max(float(position.get("atr_1h", 0) or 0), float(position.get("atr", 0) or 0), current_px * 0.012)
             
-            # Anti-premature trailing fix:
-            # 1. Do NOT move SL up until price is at least +1.2x ATR above entry (meaningful profit)
-            # 2. Maintain at least 0.8x ATR breathing buffer between current price and new SL to prevent tagging by noise
-            if pos_side == "long":
-                min_profit_reached = (current_px - avg_px) >= 1.2 * atr_val
-                safe_buffer_from_current = (current_px - new_sl) >= 0.7 * atr_val
-                tightens_risk = new_sl > 0 and avg_px <= new_sl < current_px and min_profit_reached and safe_buffer_from_current
-            elif pos_side == "short":
-                min_profit_reached = (avg_px - current_px) >= 1.2 * atr_val
-                safe_buffer_from_current = (new_sl - current_px) >= 0.7 * atr_val
-                tightens_risk = new_sl > 0 and current_px < new_sl <= avg_px and min_profit_reached and safe_buffer_from_current
-            else:
-                tightens_risk = False
+            from scripts.profit_protection import allow_ai_tightening
+            from scripts.risk_policy import load_policy
+            policy=load_policy()
+            tightens_risk=allow_ai_tightening(pos_side,avg_px,current_px,new_sl,atr_val,
+                taker_fee=policy.taker_fee,slippage=policy.slippage)
 
             if not tightens_risk:
-                executed_actions.append(f"[{name}] 浮盈空间不足或与现价缓冲过近({current_px} vs 拟调SL {new_sl})，拒绝过早收紧止损")
+                executed_actions.append(f"[{name}] 浮盈空间不足或与现价缓冲过近({current_px} vs 拟调SL {new_sl})，未满足成本保本或最小行情缓冲")
                 continue
             try:
                 algo_orders = algo_reader.orders_for_instrument(

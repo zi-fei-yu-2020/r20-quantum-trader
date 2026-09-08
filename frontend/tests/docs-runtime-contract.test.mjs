@@ -65,7 +65,7 @@ test('real trend and ADX plugins remain distinct from the final quote and net RR
     '01_macro_trend_filter.py', '02_confidence_gatekeeper.py',
     '03_adx_volatility_filter.py', '04_risk_reward_gatekeeper.py',
     '4H 宏观多头通道严禁摸顶开空', '4H 空头通道严禁接飞刀做多',
-    '0 < 1H ADX < 18', '价格几何 RR ≥ 2.0', '手续费、滑点和最终价格重算净 RR',
+    '低于18的普通信号保持拦截', '价格几何 RR ≥ 2.0', '手续费、滑点和最终价格重算净 RR',
     '默认至少 2.0', '风险预算', '四个内置插件默认启用', '默认关闭的自定义示例',
     '已发出的请求仍需确认与对账',
   ])
