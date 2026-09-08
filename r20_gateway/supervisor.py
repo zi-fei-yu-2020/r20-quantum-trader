@@ -58,7 +58,8 @@ def _run() -> None:
 def start_supervisor() -> None:
     # The worker requires POSIX flock and /proc ownership checks. A Windows
     # control plane can serve read-only APIs, but must not spawn a crash loop.
-    if os.getenv("R20_TESTING") == "1" or sys.platform == "win32":
+    if (os.getenv("R20_TESTING") == "1" or sys.platform == "win32"
+            or os.getenv("R20_GATEWAY_AUTOSTART", "1") != "1"):
         return
     global _thread
     if _thread and _thread.is_alive(): return

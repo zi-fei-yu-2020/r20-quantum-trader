@@ -50,7 +50,12 @@ def backup_job_specs() -> tuple[JobSpec, ...]:
 
 
 def current_jobs() -> tuple[JobSpec, ...]:
-    return (*JOBS, *backup_job_specs())
+    # Operator pause stops scheduled inference/new entries, never position protection.
+    # Read the writable configuration each tick so a pause does not need a restart.
+    from scripts.okx_runtime import _load_dotenv
+    automatic = _load_dotenv().get("R20_AUTOTRADE_ENABLED", "1") == "1"
+    jobs = tuple(job for job in JOBS if automatic or job.name != "trader")
+    return (*jobs, *backup_job_specs())
 
 
 def scheduler_snapshot(store: GatewayStore) -> dict[str, Any]:
