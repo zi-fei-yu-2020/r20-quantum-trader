@@ -2069,22 +2069,66 @@ def update_notification_schedule(payload: NotificationScheduleUpdate, x_r20_admi
 @app.get("/api/v1/admin/backups/simple")
 def simple_backup_config(x_r20_admin_token: str | None = Header(default=None)) -> dict[str, Any]:
     require_admin_header(x_r20_admin_token)
-    jobs = list_backup_jobs(); job = next((x for x in jobs if x.get("id") == "nightly-default"), jobs[0] if jobs else None)
-    if not job: raise HTTPException(status_code=404, detail="主灾备任务不存在")
+    jobs = list_backup_jobs()
+    job = next((x for x in jobs if x.get("id") == "nightly-default"), jobs[0] if jobs else None)
+    if not job:
+        raise HTTPException(status_code=404, detail="主灾备任务不存在")
     target = next((x for x in job.get("targets", []) if x.get("enabled")), None)
-    if not target: target = next((x for x in job.get("targets", []) if x.get("type") == "local"), None)
-    target_type = str((target or {}).get("type") or "local"); auth_mode = str((target or {}).get("auth_mode") or "")
+    if not target:
+        target = next((x for x in job.get("targets", []) if x.get("type") == "local"), None)
+    target = dict(target or {})
+    target_type = str(target.get("type") or "local")
+    auth_mode = str(target.get("auth_mode") or "")
     legacy_bypy = target_type == "baidu" and auth_mode != "oauth"
-    destination = "baidu_oauth" if target_type == "baidu" and not legacy_bypy else target_type if target_type in {"local","s3","oss","webdav"} else "local"
-    validation = validate_backup_job(job); latest = None
+    destination = "baidu_oauth" if target_type == "baidu" and not legacy_bypy else target_type if target_type in {"local", "s3", "oss", "webdav"} else "local"
+    missing_fields = []
+    configured = target_type == "local"
+    if target_type != "local":
+        ref = str(target.get("credential_ref") or f"backup:{target.get('id', '')}")
+        credential_state = backup_credential_status(ref)
+        fields = set(credential_state.get("fields") or [])
+        required = {
+            "s3": {"access_key_id", "secret_access_key"},
+            "oss": {"access_key_id", "secret_access_key"},
+            "webdav": {"username", "password"},
+            "aliyundrive": {"username", "password"},
+            "quark": {"username", "password"},
+            "baidu": {"app_key", "app_secret", "refresh_token"},
+        }.get(target_type, set())
+        missing_fields = sorted(required - fields)
+        target_fields = {"s3": ("endpoint", "bucket"), "oss": ("endpoint", "bucket"),
+                         "webdav": ("endpoint",), "aliyundrive": ("endpoint",), "quark": ("endpoint",)}.get(target_type, ())
+        missing_fields.extend(name for name in target_fields if not str(target.get(name) or "").strip())
+        configured = bool(required) and not missing_fields and not legacy_bypy
+        if target_type in {"aliyundrive", "quark"} and auth_mode != "webdav":
+            configured = False
+        # Return presence metadata only; never return credential values.
+        target["credential_status"] = {"configured": configured, "fields": sorted(fields), "count": len(fields)}
+    else:
+        target.pop("credential_status", None)
+    validation = validate_backup_job(job)
+    latest = None
     manifests_dir = ROOT / "backups" / "manifests"
     for path in sorted(manifests_dir.glob("*.json"), key=lambda p: p.stat().st_mtime, reverse=True)[:30] if manifests_dir.exists() else []:
         try:
-            item=json.loads(path.read_text(encoding="utf-8"))
-            if item.get("job_id")==job["id"]: latest=item; break
-        except (OSError,json.JSONDecodeError): pass
-    return {"job_id":job["id"],"target":target or {},"enabled":job["enabled"],"schedule_time":job["schedule_times"][0],"destination":destination,"retention":int((target or {}).get("retention") or 3),"legacy_bypy":legacy_bypy,"migration_note":"当前为旧版 ByPy 配置，请选择新的保存位置后保存完成迁移" if legacy_bypy else "","configured":bool((target or {}).get("credential_status",{}).get("configured")) if target else destination=="local","validation":validation,"latest":latest,"advanced_preserved":True}
-
+            item = json.loads(path.read_text(encoding="utf-8"))
+            if isinstance(item, dict) and item.get("job_id") == job["id"]:
+                latest = item
+                if not isinstance(item.get("status"), str) or item["status"] not in {"success", "failed", "partial", "running", "skipped"}:
+                    latest["status"] = "unknown"
+                break
+        except (OSError, json.JSONDecodeError):
+            pass
+    return {
+        "job_id": job["id"], "target": target, "enabled": job["enabled"],
+        "schedule_time": job["schedule_times"][0], "destination": destination,
+        "retention": int(target.get("retention") or 3), "legacy_bypy": legacy_bypy,
+        "migration_note": "当前为旧版 ByPy 配置，请选择新的保存位置后保存完成迁移" if legacy_bypy else "",
+        "configured": configured, "missing_fields": missing_fields,
+        "directory_write_verified": False, "connection_verified": False,
+        "configuration_note": "本地目标无需凭据；已配置不代表目录可写已验证" if target_type == "local" else "字段齐全不代表远端连接或写入已验证",
+        "validation": validation, "latest": latest, "advanced_preserved": True,
+    }
 
 @app.put("/api/v1/admin/backups/simple")
 def update_simple_backup(payload: SimpleBackupUpdateRequest, x_r20_session: str | None = Header(default=None, alias="X-R20-Session")) -> dict[str, Any]:
@@ -2336,28 +2380,72 @@ def restore_backup_archive(payload: BackupRestoreRequest, x_r20_admin_token: str
     require_superadmin(x_r20_session)
     if payload.confirmation.strip().upper() != "RESTORE R20":
         raise HTTPException(status_code=400, detail="确认短语必须精确为：RESTORE R20")
-    clean_name = Path(payload.archive_name).name
-    backups_dir = ROOT / "backups"
-    candidate = backups_dir / clean_name
-    if not candidate.exists():
-        candidate = backups_dir / "local" / clean_name
-    if not candidate.exists() or not candidate.is_file():
+    clean_name = payload.archive_name
+    if (not clean_name or Path(clean_name).name != clean_name or "\\" in clean_name
+            or ":" in clean_name or not clean_name.endswith((".tar.gz", ".tgz"))):
+        raise HTTPException(status_code=400, detail="无效归档文件名；仅支持本地 .tar.gz / .tgz")
+    candidate = ROOT / "backups" / clean_name
+    if not candidate.exists() and not candidate.is_symlink():
+        candidate = ROOT / "backups" / "local" / clean_name
+    if not candidate.exists() and not candidate.is_symlink():
         raise HTTPException(status_code=404, detail="指定的备份归档文件不存在")
 
-    import tarfile
-    restored_files = []
-    # Verify archive safety first (prevent directory traversal)
-    with tarfile.open(candidate, "r:gz") as tar:
-        for member in tar.getmembers():
-            member_path = Path(member.name)
-            if member_path.is_absolute() or ".." in member_path.parts:
-                raise HTTPException(status_code=400, detail=f"非法不安全归档路径: {member.name}")
-        for member in tar.getmembers():
-            tar.extract(member, path=ROOT)
-            restored_files.append(member.name)
-
-    audit_record("backup.restore", "success", {"filename": clean_name, "files_count": len(restored_files)})
-    return {"restored": True, "filename": clean_name, "restored_count": len(restored_files), "sample_files": restored_files[:10]}
+    from contextlib import ExitStack
+    from scripts.backup_restore import UnsafeArchive, restore_archive
+    # Never stop processes or touch cloud protection orders here. Hold all runtime
+    # locks throughout validation AND publication so a scheduler cannot start a cycle.
+    conflict = "恢复被拒绝：请先由管理员停止本实例 gateway、factor trader、brain trader 及其自动拉起/调度器，再重试。系统不会自动停止交易或修改云端保护订单。"
+    if sys.platform != "linux":
+        raise HTTPException(status_code=409, detail=conflict + " 安全停机检查仅支持 Linux/WSL。")
+    supervisor = sys.modules.get("r20_gateway.supervisor")
+    supervisor_thread = getattr(supervisor, "_thread", None)
+    if supervisor_thread is not None and supervisor_thread.is_alive():
+        raise HTTPException(status_code=409, detail=conflict + " gateway 自动拉起线程仍在运行。")
+    import fcntl
+    import stat
+    with ExitStack() as stack:
+        try:
+            # Use descriptor-relative no-follow opens; never follow a data/lock link.
+            root_fd = os.open(ROOT, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+            stack.callback(os.close, root_fd)
+            data_fd = os.open("data", os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=root_fd)
+            stack.callback(os.close, data_fd)
+            for lock_name in (".r20_gateway.lock", ".ai_factor_trader.lock", ".ai_brain_cycle.lock", ".r20_scheduler.lock"):
+                fd = os.open(lock_name, os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW | os.O_NONBLOCK, 0o600, dir_fd=data_fd)
+                stack.callback(os.close, fd)
+                info = os.fstat(fd)
+                if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1:
+                    raise OSError("unsafe runtime lock")
+                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            # Trader locks are per-cycle, so also reject sleeping same-instance
+            # processes. No signals, subprocesses, gateway imports or API calls.
+            process_names = {"ai_factor_trader.py", "ai_brain_trader.py", "r20_gateway.worker",
+                             "r20_gateway/worker.py", "r20_scheduler.py", "r20_backend.scheduler",
+                             "r20_backend/scheduler.py", "scripts.ai_factor_trader", "scripts.ai_brain_trader"}
+            for process in Path("/proc").iterdir():
+                if not process.name.isdigit() or int(process.name) == os.getpid():
+                    continue
+                try:
+                    args = process.joinpath("cmdline").read_bytes().split(b"\0")
+                    words = [arg.decode("utf-8", errors="replace") for arg in args if arg]
+                    if not any(word in process_names or Path(word).name in process_names
+                               or word.endswith(("/r20_gateway/worker.py", "/r20_backend/scheduler.py")) for word in words):
+                        continue
+                    cwd = process.joinpath("cwd").resolve(strict=True)
+                    absolute_script = any(Path(word).is_absolute() and Path(word).is_relative_to(ROOT) for word in words)
+                    if cwd == ROOT or ROOT in cwd.parents or absolute_script:
+                        raise HTTPException(status_code=409, detail=conflict)
+                except (FileNotFoundError, ProcessLookupError):
+                    continue
+        except OSError as exc:
+            # Permission/inspection failures are not evidence that trading stopped.
+            raise HTTPException(status_code=409, detail=conflict + " 无法取得独占锁或确认进程停止。") from exc
+        try:
+            result = restore_archive(candidate, ROOT)
+        except UnsafeArchive as exc:
+            raise HTTPException(status_code=400, detail=f"恢复安全检查失败：{exc}") from exc
+    audit_record("backup.restore", "success", {"filename": clean_name, "files_count": result["restored_count"], "skipped_count": result["skipped_count"]})
+    return {"restored": True, "filename": clean_name, **result}
 
 
 # -------------------------------------------------------------
@@ -2379,7 +2467,7 @@ def _parse_memory_items() -> list[str]:
     return items
 
 def _save_memory_items(items: list[str]) -> None:
-    header = "# R20 AI 交易实战长期心法 (Heuristic Long-Term Memory)\n\n> 状态：由自进化引擎每 6 小时自动复盘提炼或管理员在后台直接增删维护。\n\n"
+    header = "# R20 AI 交易实战长期心法 (Heuristic Long-Term Memory)\n\n> 状态：候选心法经审核后采用，管理员可在后台增删维护；不会按固定周期自动覆盖已采用心法。\n\n"
     body = "\n".join(f"- {it.strip()}" for it in items if it.strip())
     MEMORY_FILE.parent.mkdir(parents=True, exist_ok=True)
     MEMORY_FILE.write_text(header + body + "\n", encoding="utf-8")

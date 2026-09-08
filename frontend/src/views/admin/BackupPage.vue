@@ -8,6 +8,7 @@ import { useFeedback, useToast } from '../../composables/useFeedback'
 import { useDialogs } from '../../composables/useDialogs'
 
 import { ref, computed, onMounted } from 'vue'
+import { backupConfiguration, backupLatest } from '../../utils/backupDisplay'
 import { useApi } from '../../composables/useApi'
 import { useAuthStore } from '../../stores/auth'
 import {
@@ -29,6 +30,8 @@ const busy = ref<'test' | 'save' | 'run' | 'restore' | 'upload' | ''>('')
 const bannerMsg = useFeedback()
 
 const simple = ref<any>(null)
+const configurationDisplay = computed(() => backupConfiguration(simple.value))
+const latestDisplay = computed(() => backupLatest(simple.value?.latest))
 const targetTypes = ref<any[]>([])
 const status = ref<any>(null)
 const uploadFileInput = ref<HTMLInputElement | null>(null)
@@ -224,7 +227,7 @@ async function onFileSelected(e: Event) {
 async function restoreArchive(archiveName: string) {
   const clean = archiveName.split('/').pop() || archiveName
   const phrase = await prompt(
-    `警告：恢复备份将解压覆盖当前系统配置、历史数据与策略。\n如确认恢复归档【${clean}】，请输入确认短语：RESTORE R20`,
+    `警告：仅恢复可信备份包中允许的源码与运行数据，不恢复认证及密钥。请先停止 gateway、trader 及自动拉起机制，否则返回 409；系统不会自动停机或修改云端保护订单。\n如确认恢复归档【${clean}】，请输入确认短语：RESTORE R20`,
   )
   if (!phrase) return
   if (phrase.trim().toUpperCase() !== 'RESTORE R20') {
@@ -242,7 +245,7 @@ async function restoreArchive(archiveName: string) {
       }),
     })
     bannerMsg.value = {
-      text: `✅ 备份 ${clean} 恢复成功！共解压 ${res.restored_count} 个核心文件。请重启或刷新服务使新状态接管。`,
+      text: `✅ 备份 ${clean} 恢复成功！共恢复 ${res.restored_count} 个文件，跳过 ${res.skipped_count ?? 0} 个不允许恢复的成员。请先离线检查数据，再由管理员启动服务。`,
       type: 'ok',
     }
     await load()
@@ -545,10 +548,13 @@ const toast = useToast()
           >
           <span
             class="ml-auto text-xs font-sans font-bold"
-            :class="simple.configured ? 'text-emerald-500' : 'text-amber-500'"
-            >{{ simple.configured ? '● 目标已配置' : '● 目标未配置' }}</span
+            :class="configurationDisplay.className"
+            >{{ configurationDisplay.label }}</span
           >
         </div>
+        <p class="text-xs font-sans" style="color: var(--text-muted)">
+          已保存目标：{{ configurationDisplay.note }}
+        </p>
       </AppCard>
 
       <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
@@ -565,21 +571,22 @@ const toast = useToast()
               class="flex justify-between border rounded-lg px-3 py-2"
               style="background-color: var(--bg-card-subtle); border-color: var(--border-subtle)"
             >
-              <span style="color: var(--text-muted)">时间</span
-              ><span style="color: var(--text-main)">{{
-                simple.latest.created_at ||
-                simple.latest.time ||
-                JSON.stringify(simple.latest).slice(0, 60)
-              }}</span>
+              <span style="color: var(--text-muted)">开始时间（北京时间）</span>
+              <span style="color: var(--text-main)">{{ latestDisplay.startedAt }}</span>
+            </div>
+            <div
+              class="flex justify-between border rounded-lg px-3 py-2"
+              style="background-color: var(--bg-card-subtle); border-color: var(--border-subtle)"
+            >
+              <span style="color: var(--text-muted)">完成时间（北京时间）</span>
+              <span style="color: var(--text-main)">{{ latestDisplay.finishedAt }}</span>
             </div>
             <div
               class="flex justify-between border rounded-lg px-3 py-2"
               style="background-color: var(--bg-card-subtle); border-color: var(--border-subtle)"
             >
               <span style="color: var(--text-muted)">状态</span
-              ><span class="text-emerald-500 font-bold">{{
-                simple.latest.status || 'success'
-              }}</span>
+              ><span class="font-bold" :class="latestDisplay.className">{{ latestDisplay.label }}</span>
             </div>
           </div>
           <div v-else class="py-6 text-center text-sm font-sans" style="color: var(--text-faint)">
