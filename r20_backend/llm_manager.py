@@ -265,6 +265,31 @@ def init_llm_config() -> Dict[str, Any]:
     flat_models = list(models_map.values())
     active_pid = data.get("active_provider_id", "")
     candidates = [m for m in flat_models if m["id"] == active_m_id]
+    if not active_pid and not candidates and active_m_id == cur_model and cur_key:
+        # An operator-provided LLM_MODEL may not be in the built-in examples.
+        # It already drives the runtime fallback; represent the SAME connection
+        # explicitly so the UI and council model picker agree with execution.
+        owner = next((p for p in merged_providers
+                      if str(p.get("base_url", "")).rstrip("/") == str(cur_url).rstrip("/")
+                      and p.get("api_key") == cur_key and p.get("enabled") is not False), None)
+        if owner is None:
+            identifier = "environment"
+            while any(p.get("id") == identifier for p in merged_providers):
+                identifier += "_local"
+            owner = {"id": identifier, "name": "Environment configuration",
+                     "base_url": cur_url, "api_key": cur_key, "enabled": True,
+                     "api_format": _detect_api_format(cur_url, cur_model), "models": []}
+            merged_providers.append(owner)
+        model_spec = {"id": cur_model, "name": cur_model, "reasoning_effort": cur_effort,
+                      "reasoning_type": _detect_reasoning_type(cur_model),
+                      "capabilities": _detect_capabilities(cur_model)}
+        owner.setdefault("models", []).append(model_spec)
+        view = {**model_spec, "provider_id": owner["id"], "provider_name": owner.get("name", owner["id"]),
+                "base_url": cur_url, "api_key": cur_key,
+                "api_format": owner.get("api_format", "openai_chat"),
+                "context_length": None, "description": "Operator environment model"}
+        flat_models.append(view)
+        candidates = [view]
     if not active_pid and candidates:
         active_pid = candidates[0].get("provider_id", "custom")
 

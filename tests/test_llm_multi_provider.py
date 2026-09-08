@@ -71,6 +71,25 @@ class LLMMultiProviderTests(unittest.TestCase):
             self.assertIn("has_key", m)
             self.assertIn("api_format", m)
 
+    def test_custom_environment_model_is_visible_without_changing_connection(self):
+        from r20_backend.config import settings
+        with patch.object(settings, 'llm_model', 'operator-demo-model'), \
+             patch.object(settings, 'llm_base_url', 'https://example.invalid/v1'), \
+             patch.object(settings, 'llm_api_key', 'FAKE-ENVIRONMENT-KEY'), \
+             patch.object(settings, 'llm_reasoning_effort', 'high'):
+            config = llm_manager.load_llm_config(mask_keys=True)
+            self.assertEqual(config['active_model_id'], 'operator-demo-model')
+            self.assertTrue(config['active_provider_id'])
+            rows = [m for m in config['models'] if m['id'] == 'operator-demo-model']
+            self.assertEqual(len(rows), 1)
+            self.assertNotIn('api_key', rows[0])
+            runtime = llm_manager.get_active_llm_runtime()
+            self.assertEqual(runtime['model'], 'operator-demo-model')
+            self.assertEqual(runtime['base_url'].rstrip('/'), 'https://example.invalid/v1')
+            self.assertEqual(runtime['reasoning_effort'], 'high')
+            again = llm_manager.load_llm_config(mask_keys=True)
+            self.assertEqual(sum(m['id'] == 'operator-demo-model' for m in again['models']), 1)
+
     def test_build_request_spec_all_protocols(self):
         # 1. OpenAI Chat Completions Protocol
         url_chat, headers_chat, payload_chat = llm_manager.build_request_spec(
