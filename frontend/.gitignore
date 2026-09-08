@@ -25,3 +25,6 @@ dist-ssr
 
 # Local browser review artifacts
 .ui-artifacts/
+
+# Generated from ../docs/images by assets:prepare; never commit image copies.
+/public/images

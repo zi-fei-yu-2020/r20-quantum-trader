@@ -7,8 +7,8 @@ WORKDIR /app/frontend
 COPY frontend/package*.json ./
 RUN npm ci
 COPY frontend/ ./
-# Keep the server's documentation-image deployment fix in version control.
-COPY docs/images/ ./public/images/
+# Match the repository layout: assets:prepare reads ../docs/images.
+COPY docs/images/ /app/docs/images/
 RUN npm run build
 
 FROM ${PYTHON_IMAGE} AS runner

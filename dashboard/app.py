@@ -1303,6 +1303,15 @@ VUE_ADMIN_DIST_DIR = VUE_DIST_DIR  # Same SPA build handles both / and /admin/*
 VUE_ADMIN_LEGACY_FILE = os.path.join(VUE_DIST_DIR, "admin", "legacy.html")
 
 
+def _vue_build_missing() -> HTMLResponse:
+    return HTMLResponse(
+        "Vue build not found (frontend/dist/index.html). "
+        "Run `npm ci` and `npm run build` in frontend/.",
+        status_code=503,
+        headers={"Cache-Control": "no-cache, no-store, must-revalidate, max-age=0"},
+    )
+
+
 def _serve_vue_spa(html_path: str, is_public: bool = True) -> HTMLResponse:
     with open(html_path, "r", encoding="utf-8") as f:
         content = f.read()
@@ -1360,11 +1369,7 @@ async def index(request: Request):
     vue_index_file = os.path.join(VUE_DIST_DIR, "index.html")
     if os.path.isfile(vue_index_file):
         return _serve_vue_spa(vue_index_file, is_public=True)
-    return templates.TemplateResponse(
-        request=request,
-        name="index.html",
-        headers={"Cache-Control": "public, max-age=0, s-maxage=60, stale-while-revalidate=300"},
-    )
+    return _vue_build_missing()
 
 
 @app.get("/admin", response_class=HTMLResponse, include_in_schema=False)
@@ -1373,7 +1378,7 @@ async def admin_spa_root(request: Request):
     vue_index_file = os.path.join(VUE_DIST_DIR, "index.html")
     if os.path.isfile(vue_index_file):
         return _serve_vue_spa(vue_index_file, is_public=False)
-    return HTMLResponse("Vue build not found. Run `npm run build` in frontend/.", status_code=503)
+    return _vue_build_missing()
 
 
 @app.get("/admin/", response_class=HTMLResponse, include_in_schema=False)
@@ -1404,7 +1409,7 @@ async def docs_spa_root(request: Request, subpath: str = ""):
     vue_index_file = os.path.join(VUE_DIST_DIR, "index.html")
     if os.path.isfile(vue_index_file):
         return _serve_vue_spa(vue_index_file, is_public=True)
-    return HTMLResponse("Vue build not found. Run `npm run build` in frontend/.", status_code=503)
+    return _vue_build_missing()
 
 
 @app.get("/trading", response_class=HTMLResponse, include_in_schema=False)
