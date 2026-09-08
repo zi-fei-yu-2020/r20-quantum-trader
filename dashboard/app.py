@@ -8,6 +8,7 @@ from pathlib import Path
 from scripts.okx_runtime import replace_cli_prefix as okx_private_command
 from scripts.instrument_pool import load_instruments
 from scripts.evolution_status import public_status as evolution_status
+from scripts.memory_registry import public_view as memory_publication
 import os
 import json
 import time
@@ -363,6 +364,8 @@ def _inject_local_data_into_stale(stale, positions, timestamp_full):
     stale['ledger_sync']=ledger_monitor.load('ledger_sync_status.json', {})
     from scripts.wait_audit import public_status as wait_status
     stale['evolution_review']=evolution_status(DATA_DIR)
+    stale['memory_publication']=memory_publication(DATA_DIR,selected_environment().identity)
+    stale['ai_trading_memory_md']=stale['memory_publication'].get('content','')
     stale['wait_audit']=wait_status(selected_environment().identity)
     stale['decision_cycle']=state_data.get('decision_cycle', {})
     stale['capital_pool']=capital_pool.status(selected_environment())
@@ -1151,6 +1154,7 @@ def _update_cache_cycle():
     from r20_backend.macro_status import fields as macro_fields
     from scripts import ledger_monitor, wait_audit, capital_pool, scenario_shadow
     trades_table = ledger_monitor.project_rows(trades_table, environment.identity)
+    published_memory=memory_publication(DATA_DIR,environment.identity)
     CACHE_DATA = {
         **macro_fields(DATA_DIR, ai_decisions, ai_history_list, state=state_data),
         "ledger_sync": ledger_monitor.load("ledger_sync_status.json", {}),
@@ -1232,7 +1236,8 @@ def _update_cache_cycle():
         "adaptive_config": adaptive_cfg,
         "review": review_data,
         "evolution_review": evolution_status(DATA_DIR),
-        "ai_trading_memory_md": ai_memory_md_content,
+        "ai_trading_memory_md": published_memory.get("content",""),
+        "memory_publication": published_memory,
         "ai_last_prompt": ai_last_prompt_text,
         "snapshots": snapshots_list if baseline_configured else [],
         "state_snapshot": state_data,

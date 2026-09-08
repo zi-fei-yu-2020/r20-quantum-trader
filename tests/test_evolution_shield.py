@@ -35,20 +35,16 @@ class EvolutionShieldTests(unittest.TestCase):
         passed, reason = audit_proposed_lesson("【合理经验】4H多头回踩均线支撑时开多", sample_size=3)
         self.assertTrue(passed)
 
-    def test_white_box_memory_crud_and_rollback(self):
-        # Rollback initializes clean golden baseline
-        baseline = rollback_to_baseline()
-        self.assertGreaterEqual(len(baseline), 4)
-
-        # Toggle first lesson
-        first_id = baseline[0]["id"]
-        toggled = toggle_lesson(first_id)
-        self.assertIsNotNone(toggled)
-        self.assertFalse(toggled["enabled"])
-
-        # Toggle back
-        toggled_back = toggle_lesson(first_id)
-        self.assertTrue(toggled_back["enabled"])
+    def test_legacy_writers_cannot_reactivate_baselines_or_bypass_review(self):
+        with self.assertRaises(ValueError):rollback_to_baseline()
+        with self.assertRaises(ValueError):toggle_lesson('old-id')
+        import tempfile
+        from pathlib import Path
+        from unittest.mock import patch
+        from scripts import evolution_shield
+        with tempfile.TemporaryDirectory() as tmp,patch.object(evolution_shield,'DATA_DIR',Path(tmp)):
+            self.assertEqual(load_structured_memory(),[])
+            self.assertEqual(list(Path(tmp).iterdir()),[])
 
 
 if __name__ == "__main__":

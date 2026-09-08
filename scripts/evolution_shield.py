@@ -113,88 +113,25 @@ def audit_proposed_lesson(rule_text: str, sample_size: int = 1) -> Tuple[bool, s
 
 
 def load_structured_memory() -> List[Dict[str, Any]]:
-    """Loads all structured lessons, falling back to baseline golden lessons."""
-    if STRUCTURED_MEMORY_FILE.is_file():
-        try:
-            data = json.loads(STRUCTURED_MEMORY_FILE.read_text(encoding="utf-8"))
-            if isinstance(data, list) and data:
-                return data
-        except Exception:
-            pass
-    # Initialize from baseline
-    save_structured_memory(BASELINE_LESSONS)
-    return BASELINE_LESSONS
+    """Compatibility read: published rules only. Never initialize built-in lessons on a read."""
+    from scripts.memory_registry import view
+    state=view(DATA_DIR)
+    return [{**r,'rule_text':r['text'],'category':r.get('source','reviewed')} for r in state['rules']]
 
 
-def save_structured_memory(lessons: List[Dict[str, Any]]) -> None:
-    """Saves structured memory to JSON and automatically syncs to human/LLM-readable Markdown."""
-    STRUCTURED_MEMORY_FILE.parent.mkdir(parents=True, exist_ok=True)
-    STRUCTURED_MEMORY_FILE.write_text(json.dumps(lessons, ensure_ascii=False, indent=2), encoding="utf-8")
-
-    # Generate Markdown for prompt ingestion
-    active_lessons = [l for l in lessons if l.get("enabled", True)]
-    tz_bj = datetime.timezone(datetime.timedelta(hours=8))
-    now_str = datetime.datetime.now(tz_bj).strftime("%Y-%m-%d %H:%M:%S")
-
-    md_lines = [
-        "# R20 AI 交易实战长期心法 (Heuristic Long-Term Memory)",
-        "",
-        f"> 状态：由自进化防污染认知中枢实时纳管 | 更新基准: {now_str} (UTC+8)",
-        "> 宪法安全护栏：已通过极端离群值过滤 (Outlier Rejection) 与防偏见白盒审查。",
-        "",
-    ]
-    for idx, l in enumerate(active_lessons, 1):
-        txt = l.get("rule_text", "").strip()
-        score = l.get("health_score", 90.0)
-        cat = l.get("category", "CORE")
-        md_lines.append(f"- 【{cat} · 评分 {score}分】{txt}")
-
-    md_lines.append("")
-    AI_MEMORY_MD_FILE.write_text("\n".join(md_lines), encoding="utf-8")
+def save_structured_memory(lessons):
+    raise ValueError('Direct memory writes disabled; stage a candidate and publish an audited version')
 
 
-def toggle_lesson(lesson_id: str) -> Optional[Dict[str, Any]]:
-    """Toggle a lesson between active and disabled."""
-    lessons = load_structured_memory()
-    target = None
-    for l in lessons:
-        if l.get("id") == lesson_id:
-            l["enabled"] = not l.get("enabled", True)
-            target = l
-            break
-    if target:
-        save_structured_memory(lessons)
-    return target
+def toggle_lesson(lesson_id):
+    raise ValueError('Direct memory toggles disabled; use a versioned DEACTIVATE/ADD proposal')
 
 
-def rollback_to_baseline() -> List[Dict[str, Any]]:
-    """Emergency Rollback: Reset all memory to unpolluted Golden Baseline Lessons."""
-    save_structured_memory(BASELINE_LESSONS)
-    return BASELINE_LESSONS
+def rollback_to_baseline():
+    raise ValueError('Automatic baseline restoration disabled; choose an actual published historical version')
 
 
-def add_safe_lesson(rule_text: str, category: str = "TACTICAL", sample_size: int = 3) -> Tuple[bool, str, Optional[Dict[str, Any]]]:
-    """Adds a new lesson after rigorous Constitution & Outlier Shield auditing."""
-    passed, reason = audit_proposed_lesson(rule_text, sample_size=sample_size)
-    if not passed:
-        return False, reason, None
-
-    lessons = load_structured_memory()
-    tz_bj = datetime.timezone(datetime.timedelta(hours=8))
-    now_str = datetime.datetime.now(tz_bj).strftime("%Y-%m-%d %H:%M:%S")
-
-    new_item = {
-        "id": f"lesson_{int(datetime.datetime.now().timestamp())}",
-        "category": category,
-        "rule_text": rule_text.strip(),
-        "health_score": 90.0,
-        "enabled": True,
-        "created_at": now_str,
-        "ttl_days": 7,
-        "sample_size": sample_size,
-        "is_baseline": False,
-        "shield_status": "PASSED",
-    }
-    lessons.append(new_item)
-    save_structured_memory(lessons)
-    return True, "心法审查通过并成功收录", new_item
+def add_safe_lesson(rule_text, category='TACTICAL', sample_size=3):
+    from scripts.memory_registry import propose
+    result=propose({'action':'ADD','text':rule_text,'rationale':'Legacy caller: claimed sample count is not verified evidence'},data_dir=DATA_DIR)
+    return False,'Staged for review only; not published',result

@@ -15,9 +15,10 @@ export interface EvolutionReview {
   recommendations?: string[]
   review_markdown?: string
   message?: string
+  report_scope_verified?: boolean
 }
 const props = defineProps<{ review?: EvolutionReview }>()
-const label = computed(() => ({ success: '复盘已完成', no_new_evidence: '已检查，暂无新增平仓证据', failed: '最近复盘失败，保留上次成功报告', timeout: '最近复盘超时', running: '复盘运行中', not_run: '尚无复盘记录' }[props.review?.status || 'not_run'] || '复盘状态待核验'))
+const label = computed(() => ({ success: '复盘已完成', no_new_evidence: '已检查，暂无新增平仓证据', failed: '最近复盘失败，保留上次成功报告', timeout: '最近复盘超时', running: '复盘运行中', not_run: '尚无复盘记录', other_scope_report: '当前账户尚无匹配的复盘报告' }[props.review?.status || 'not_run'] || '复盘状态待核验'))
 </script>
 <template>
   <AppCard class="min-w-0 p-4 sm:p-5 space-y-4" data-evolution-review>
@@ -38,6 +39,7 @@ const label = computed(() => ({ success: '复盘已完成', no_new_evidence: '�
       <span>待审核建议：{{ review?.pending_candidates ?? '--' }}</span>
       <span>审核未通过：{{ review?.rejected_candidates ?? '--' }}</span>
     </div>
+    <p v-if="review?.report_scope_verified === false" class="text-xs leading-relaxed" style="color:var(--text-muted)">旧报告未记录或不匹配当前账户范围，仅供追溯。报告中的归因是模型文字；发布记忆仍需核对当前账户的真实平仓证据。</p>
     <ul v-if="review?.insights?.length" class="space-y-2 text-sm leading-relaxed list-disc pl-5" style="overflow-wrap:anywhere">
       <li v-for="(insight,i) in review.insights" :key="i">{{ insight }}</li>
     </ul>

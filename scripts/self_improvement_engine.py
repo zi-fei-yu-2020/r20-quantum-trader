@@ -119,7 +119,9 @@ def get_cpa_client_config() -> Tuple[str, str]:
         os.getenv("LLM_API_KEY") or os.getenv("OPENAI_API_KEY") or "",
     )
 
-def load_closed_trades():
+def load_closed_trades(scope=None):
+    from scripts.memory_registry import scope_of
+    scope=scope_of(scope)
     account_init_file = os.path.join(DATA_DIR, "account_initial_state.json")
     reset_time_str = "1970-01-01 00:00:00"
     if os.path.exists(account_init_file):
@@ -137,6 +139,8 @@ def load_closed_trades():
                 t_list = json.load(f)
                 for t in t_list:
                     if t.get("status") != "closed":
+                        continue
+                    if {t[k] for k in ('environment_id','account_source_id') if t.get(k)} != {scope}:
                         continue
 
                     c_time = str(t.get("close_time") or t.get("time") or "")
@@ -233,6 +237,7 @@ def call_llm_evolution_review(closed_trades: List[Dict[str, Any]], existing_memo
 {json.dumps(closed_trades, indent=2, ensure_ascii=False)}
 
 【复盘与长期记忆进化任务】:
+规则变更必须通过 memory_proposals 提交待审核候选，不能宣称已经应用。ADD 为新增；REVISE/DEACTIVATE 必须引用当前已发布正文中的 rule_ 规则ID，不能猜测旧报告里的类别名。supporting_trade_ids 只能引用输入台账的 trade_id，引用不等于程序已认可该经验。NO_CHANGE 必须提交空候选列表。宿主会保存候选，但只有管理员核验真实成交证据并发布后才生效。
 请严格基于可观测台账证据复盘。当前输入若未提供交易发生时的 v/a/j/I、定积分、概率或 VaR 快照，不得将盈亏事后归因于这些指标，只能标注“数理快照不可观测”。证据不足时使用 NO_CHANGE，不得强行生成新规律。输出标准 JSON：
 {{
   "change_status": "NO_CHANGE" | "ADD" | "REVISE" | "INVALIDATE",
@@ -244,6 +249,10 @@ def call_llm_evolution_review(closed_trades: List[Dict[str, Any]], existing_memo
   ],
   "ai_long_term_memory": [
     "0~4 条有多个独立样本支持的软启发式；不得覆盖任何硬风控"
+  ],
+  "memory_proposals": [
+    {{"action": "ADD", "text": "待审核的软经验", "target_rule_id": null,
+      "supporting_trade_ids": ["只能填写输入中真实trade_id"], "rationale": "解释对应证据与反例"}}
   ],
   "memory_overwrites_reason": "说明证据支持何种变更；NO_CHANGE 时明确为何不覆盖旧记忆"
 }}
@@ -347,11 +356,14 @@ def run_self_evolution(force: bool = False):
     timestamp_str = now_bj.strftime("%Y-%m-%d %H:%M:%S")
     log_msg("🧬 启动 R20 AI 大脑自进化认知复盘与实战心法提炼 (v7.2.1 Crypto Focus)...")
 
+    from scripts import memory_registry
+    memory_scope=memory_registry.scope_of()
     status_file = os.path.join(DATA_DIR, 'self_improvement_status.json')
     def record_status(status, **details):
-        atomic_write_json(status_file, {'status': status, 'last_attempt_at': timestamp_str, **details})
+        atomic_write_json(status_file, {'status': status, 'last_attempt_at': timestamp_str, 'account_scope':memory_scope, **details})
     record_status('running')
-    closed_trades = load_closed_trades()
+    memory_state=memory_registry.view(DATA_DIR,scope=memory_scope,legacy_paths={'md':AI_MEMORY_MD_FILE,'json':AI_MEMORY_FILE})
+    closed_trades = load_closed_trades(scope=memory_scope)
     total_trades = len(closed_trades)
     ledger_revision = hashlib.sha256(
         json.dumps(closed_trades, sort_keys=True, ensure_ascii=False).encode("utf-8")
@@ -360,7 +372,9 @@ def run_self_evolution(force: bool = False):
         try:
             with open(REPORT_JSON_FILE, "r", encoding="utf-8") as f:
                 previous_report = json.load(f)
-            if previous_report.get('review_status') == 'success' and previous_report.get("ledger_revision") == ledger_revision:
+            if (previous_report.get('review_status') == 'success' and previous_report.get("ledger_revision") == ledger_revision
+                    and previous_report.get('account_scope') == memory_scope
+                    and previous_report.get('memory_version_at_review') == memory_state['active_version']):
                 record_status('no_new_evidence', ledger_revision=ledger_revision)
                 log_msg("No new closed-trade evidence; keeping the successful review and approved memory")
                 return previous_report
@@ -377,23 +391,8 @@ def run_self_evolution(force: bool = False):
     total_fees_amt = sum(t["fee"] for t in closed_trades)
     profit_factor = round(total_win_amt / total_loss_amt, 2) if total_loss_amt > 0 else (99.0 if total_win_amt > 0 else 0.0)
 
-    # 1. Read existing memory to enable smart evolution & overwriting
-    existing_memory_md = ""
-    existing_core_lessons = []
-    if os.path.exists(AI_MEMORY_MD_FILE):
-        try:
-            with open(AI_MEMORY_MD_FILE, "r", encoding="utf-8") as f:
-                existing_memory_md = f.read()
-        except Exception:
-            pass
-    if os.path.exists(AI_MEMORY_FILE):
-        try:
-            with open(AI_MEMORY_FILE, "r", encoding="utf-8") as f:
-                existing_payload = json.load(f)
-            if isinstance(existing_payload.get("core_lessons"), list):
-                existing_core_lessons = existing_payload["core_lessons"]
-        except Exception:
-            pass
+    existing_memory_md=memory_state['content']
+    existing_core_lessons=[r['text'] for r in memory_state['rules'] if r.get('enabled',True)]
 
     # 2. Call LLM for Cognitive Review & Memory Overwriting
     try:
@@ -428,35 +427,29 @@ def run_self_evolution(force: bool = False):
         change_status, llm_review.get("ai_long_term_memory", []), existing_core_lessons
     )
 
-    # New evidence never self-authorizes a production rule change.
-    proposed_change_status = change_status
-    candidates = []
+    # Review proposals are durable, append-only candidates; NO_CHANGE never erases pending work.
+    proposed_change_status=change_status
+    proposals=llm_review.get('memory_proposals')
+    if proposals is None:
+        action={'ADD':'ADD','REVISE':'REVISE','INVALIDATE':'DEACTIVATE'}.get(proposed_change_status)
+        proposals=[{'action':action,'text':t} for t in llm_review.get('ai_long_term_memory',[])][:4] if action else []
     try:
-        from scripts.evolution_shield import audit_proposed_lesson
-        for proposed_text in long_term_memory if not preserve_existing_memory else []:
-            passed, reason = audit_proposed_lesson(proposed_text, sample_size=total_trades)
-            candidates.append({'text': proposed_text, 'audit_passed': passed, 'audit_reason': reason,
-                'supporting_trade_ids': [], 'reviewed_trade_ids': [t['trade_id'] for t in closed_trades if t.get('trade_id')],
-                'sample_size': total_trades, 'status': 'pending_evidence_review' if passed else 'rejected_by_audit',
-                'ledger_revision': ledger_revision})
+        if memory_registry.scope_of()!=memory_scope:raise ValueError('Account changed during memory review')
+        if llm_review.get('change_status')=='NO_CHANGE' and proposals:raise ValueError('NO_CHANGE cannot propose rule changes')
+        if not isinstance(proposals,list) or len(proposals)>4:raise ValueError('Invalid memory proposal list')
+        for proposal in proposals:
+            if not isinstance(proposal,dict) or proposal.get('action') not in ('ADD','REVISE','DEACTIVATE'):
+                raise ValueError('Invalid automatic memory proposal')
+        candidate_ids=memory_registry.stage_review(proposals,ledger_revision,data_dir=DATA_DIR,scope=memory_scope,
+            legacy_paths={'md':AI_MEMORY_MD_FILE,'json':AI_MEMORY_FILE})
     except Exception as exc:
-        log_msg(f"Evolution audit unavailable; existing memory retained: {type(exc).__name__}")
-        candidates = []
-    atomic_write_json(os.path.join(DATA_DIR, 'memory_candidates.json'), {'updated_at': timestamp_str, 'candidates': candidates})
-    long_term_memory = existing_core_lessons
-    preserve_existing_memory = True
-    change_status = 'NO_CHANGE'
-
-    # 3. Save Long-Term Memory (Both JSON and Human/LLM-readable Markdown)
-    memory_payload = {
-        "updated_at": timestamp_str,
-        "total_trades_reviewed": total_trades,
-        "win_rate": win_rate,
-        "core_lessons": long_term_memory,
-        "favored_assets": ["ETH", "SOL", "LINK"]
-    }
-    if not preserve_existing_memory or not os.path.exists(AI_MEMORY_FILE):
-        atomic_write_json(AI_MEMORY_FILE, memory_payload)
+        record_status('failed', error_type=type(exc).__name__, ledger_revision=ledger_revision)
+        raise RuntimeError('Memory candidate persistence failed; approved memory retained') from exc
+    # A separate successful human publication is the only live rule change.
+    long_term_memory=existing_core_lessons
+    preserve_existing_memory=True
+    change_status='NO_CHANGE'
+    candidates=[c for c in memory_registry.view(DATA_DIR,scope=memory_scope,admin=True)['candidates'] if c['id'] in candidate_ids]
 
     # Save as durable R20 Markdown memory file: update timestamp and insights while keeping core lessons if no overwrite
     md_content = f"""# R20 AI 交易复盘（报告，不等于已应用的策略变更）
@@ -511,7 +504,10 @@ def run_self_evolution(force: bool = False):
         "review_status": "success",
         "completed_at": datetime.datetime.now(tz_bj).strftime('%Y-%m-%d %H:%M:%S'),
         "proposed_change_status": proposed_change_status,
-        "pending_candidate_count": sum(c['audit_passed'] for c in candidates),
+        "pending_candidate_count": sum(c['status']=='pending' for c in candidates),
+        "memory_candidate_ids": candidate_ids,
+        "memory_version_at_review": memory_registry.view(DATA_DIR,scope=memory_scope)['active_version'],
+        "account_scope": memory_scope,
         "recommendations": actions_taken,
         "change_status": change_status,
         "memory_preserved": preserve_existing_memory,

@@ -28,4 +28,7 @@ def strategy_status():
         if path.exists():
             payload=json.loads(path.read_text(encoding='utf-8'))
             result[key]=payload.get('candidates',[]) if key=='memory_candidates' else payload.get('status','insufficient_evidence')
+    from scripts.memory_registry import view
+    memory=view(ROOT/'data',env.identity,admin=True)
+    if memory.get('managed'):result['memory_candidates']=memory.get('candidates',[])
     return result

@@ -88,6 +88,12 @@ def prepare(env, *, inst_id, side, entry, stop, take_profit, requested_size, bud
         raise risk.RiskRejected('Decision output contract was not validated')
     if time.time() >= risk.number(decision.get('valid_until'),positive=True):
         raise risk.RiskRejected('Candidate validity expired')
+    memory_basis=decision.get('memory_publication')
+    if isinstance(memory_basis,dict) and memory_basis.get('prompt_hash'):
+        from scripts.memory_registry import view as memory_view
+        current_memory=memory_view(scope=env.identity)
+        if memory_basis.get('scope')!=env.identity or current_memory['prompt_hash']!=memory_basis['prompt_hash']:
+            raise risk.RiskRejected('Published memory changed after inference; fresh decision required')
     expected='BUY_LONG' if side=='long' else 'SELL_SHORT'
     if record.get('instrument')!=inst_id or record.get('decision',{}).get('action')!=expected:
         raise risk.RiskRejected('Decision evidence does not authorize this instrument/direction')

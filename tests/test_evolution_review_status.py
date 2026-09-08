@@ -63,7 +63,7 @@ class EvolutionReviewTests(unittest.TestCase):
         self.assertEqual((self.root / 'AI_TRADING_MEMORY.md').read_text(), 'APPROVED OLD MEMORY')
 
     def test_canonical_net_pnl_and_trade_id_reach_review(self):
-        self.write('trading_ledger.json', [{'id': 't1', 'status': 'closed', 'inst': 'BTC', 'close_time': '2026-09-07 12:00:00', 'pnl': 5, 'net_pnl': -2, 'gross_pnl': 5, 'fee': -1}])
+        self.write('trading_ledger.json', [{'id': 't1', 'status': 'closed', 'environment_id': __import__('scripts.memory_registry',fromlist=['scope_of']).scope_of(), 'inst': 'BTC', 'close_time': '2026-09-07 12:00:00', 'pnl': 5, 'net_pnl': -2, 'gross_pnl': 5, 'fee': -1}])
         row = engine.load_closed_trades()[0]
         self.assertEqual(row['net_pnl'], -2)
         self.assertEqual(row['trade_id'], 't1')
@@ -77,6 +77,14 @@ class EvolutionReviewTests(unittest.TestCase):
         self.assertEqual(value['status'], 'failed')
         self.assertEqual(value['last_success_at'], '2026-09-06 20:00:05')
         self.assertEqual(value['sample_size'], 8)
+
+    def test_report_from_other_account_is_not_presented_as_current_review(self):
+        self.write('self_improvement_report.json', {'account_scope':'foreign-account','timestamp':'2026-09-07 20:00:05','total_trades':99,'insights':['other account conclusion']})
+        value=public_status(self.root)
+        self.assertEqual(value['status'],'other_scope_report')
+        self.assertIsNone(value['last_success_at'])
+        self.assertEqual(value['insights'],[])
+        self.assertEqual(value['review_markdown'],'')
 
     def test_missing_data_is_unknown_not_fake_optimization(self):
         value = public_status(self.root)

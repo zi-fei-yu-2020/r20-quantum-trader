@@ -174,6 +174,7 @@ export interface DashboardResponse {
   news_intelligence?: Record<string, any>
   evolution_review?: import('../components/EvolutionReviewPanel.vue').EvolutionReview
   review?: any
+  memory_publication?: import('../utils/memory').MemoryPublication
   ai_trading_memory_md?: string
   factor_library?: any
 }
