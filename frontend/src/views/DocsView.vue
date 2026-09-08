@@ -37,7 +37,7 @@ const zoomImage = ref<string | null>(null)
 const sections = [
   { id: 'overview', title: '1. 系统架构与量化哲学', icon: TrendingUp },
   { id: 'dashboard', title: '2. 双翼工作台与资产控制舱', icon: Terminal },
-  { id: 'council', title: '3. 多模型决策委员会 (Council Pro)', icon: Users },
+  { id: 'council', title: '3. 可选多模型决策委员会 (Council Pro)', icon: Users },
   { id: 'prompt_studio', title: '4. 提示词策略与语义变量插槽', icon: FileText },
   { id: 'interceptors', title: '5. Python 物理拦截插件 (Fail-Closed)', icon: ShieldCheck },
   { id: 'llm_hub', title: '6. 模型连接与 API 协议支持', icon: Cpu },
@@ -103,7 +103,7 @@ onUnmounted(() => {
             border-color: var(--border-subtle);
             color: var(--text-muted);
           "
-          title="返回实盘终端"
+          title="返回交易终端"
         >
           <ArrowLeft class="w-3.5 h-3.5" />
           <span class="hidden sm:inline">返回终端</span>
@@ -284,8 +284,8 @@ onUnmounted(() => {
             是一套专为高波动加密货币（Crypto）打造的<strong>机构级全自动波段量化决策与执行系统</strong>。系统依托
             OKX 交易所官方 REST/WebSocket V5 生产 API 与 @okx_ai
             官方交易底座，运行在严格的北京时间（UTC+8）自然日财务基准之上，聚焦 1H~4H
-            大级别顺势波段，以<strong>“胜率第一、宁缺毋滥、三位一体 Fail-Closed 物理硬防线”</strong
-            >为最高风控宗旨。
+            大级别顺势波段，以<strong>“证据优先、宁缺毋滥、Fail-Closed”</strong
+            >为风控目标。系统不保证盈利或零 bug；demo 验证不等于 live 安全，实盘仍需独立核验执行与保护闭环。
           </p>
 
           <!-- 4 Core Pillars Grid -->
@@ -302,9 +302,8 @@ onUnmounted(() => {
                 <span>Fail-Closed 物理硬拦截</span>
               </div>
               <p class="text-xs leading-relaxed" style="color: var(--text-muted)">
-                绝不将风控寄托于 LLM 提示词本身。在交易执行底层设立不可覆盖的 Python
-                物理拦截插件管线，4H 顺势门禁、80% 置信度、1H ADX 震荡过滤及真实 2.0R
-                盈亏比门禁物理硬切断。
+                风控不只依赖 LLM 提示词。Python 插件默认检查 4H 顺势、评分合法性、1H ADX 与价格盈亏比；
+                最终执行层还会独立复核报价时效、扣除手续费与滑点后的净 RR 及风险预算，高评分不能绕过这些 gate。
               </p>
             </div>
 
@@ -320,7 +319,7 @@ onUnmounted(() => {
                 <span>多模型决策委员会 (Council Pro)</span>
               </div>
               <p class="text-xs leading-relaxed" style="color: var(--text-muted)">
-                支持并发调度宏观分析师、盘口微结构官、舆情侦察官等多参谋席位展开深度思考辩论，落地一票否决、加权共识与动能突破三种裁决机制，由首席终审仲裁官收口输出严格契约。
+                默认单脑决策，Council 为可选模式。启用后，各交易员并发提交方案，由 CIO 模型终审；不是数值加权投票，也不提供额外交易授权。
               </p>
             </div>
 
@@ -354,8 +353,8 @@ onUnmounted(() => {
                 <span>自进化认知复盘闭环</span>
               </div>
               <p class="text-xs leading-relaxed" style="color: var(--text-muted)">
-                每日 20:00 自动读取真实平仓台账流水进行自我反思与痛点归因，自动更新
-                <code>AI_TRADING_MEMORY.md</code> 长效实战心法，具备时效覆盖与动态经验淘汰机制。
+                自进化按配置时间调度，默认每日北京时间 20:00，基于当前账户已平仓台账生成 review-only 复盘与候选。
+                候选不自动推广，也不覆盖现有运行记忆 <code>AI_TRADING_MEMORY.md</code>、权重或风险参数。
               </p>
             </div>
           </div>
@@ -404,7 +403,7 @@ onUnmounted(() => {
                 >：官方总权益、基准净盈亏水线、今日已结、持仓净盈亏分离解耦。<br />
                 •
                 <strong>高密度交互式操盘台 (Tactical Desk)</strong
-                >：分段切换在途实盘持仓与限价挂单池，支持币种快速筛选与云端 100% OCO 止损状态验证。
+                >：分段查看当前 demo/live 环境的持仓与限价挂单池，支持币种快速筛选与云端 OCO 止损覆盖状态核验；展示不等于保护必然生效。
               </p>
             </div>
             <div
@@ -423,6 +422,13 @@ onUnmounted(() => {
               </p>
             </div>
           </div>
+
+          <p class="text-xs leading-relaxed" style="color: var(--text-muted)">
+            <strong>账户切换：</strong>在后台「账户连接」分别管理 demo、live 与资讯绑定；保存候选连接不会切换当前交易账户，绑定与激活环境是独立操作。
+            交易绑定需核验目标身份与读取能力；OAuth 读取成功不等于交易授权，当前不能绑定自动交易。
+            更换交易账户或切换环境需显式确认，受交易锁约束，并核验相关账户无持仓、挂单或保护单、无未确认交易意图；核验失败则拒绝切换，不会自动平仓或撤单。
+            demo 验证不等于 live 安全；后台手动平仓开关也不关闭独立止损与持仓风控。
+          </p>
 
           <!-- Screenshot Card -->
           <div
@@ -472,7 +478,8 @@ onUnmounted(() => {
           </div>
 
           <p class="text-xs sm:text-sm leading-relaxed font-sans" style="color: var(--text-muted)">
-            为了彻底消除单一模型的幻觉与盲区，系统落地了<strong>多参谋并发辩论与博弈仲裁机制</strong>。在每一轮决策前，行情数理包将分发给各独立席位进行并发思考：
+            系统默认单脑，Council 默认关闭、可按需启用。启用后采用<strong>多交易员提案与 CIO 模型终审</strong>，
+            各席位审查同一份统一证据；多模型意见不是真实证据或胜率证明，也不能保证消除幻觉。
           </p>
 
           <div
@@ -480,7 +487,7 @@ onUnmounted(() => {
             style="background-color: var(--bg-card); border-color: var(--border-subtle)"
           >
             <div class="font-bold text-xs" style="color: var(--text-main)">
-              三种委员会共识机制：
+              委员会实际决策流程（非确定性投票）：
             </div>
             <div class="grid grid-cols-1 md:grid-cols-3 gap-2.5 pt-1">
               <div
@@ -488,10 +495,10 @@ onUnmounted(() => {
                 style="background-color: var(--bg-card-subtle); border-color: var(--border-subtle)"
               >
                 <div class="font-bold" style="color: var(--color-down)">
-                  1. 一票否决制 (Paranoid Veto)
+                  1. 并发交易提案
                 </div>
                 <div class="text-[11px] mt-1" style="color: var(--text-muted)">
-                  只要任一参谋提出重大风险预警，仲裁官无条件强制降级为 WAIT。
+                  已启用的交易员基于统一输入提交支持证据、反证与失效条件，意见仅供终审参考。
                 </div>
               </div>
               <div
@@ -499,10 +506,10 @@ onUnmounted(() => {
                 style="background-color: var(--bg-card-subtle); border-color: var(--border-subtle)"
               >
                 <div class="font-bold" style="color: var(--color-brand)">
-                  2. 加权共识制 (Weighted Majority)
+                  2. CIO 模型终审
                 </div>
                 <div class="text-[11px] mt-1" style="color: var(--text-muted)">
-                  按各席位置信度加权投票，仅在同向权重绝对占优时准许发单。
+                  CIO 汇总审查提案，可全部 WAIT；席位权重不构成数值加权投票，strict / weighted / aggressive 配置名不是确定性表决机制。
                 </div>
               </div>
               <div
@@ -510,10 +517,10 @@ onUnmounted(() => {
                 style="background-color: var(--bg-card-subtle); border-color: var(--border-subtle)"
               >
                 <div class="font-bold" style="color: var(--color-up)">
-                  3. 动能突破优先 (Alpha Hunter)
+                  3. 统一契约与执行 gate
                 </div>
                 <div class="text-[11px] mt-1" style="color: var(--text-muted)">
-                  当微积分加速度与冲击超阈值共振时，赋予技术突破参谋优先表决权。
+                  终审输出仍须通过统一证据契约、最终报价与净 RR gate，任何席位均无绕过独立风控的权限。
                 </div>
               </div>
             </div>
@@ -567,10 +574,16 @@ onUnmounted(() => {
           </div>
 
           <p class="text-xs sm:text-sm leading-relaxed font-sans" style="color: var(--text-muted)">
-            提示词策略工作室彻底解除了所有预设锁定，支持对四大核心管线（交易 System、交易
+            提示词策略工作室支持对四大核心管线（交易 System、交易
             User、自进化 System、自进化 User）进行可视化定制。引入<strong
               >语义变量插槽（Semantic Slots）</strong
-            >引擎：
+            >引擎；自定义偏好不能覆盖统一证据契约与独立风控：
+          </p>
+
+          <p class="text-xs leading-relaxed" style="color: var(--text-muted)">
+            单脑与 Council 使用统一证据契约 trading-evidence-v1：支持证据、反证与失效条件必须可核验。
+            程序基于闭合（已收盘）的 15M/1H K线生成入场草案；模型可审查草案，也可提出符合契约的独立方案，草案不是下单授权。
+            选用 candidate_id 后不得改写草案价格与失效点；最终报价时效、触发有效性、净 RR 与风险预算仍须通过执行 gate。
           </p>
 
           <!-- Variable Table -->
@@ -609,7 +622,7 @@ onUnmounted(() => {
                   </td>
                   <td class="p-3" style="color: var(--text-main)">自进化心法</td>
                   <td class="p-3" style="color: var(--text-muted)">
-                    注入昨日真实复盘提炼的核心心法、避坑铁律与长效实战教训
+                    注入当前运行记忆；新复盘候选不会自动进入该插槽
                   </td>
                 </tr>
                 <tr class="hover:bg-[var(--bg-card-hover)] transition-colors">
@@ -692,9 +705,8 @@ onUnmounted(() => {
           </div>
 
           <p class="text-xs sm:text-sm leading-relaxed font-sans" style="color: var(--text-muted)">
-            发单执行层遵循 **Fail-Closed
-            哲学**：任何异常、参数错误或插件拦截，一律直接将订单强制重写为安全等待（WAIT）。5
-            大标准内置插件提供工业级防护：
+            发单执行层遵循 <strong>Fail-Closed</strong>：校验异常或风控拒绝时不授权新开仓，候选可降级 WAIT；
+            已发出的请求仍需确认与对账，不能把 WAIT 当作撤单或平仓成功。以下四个内置插件默认启用，另有默认关闭的自定义示例；最终执行 gate 独立复核。
           </p>
 
           <div class="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
@@ -736,11 +748,12 @@ onUnmounted(() => {
                     color: var(--color-up);
                     border-color: var(--color-up-border);
                   "
-                  >胜率第一</span
+                  >评分合法性</span
                 >
               </div>
               <p class="text-[11px]" style="color: var(--text-muted)">
-                模型综合置信度低于 80% 一律强制拦截为 WAIT；Meme 币种提至 85%。
+                入场 score / confidence 仅校验合法性：须为 0~100 的有限数值且非布尔值，是未校准研究评分而非胜率；无 75/80 硬门槛，也无 Meme 特殊分数线。
+                AI 主动平仓（CLOSE_MARKET）的 85 门槛仍单独保留，不适用于入场，也不限制独立止损与保护退出。
               </p>
             </div>
 
@@ -763,7 +776,7 @@ onUnmounted(() => {
                 >
               </div>
               <p class="text-[11px]" style="color: var(--text-muted)">
-                1H ADX 趋势强度 &lt; 18 判定为低流动性无序猴市，严禁开仓频繁磨损费率。
+                默认 ADX 插件在 0 &lt; 1H ADX &lt; 18 时拦截开仓；ADX 衡量趋势强度，不代表流动性或胜率，数据有效性仍由其他 gate 检查。
               </p>
             </div>
 
@@ -782,11 +795,11 @@ onUnmounted(() => {
                     color: var(--color-up);
                     border-color: var(--color-up-border);
                   "
-                  >真实 2.0R</span
+                  >价格几何 2.0R</span
                 >
               </div>
               <p class="text-[11px]" style="color: var(--text-muted)">
-                根据入场价、止盈目标与云端止损线严密验算盈亏比，拒绝低于 2.0R 的劣质赔率。
+                该插件检查入场、止盈与止损的价格几何 RR ≥ 2.0；最终执行层另按手续费、滑点和最终价格重算净 RR，默认至少 2.0，并检查风险预算。
               </p>
             </div>
           </div>
@@ -802,7 +815,7 @@ onUnmounted(() => {
             >
               <span
                 >实机截图 · 物理拦截插件中心
-                (4H顺势铁律、置信度门禁、ADX震荡过滤与现场沙箱回归测试)</span
+                (4H顺势、评分合法性、ADX过滤与现场沙箱测试；历史截图阈值以当前文字说明为准)</span
               >
               <span class="font-bold" style="color: var(--color-brand)">点击图片放大</span>
             </div>
@@ -915,30 +928,28 @@ onUnmounted(() => {
               class="text-xl sm:text-2xl font-black tracking-wide"
               style="color: var(--text-main)"
             >
-              自进化认知与长期记忆闭环 (每6小时复盘)
+              自进化认知与长期记忆闭环 (review-only)
             </h2>
           </div>
 
           <p class="text-xs sm:text-sm leading-relaxed font-sans" style="color: var(--text-muted)">
-            传统的量化策略往往因静态参数而在牛熊轮动中失效。R20
-            将自进化体系升级为<strong>独立的认知中枢模块</strong>，每 6 小时（每日 4
-            次：02:00、08:00、14:00、20:00）对全天真实成交流水穿透复盘：
+            R20 的自进化是<strong>review-only 复盘与候选审核流程</strong>：按配置时间运行，
+            默认每日北京时间 20:00，读取当前账户已平仓台账；demo 样本不等于 live 结果，复盘成功不代表策略已改善或已应用。
           </p>
 
           <div class="space-y-2 text-xs font-sans" style="color: var(--text-muted)">
             <div>
-              • <strong style="color: var(--text-main)">高频弹性调度</strong>：每 6
-              小时自动触发穿透，快速感知盘口微观结构变化；
+              • <strong style="color: var(--text-main)">可配置调度</strong>：按保存的复盘时间触发，也支持立即复盘；无新证据可返回 NO_CHANGE，不承诺每次产生新心法；
             </div>
             <div>
               •
               <strong style="color: var(--text-main)">实战心法 CRUD 面板</strong
-              >：管理员可在线一键添加新心法，或剔除失效规则，即时同步注入 System Prompt；
+              >：管理员可在线添加、删除运行心法；这是显式人工修改，不是复盘候选自动推广，也不能覆盖风控；
             </div>
             <div>
-              • <strong style="color: var(--text-main)">双层持久化存储</strong>：机器可读 JSON
-              与人类可读
-              Markdown（<code>data/AI_TRADING_MEMORY.md</code>）同步生成并即刻注入下一轮决策。
+              • <strong style="color: var(--text-main)">报告、候选与运行记忆分离</strong>：复盘报告写入
+              <code>self_improvement_review.md</code>，候选写入 <code>memory_candidates.json</code>，
+              待证据审核或被拒绝，不自动推广，不自动覆盖现有运行记忆 <code>data/AI_TRADING_MEMORY.md</code>、权重或风险参数。
             </div>
           </div>
 
@@ -953,7 +964,7 @@ onUnmounted(() => {
             >
               <span
                 >实机截图 · 自进化认知配置与长期心法记忆库
-                (每6小时复盘看板、实战心法CRUD管理与强制立即复盘)</span
+                (复盘状态、实战心法CRUD管理与立即复盘；历史截图调度以当前配置为准)</span
               >
               <span class="font-bold" style="color: var(--color-brand)">点击图片放大</span>
             </div>
@@ -1081,9 +1092,9 @@ pip install -r requirements.txt
                 Q1: 为什么策略推演经常输出 WAIT？是系统出故障了吗？
               </h3>
               <p class="text-xs leading-relaxed" style="color: var(--text-muted)">
-                不是故障。在 R20 的量化哲学中，<strong>WAIT 是最核心、最高价值的风险防御决策</strong
-                >。当 4H 趋势不明朗、1H ADX &lt; 18 处于横盘猴市、或置信度未达到 80%
-                及格线时，系统坚决选择空仓等待，杜绝因频繁无效交易损耗昂贵的手续费与资金费。
+                不一定是故障。<strong>WAIT 表示本轮不授权该候选开仓</strong
+                >。候选未成立、证据或数据不合格、默认趋势/ADX 插件拦截、最终报价或净 RR 不通过、风险预算不足均可能导致等待。
+                应查看本轮审计原因；入场评分没有 75/80 硬门槛，WAIT 也不代表已有持仓或挂单已清空。
               </p>
             </div>
 
@@ -1095,10 +1106,8 @@ pip install -r requirements.txt
                 Q2: 我的 OKX API Key 和大模型密钥会泄露吗？
               </h3>
               <p class="text-xs leading-relaxed" style="color: var(--text-muted)">
-                绝不会。系统采用<strong>全本地无害化存储</strong>（本地加密 SQLite
-                库与环境变量隔离），开源仓库的
-                <code>.gitignore</code> 已严密阻断任何凭证提交；公开接口及前台响应对所有 Key、Token
-                与 Secret 均进行强力掩码脱敏（如 <code>sk-***abcd</code>）。
+                不能保证绝不泄露。后台对凭据采用掩码展示（如 <code>sk-***abcd</code>），
+                但掩码与 <code>.gitignore</code> 都不是完整安全边界；仍需限制主机与备份访问、使用最小权限并妥善保管凭据。
               </p>
             </div>
 
