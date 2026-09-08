@@ -40,6 +40,10 @@ test('all four columns and full filenames remain accessible while status badges 
 
 test('operator pause is explicit and never promises exchange connectivity', () => {
   assert.ok(overview.includes('data-runtime-controls'))
-  assert.ok(overview.includes('???????????'))
-  assert.ok(overview.includes('??????????????'))
+  assert.ok(overview.includes('新的自动决策周期已暂停'))
+  assert.ok(overview.includes('调度配置不等于交易所连接正常'))
+})
+
+test('status messages survive UTF-8 source generation', () => {
+  assert.doesNotMatch(overview, /\?{3,}/)
 })

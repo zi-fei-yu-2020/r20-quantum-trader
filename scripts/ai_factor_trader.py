@@ -1967,7 +1967,7 @@ def execute_portfolio():
                 environment_notices.append(f"{f['name']}：{state['label']}，仅观察")
                 continue
             if not f.get("market_data_valid"):
-                environment_notices.append(f"{f['name']}????????????????")
+                environment_notices.append(f"{f['name']}：执行行情不可用，本轮不新增风险")
                 continue
             asset_type = f.get("type", "crypto")
             if not is_tradfi_market_liquid(asset_type):
