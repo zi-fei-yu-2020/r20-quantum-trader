@@ -510,48 +510,55 @@ def _float_or_zero(value: Any) -> float:
         return 0.0
 
 
-def _live_oco_coverage(orders: List[Dict[str, Any]], pos_side: str) -> float:
-    """Return contract size covered by live, reduce-only OCO TP/SL orders."""
-    coverage = 0.0
-    close_side = "sell" if pos_side == "long" else "buy"
-    for order in orders:
-        if str(order.get("state", "live")).lower() not in {"live", "effective"}:
-            continue
-        if str(order.get("posSide", "net")).lower() not in {pos_side, "net"}:
-            continue
-        if str(order.get("side", close_side)).lower() != close_side:
-            continue
-        if not order.get("tpTriggerPx") or not order.get("slTriggerPx"):
-            continue
-        reduce_only = str(order.get("reduceOnly", "true")).lower() in {"true", "1", "yes"}
-        if not reduce_only:
-            continue
-        coverage += _float_or_zero(order.get("sz") or order.get("actualSz"))
-    return coverage
+def _live_oco_coverage(orders: List[Dict[str, Any]], pos_side: str, *, mark_px=None, entry_px=None) -> float:
+    """Only explicitly proven live OCO rows count; never infer missing fields."""
+    from scripts.protection_policy import oco_coverage
+    snapshot = oco_coverage(orders, pos_side, mark_px, entry_px)
+    return 0.0 if snapshot.unknown else snapshot.size
 
 
 def ensure_cloud_position_protection(inst_id: str, pos_side: str, size: float, tp_px: float, sl_px: float) -> Tuple[bool, str]:
-    """Unknown reads never cause blind repair; fresh confirmed gaps are repaired once."""
+    """Unknown/triggered protection never becomes a gap eligible for blind repair."""
+    from decimal import Decimal
+    from scripts.protection_policy import oco_coverage, positive, trigger_geometry
+    size = positive(size)
+    if size is None or pos_side not in ('long', 'short'):
+        return False, "UNKNOWN: invalid position side or size"
     env = market._selected()
     try:
-        orders = algo_reader.orders_for_instrument(algo_reader.read_algo_orders(env, priority="risk"), inst_id)
+        orders = algo_reader.orders_for_instrument(algo_reader.read_algo_orders(env, priority="risk", force=True), inst_id)
+        position_ok, positions, _ = query_positions()
+        matching = [p for p in positions if p.get('instId') == inst_id and p.get('posSide') == pos_side]
+        if not position_ok or len(matching) != 1 or positive(matching[0].get('pos')) != size:
+            return False, "UNKNOWN: position changed or current position snapshot unavailable"
+        position = matching[0]
+        mark_px, entry_px = positive(position.get('markPx')), positive(position.get('avgPx'))
+        if mark_px is None and entry_px is None:
+            return False, "UNKNOWN: no position price reference for protection geometry"
     except Exception as exc:
         detail = str(exc) if isinstance(exc, algo_reader.AlgoReadError) else type(exc).__name__
         return False, f"UNKNOWN: unable to verify cloud OCO after bounded reads: {detail}"
-    coverage = _live_oco_coverage(orders, pos_side)
-    missing = max(0.0, float(size) - coverage)
-    if missing <= max(1e-12, float(size) * 0.001):
+    snapshot = oco_coverage(orders, pos_side, mark_px, entry_px)
+    if snapshot.unknown:
+        return False, "UNKNOWN: ambiguous or possibly triggered protection; no repair sent"
+    coverage = snapshot.size
+    if coverage >= size:
         return True, f"cloud OCO coverage verified ({coverage:g}/{size:g})"
-
+    if not trigger_geometry(pos_side, tp_px, sl_px, mark_px, entry_px):
+        return False, "UNKNOWN: proposed repair triggers cross the position price reference"
+    missing = Decimal(str(size)) - sum(Decimal(str(row['sz'])) for row in snapshot.orders)
     close_side = "sell" if pos_side == "long" else "buy"
     command = okx_private_command(
         f"okx swap algo place --instId {inst_id} --side {close_side} --posSide {pos_side} "
-        f"--tdMode cross --ordType oco --sz {missing:g} --tpTriggerPx {tp_px} --tpOrdPx=-1 "
+        f"--tdMode cross --ordType oco --sz {missing:f} --tpTriggerPx {tp_px} --tpOrdPx=-1 "
         f"--slTriggerPx {sl_px} --slOrdPx=-1 --reduceOnly --cxlOnClosePos --json"
     )
-    placed = run_cmd_result(command, timeout=20)  # Exactly one write attempt.
+    try:
+        placed = run_cmd_result(command, timeout=20)  # Exactly one write attempt.
+        write_confirmed = placed["ok"]
+    except Exception:
+        write_confirmed = False
     # An ambiguous write is NOT repeated. Reconcile by fresh reads only.
-    write_confirmed = placed["ok"]
     deadline = time.monotonic() + 6
     last_detail = "UNKNOWN: no fresh post-repair snapshot obtained before deadline"
     for _ in range(4):
@@ -565,10 +572,22 @@ def ensure_cloud_position_protection(inst_id: str, pos_side: str, size: float, t
             detail = str(exc) if isinstance(exc, algo_reader.AlgoReadError) else type(exc).__name__
             last_detail = f"UNKNOWN: post-repair verification unavailable: {detail}"
             break  # Reader already applied bounded retry/Retry-After; no outer retry storm.
-        verified_coverage = _live_oco_coverage(orders, pos_side)
-        if verified_coverage + max(1e-12, float(size) * .001) >= float(size):
+        try:
+            position_ok, positions, _ = query_positions()
+            matching = [p for p in positions if p.get('instId') == inst_id and p.get('posSide') == pos_side]
+            if not position_ok or len(matching) != 1 or positive(matching[0].get('pos')) != size:
+                return False, "UNKNOWN: position changed during protection repair"
+            mark_px, entry_px = positive(matching[0].get('markPx')), positive(matching[0].get('avgPx'))
+            if mark_px is None and entry_px is None:
+                return False, "UNKNOWN: post-repair price reference unavailable"
+        except Exception:
+            return False, "UNKNOWN: post-repair position snapshot unavailable"
+        snapshot = oco_coverage(orders, pos_side, mark_px, entry_px)
+        if snapshot.unknown:
+            return False, "UNKNOWN: ambiguous or possibly executing post-repair protection"
+        if snapshot.size >= size:
             label = "repaired and verified" if write_confirmed else "reconciled after uncertain write"
-            return True, f"cloud OCO {label} ({verified_coverage:g}/{size:g})"
+            return True, f"cloud OCO {label} ({snapshot.size:g}/{size:g})"
         last_detail = "INSUFFICIENT: fresh post-repair snapshot still shows incomplete coverage"
     return False, last_detail
 
@@ -1343,6 +1362,7 @@ def manage_position_tp_and_trailing(f, curr_pos, trackers, timestamp_full, execu
 
 def execute_ai_position_management(real_pos_dict, trackers, timestamp_full, executed_actions):
     """Execute only fresh, high-confidence and risk-reducing AI position instructions."""
+    from scripts.protection_policy import oco_coverage, positive, rounded_stop
     if not os.path.exists(AI_POSITION_MANAGEMENT_FILE):
         return
     try:
@@ -1365,8 +1385,8 @@ def execute_ai_position_management(real_pos_dict, trackers, timestamp_full, exec
             continue
 
         pos_side = str(position.get("posSide", "net")).lower()
-        current_px = float(position.get("markPx", position.get("last", 0)) or 0)
-        avg_px = float(position.get("avgPx", 0) or 0)
+        current_px = positive(position.get("markPx")) or positive(position.get("last")) or 0
+        avg_px = positive(position.get("avgPx")) or 0
         name = inst_id.replace("-USDT-SWAP", "")
 
         if action == "CLOSE_MARKET":
@@ -1381,7 +1401,10 @@ def execute_ai_position_management(real_pos_dict, trackers, timestamp_full, exec
                 executed_actions.append(f"[{name}] AI平仓请求未获交易所确认，仓位保持不变: {close_detail}")
 
         elif action == "UPDATE_SL":
-            new_sl = float(instruction.get("suggested_sl_price", 0) or 0)
+            new_sl = positive(instruction.get("suggested_sl_price")) or 0
+            if positive(current_px) is None or positive(avg_px) is None:
+                executed_actions.append(f"[{name}] UNKNOWN: current or entry price unavailable; amendment not sent")
+                continue
             atr_val = max(float(position.get("atr_1h", 0) or 0), float(position.get("atr", 0) or 0), current_px * 0.012)
             
             # Anti-premature trailing fix:
@@ -1408,34 +1431,110 @@ def execute_ai_position_management(real_pos_dict, trackers, timestamp_full, exec
                 detail = str(exc) if isinstance(exc, algo_reader.AlgoReadError) else type(exc).__name__
                 executed_actions.append(f"[{name}] 止损单核验暂不可用，未发送改单，原保护单保持不变: {detail}")
                 continue
-            live_algo = next((o for o in algo_orders if o.get("state") == "live" and o.get("posSide") == pos_side and o.get("slTriggerPx")), None)
-            if not live_algo:
-                executed_actions.append(f"[{name}] 未找到真实云端止损单，无法更新")
+            snapshot = oco_coverage(algo_orders, pos_side, current_px, avg_px)
+            position_size = positive(position.get('pos'))
+            tracker = trackers.get(f"{inst_id}_{pos_side}")
+            if snapshot.unknown or position_size is None or snapshot.size < position_size or tracker is None:
+                executed_actions.append(f"[{name}] UNKNOWN: full cloud coverage or local verification state unavailable; amendment not sent")
                 continue
-            old_sl = float(live_algo['slTriggerPx'])
-            if not risk_policy.monotonic_stop(pos_side, old_sl, new_sl, current_px):
-                executed_actions.append(f"[{name}] 拒绝放宽或重复止损: 云端 {old_sl} → 建议 {new_sl}")
+            if tracker.get('pendingStopAmendment') or tracker.get('cloudProtection', {}).get('status') == 'unknown':
+                executed_actions.append(f"[{name}] UNKNOWN: previous stop amendment unresolved; no blind retry")
                 continue
-            result = run_cmd_result(okx_private_command(f"okx swap algo amend --instId {inst_id} --algoId {live_algo['algoId']} --newSlTriggerPx {new_sl} --newSlOrdPx=-1 --json"))
-            # An uncertain/rejected write is reconciled, never repeated.
             try:
-                fresh = algo_reader.read_algo_orders(market._selected(), priority='risk', force=True, timeout=6)
-                confirmed = next((o for o in fresh if o.get('algoId') == live_algo['algoId']), None)
-                actual = float(confirmed.get('slTriggerPx') or 0) if confirmed else 0
-                verified = actual > 0 and ((new_sl <= actual < current_px) if pos_side == 'long' else (current_px < actual <= new_sl))
+                metadata = market.get_json(
+                    f"https://www.okx.com/api/v5/public/instruments?instType=SWAP&instId={inst_id}",
+                    simulated=market._selected().simulated)['data']
+                ticks = [r.get('tickSz') for r in metadata if r.get('instId') == inst_id]
+                if len(ticks) != 1 or positive(ticks[0]) is None:
+                    raise ValueError('Missing tick size')
+                tick = ticks[0]
             except Exception:
-                verified = False
-            strategy_evidence.best_effort(market._selected().identity, 'stop_amendment', {
-                'instrument': inst_id, 'algo_id': live_algo['algoId'], 'old_stop': old_sl,
-                'requested_stop': new_sl, 'verified': verified, 'transport_ok': result['ok']})
-            if verified:
-                executed_actions.append(f"[{name}] 云端止损已读回确认收紧至 {actual}: {reason}")
-                tracker = trackers.get(f"{inst_id}_{pos_side}")
-                if tracker:
-                    tracker['trailingStopPx'] = actual
-                    tracker['cloudProtection'] = {'verifiedAt': timestamp_full, 'detail': 'stop amendment read-back confirmed'}
-            else:
-                executed_actions.append(f"[{name}] 止损改单结果未知，未重复改单，未推进本地确认状态")
+                executed_actions.append(f"[{name}] UNKNOWN: tick metadata unavailable; amendment not sent")
+                continue
+            # Include every segment; an already tighter segment must never be loosened.
+            planned = [(row, rounded_stop(pos_side, new_sl, row['slTriggerPx'], current_px, tick))
+                       for row in snapshot.orders]
+            planned = [(row, target) for row, target in planned if target is not None]
+            if not planned:
+                executed_actions.append(f"[{name}] Stop unchanged: would loosen, repeat or cross current price after tick rounding")
+                continue
+            all_verified = True
+            for live_algo, target in planned:
+                try:
+                    position_ok, positions, _ = query_positions()
+                    matching = [p for p in positions if p.get('instId') == inst_id and p.get('posSide') == pos_side]
+                    if not position_ok or len(matching) != 1 or positive(matching[0].get('pos')) != position_size:
+                        raise ValueError('Position changed')
+                    current_px = positive(matching[0].get('markPx'))
+                    if current_px is None or oco_coverage(list(snapshot.orders), pos_side, current_px, avg_px).unknown:
+                        raise ValueError('Protection may already be triggering')
+                    live_algo = next(o for o in snapshot.orders if o['algoId'] == live_algo['algoId'])
+                    target = rounded_stop(pos_side, new_sl, live_algo['slTriggerPx'], current_px, tick)
+                    if target is None:
+                        # A concurrent tightening is safe to retain, but a crossed market is not.
+                        if ((new_sl >= current_px) if pos_side == 'long' else (new_sl <= current_px)):
+                            raise ValueError('Suggested stop now crosses market')
+                        continue
+                except Exception:
+                    tracker['cloudProtection'] = {'status': 'unknown', 'detail': 'position/protection changed during amendment'}
+                    executed_actions.append(f"[{name}] UNKNOWN: position or current price changed; remaining amendments stopped")
+                    all_verified = False
+                    break
+                old_sl = float(live_algo['slTriggerPx'])
+                # Retain uncertainty before writing; acknowledgement is not verification.
+                tracker['pendingStopAmendment'] = {'algoId': live_algo['algoId'], 'requestedStop': target}
+                tracker['cloudProtection'] = {'status': 'unknown', **tracker['pendingStopAmendment'],
+                    'detail': 'stop amendment awaiting read-back'}
+                try:
+                    result = run_cmd_result(okx_private_command(
+                        f"okx swap algo amend --instId {inst_id} --algoId {live_algo['algoId']} "
+                        f"--newSlTriggerPx {target} --newSlOrdPx=-1 --json"))
+                    transport_ok = result['ok']
+                except Exception:
+                    transport_ok = False
+                # Reconcile each individual write before attempting the next segment.
+                try:
+                    fresh = algo_reader.orders_for_instrument(algo_reader.read_algo_orders(
+                        market._selected(), priority='risk', force=True, timeout=6), inst_id)
+                    position_ok, positions, _ = query_positions()
+                    matching = [p for p in positions if p.get('instId') == inst_id and p.get('posSide') == pos_side]
+                    if not position_ok or len(matching) != 1 or positive(matching[0].get('pos')) != position_size:
+                        raise ValueError('Position changed after amendment')
+                    current_px = positive(matching[0].get('markPx'))
+                    if current_px is None:
+                        raise ValueError('Current mark unavailable after amendment')
+                    fresh_snapshot = oco_coverage(fresh, pos_side, current_px, avg_px)
+                    confirmed = next((o for o in fresh_snapshot.orders if o['algoId'] == live_algo['algoId']), None)
+                    actual = positive(confirmed.get('slTriggerPx')) if confirmed else None
+                    verified = (not fresh_snapshot.unknown and fresh_snapshot.size >= position_size
+                                and {o['algoId'] for o in fresh_snapshot.orders} == {o['algoId'] for o in snapshot.orders}
+                                and confirmed is not None and positive(confirmed['sz']) == positive(live_algo['sz'])
+                                and actual is not None and ((float(target) <= actual < current_px)
+                                    if pos_side == 'long' else (current_px < actual <= float(target))))
+                    # Concurrent removal, resizing or loosening of another segment is unknown.
+                    for previous in snapshot.orders:
+                        observed = next((o for o in fresh_snapshot.orders if o['algoId'] == previous['algoId']), None)
+                        if (observed is None or positive(observed['sz']) != positive(previous['sz'])
+                                or (float(observed['slTriggerPx']) < float(previous['slTriggerPx']) if pos_side == 'long'
+                                    else float(observed['slTriggerPx']) > float(previous['slTriggerPx']))):
+                            verified = False
+                except Exception:
+                    verified = False
+                strategy_evidence.best_effort(market._selected().identity, 'stop_amendment', {
+                    'instrument': inst_id, 'algo_id': live_algo['algoId'], 'old_stop': old_sl,
+                    'requested_stop': float(target), 'verified': verified, 'transport_ok': transport_ok})
+                if not verified:
+                    executed_actions.append(f"[{name}] UNKNOWN: amendment outcome uncertain; batch stopped without retry or local confirmation")
+                    all_verified = False
+                    break
+                snapshot = fresh_snapshot
+                tracker.pop('pendingStopAmendment', None)
+            if all_verified:
+                actual = (min if pos_side == 'long' else max)(float(o['slTriggerPx']) for o in snapshot.orders)
+                tracker['trailingStopPx'] = actual
+                tracker['cloudProtection'] = {'status': 'verified', 'verifiedAt': timestamp_full,
+                    'detail': 'all stop segments read-back confirmed'}
+                executed_actions.append(f"[{name}] All stop segments read-back confirmed; weakest protection {actual}: {reason}")
 
 # =============================================================================
 # 🧠 R20 Quantum Trader v6.8.1 Multi-Factor Scoring & Strategy Setup Classifier

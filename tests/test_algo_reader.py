@@ -97,12 +97,23 @@ class AlgoReaderTests(unittest.TestCase):
 
     def test_transient_429_then_coverage_does_not_enter_repair_or_exit(self):
         self.fake_clock()
-        with patch.object(trader, 'algo_reader', reader), patch.object(trader.market, '_selected', return_value=self.env), patch('urllib.request.urlopen', side_effect=[self.error(429), self.response({'code':'0','data':[order()]})]) as send, patch.object(trader, 'run_cmd_result') as write:
+        position = {'instId': 'SOL-USDT-SWAP', 'posSide': 'long', 'pos': '4',
+                    'markPx': '104', 'avgPx': '103'}
+        with (
+            patch.object(trader, 'algo_reader', reader),
+            patch.object(trader.market, '_selected', return_value=self.env),
+            patch('urllib.request.urlopen', side_effect=[self.error(429), self.response({'code':'0','data':[order()]})]) as send,
+            patch.object(trader, 'query_positions', return_value=(True, [position], '')) as positions,
+            patch.object(trader, 'run_cmd_result') as write,
+            patch.object(trader, 'close_position_confirmed') as close,
+        ):
             ok, detail = trader.ensure_cloud_position_protection('SOL-USDT-SWAP', 'long', 4, 106, 101)
-        self.assertTrue(ok)
+        self.assertTrue(ok, detail)
         self.assertIn('coverage verified', detail)
         self.assertEqual(send.call_count, 2)
+        positions.assert_called_once_with()
         write.assert_not_called()
+        close.assert_not_called()
 
     def test_orphan_markers_are_pruned_but_active_marker_is_retained(self):
         orphan = self.directory / 'risk-orphan.lock'
@@ -245,12 +256,27 @@ class AlgoReaderTests(unittest.TestCase):
         self.assertEqual(list(self.directory.glob('*.snapshot.json')),[])
 
     def test_post_repair_always_reads_fresh_and_never_repeats_uncertain_write(self):
-        for accepted in [True,False]:
-            with patch.object(trader.algo_reader,'read_algo_orders',side_effect=[[],[order()]]) as read, patch.object(trader,'run_cmd_result',return_value={'ok':accepted,'data':{},'stderr':'timeout','stdout':''}) as write, patch.object(trader.time,'sleep'):
-                ok,detail=trader.ensure_cloud_position_protection('SOL-USDT-SWAP','long',4,106,101)
-            self.assertTrue(ok); write.assert_called_once()
-            self.assertTrue(read.call_args.kwargs['force']); self.assertLessEqual(read.call_args.kwargs['timeout'],6)
-            if not accepted:self.assertIn('uncertain write',detail)
+        position = {'instId': 'SOL-USDT-SWAP', 'posSide': 'long', 'pos': '4',
+                    'markPx': '104', 'avgPx': '103'}
+        for accepted in [True, False]:
+            with (
+                self.subTest(accepted=accepted),
+                patch.object(trader.market, '_selected', return_value=self.env),
+                patch.object(trader, 'okx_private_command', side_effect=lambda command: command),
+                patch.object(trader.algo_reader, 'read_algo_orders', side_effect=[[], [order()]]) as read,
+                patch.object(trader, 'query_positions', return_value=(True, [position], '')) as positions,
+                patch.object(trader, 'run_cmd_result', return_value={'ok': accepted, 'data': {}, 'stderr': 'timeout', 'stdout': ''}) as write,
+                patch.object(trader.time, 'sleep'),
+            ):
+                ok, detail = trader.ensure_cloud_position_protection('SOL-USDT-SWAP', 'long', 4, 106, 101)
+                self.assertTrue(ok, detail)
+                write.assert_called_once()
+                self.assertIn('algo place ', write.call_args.args[0])
+                self.assertEqual(read.call_count, 2)
+                self.assertEqual(positions.call_count, 2)
+                self.assertTrue(all(call.kwargs['force'] for call in read.call_args_list))
+                self.assertLessEqual(read.call_args.kwargs['timeout'], 6)
+                self.assertIn('repaired and verified' if accepted else 'uncertain write', detail)
 
     def test_unknown_initial_read_does_not_blindly_place_repair(self):
         with patch.object(trader.algo_reader,'read_algo_orders',side_effect=trader.algo_reader.AlgoReadError('rate_limited',3,429)), patch.object(trader,'run_cmd_result') as write:
@@ -258,12 +284,28 @@ class AlgoReaderTests(unittest.TestCase):
         self.assertFalse(ok); self.assertTrue(detail.startswith('UNKNOWN:')); write.assert_not_called()
 
     def test_confirmed_gap_after_repair_is_distinct_from_unavailable_post_read(self):
-        for last in ([],trader.algo_reader.AlgoReadError('rate_limited',3,429)):
-            side=[[],last,last,last,last] if isinstance(last,list) else [[],last]
-            with patch.object(trader.algo_reader,'read_algo_orders',side_effect=side), patch.object(trader,'run_cmd_result',return_value={'ok':True}) as write, patch.object(trader.time,'sleep'):
-                ok,detail=trader.ensure_cloud_position_protection('SOL-USDT-SWAP','long',4,106,101)
-            self.assertFalse(ok);write.assert_called_once()
-            self.assertTrue(detail.startswith('INSUFFICIENT:' if isinstance(last,list) else 'UNKNOWN:'))
+        self.fake_clock()
+        position = {'instId': 'SOL-USDT-SWAP', 'posSide': 'long', 'pos': '4',
+                    'markPx': '104', 'avgPx': '103'}
+        for last in ([], trader.algo_reader.AlgoReadError('rate_limited', 3, 429)):
+            known_gap = isinstance(last, list)
+            snapshots = [[], last, last, last, last] if known_gap else [[], last]
+            with (
+                self.subTest(known_gap=known_gap),
+                patch.object(trader.market, '_selected', return_value=self.env),
+                patch.object(trader, 'okx_private_command', side_effect=lambda command: command),
+                patch.object(trader.algo_reader, 'read_algo_orders', side_effect=snapshots) as read,
+                patch.object(trader, 'query_positions', return_value=(True, [position], '')) as positions,
+                patch.object(trader, 'run_cmd_result', return_value={'ok': True}) as write,
+            ):
+                ok, detail = trader.ensure_cloud_position_protection('SOL-USDT-SWAP', 'long', 4, 106, 101)
+                self.assertFalse(ok)
+                write.assert_called_once()
+                self.assertIn('algo place ', write.call_args.args[0])
+                self.assertTrue(detail.startswith('INSUFFICIENT:' if known_gap else 'UNKNOWN:'), detail)
+                self.assertEqual(read.call_count, 5 if known_gap else 2)
+                self.assertEqual(positions.call_count, 5 if known_gap else 1)
+                self.assertTrue(all(call.kwargs['force'] for call in read.call_args_list))
 
     @unittest.skipUnless(sys.platform.startswith('linux'),'OS flock process verification')
     def test_cross_process_risk_reader_preempts_waiting_monitor(self):

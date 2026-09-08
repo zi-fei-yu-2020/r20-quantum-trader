@@ -312,14 +312,29 @@ class AiFactorTraderPositionProtectionTest(unittest.TestCase):
         self.assertFalse(closed); self.assertEqual(reason,"持仓监控中"); close.assert_not_called()
 
     def test_cloud_oco_gap_is_repaired_and_verified(self):
-        covered = [{"algoId":"88","instId":"SOL-USDT-SWAP","state":"live","posSide":"long","side":"sell","reduceOnly":"true","sz":"4","tpTriggerPx":"106","slTriggerPx":"101"}]
-        with patch.object(ai_factor_trader.algo_reader,"read_algo_orders",side_effect=[[],covered]) as read, patch.object(ai_factor_trader,"run_cmd_result",return_value={"ok":True,"data":{"algoId":"88"},"stderr":"","stdout":"{}"}) as run, patch.object(ai_factor_trader.time,"sleep"):
-            ok,detail=ai_factor_trader.ensure_cloud_position_protection("SOL-USDT-SWAP","long",4,106,101)
-        self.assertTrue(ok); self.assertIn("repaired and verified",detail)
+        covered = [{"algoId": "88", "instId": "SOL-USDT-SWAP", "ordType": "oco",
+                    "state": "live", "posSide": "long", "side": "sell", "reduceOnly": "true",
+                    "sz": "4", "tpTriggerPx": "106", "slTriggerPx": "101"}]
+        position = {"instId": "SOL-USDT-SWAP", "posSide": "long", "pos": "4",
+                    "markPx": "104", "avgPx": "103"}
+        env = SimpleNamespace(identity="offline-protection-test", simulated=True)
+        with (
+            patch.object(ai_factor_trader.market, "_selected", return_value=env),
+            patch.object(ai_factor_trader, "okx_private_command", side_effect=lambda command: command),
+            patch.object(ai_factor_trader.algo_reader, "read_algo_orders", side_effect=[[], covered]) as read,
+            patch.object(ai_factor_trader, "query_positions", return_value=(True, [position], "")) as positions,
+            patch.object(ai_factor_trader, "run_cmd_result", return_value={"ok": True, "data": {"algoId": "88"}, "stderr": "", "stdout": "{}"}) as run,
+            patch.object(ai_factor_trader.time, "sleep"),
+        ):
+            ok, detail = ai_factor_trader.ensure_cloud_position_protection("SOL-USDT-SWAP", "long", 4, 106, 101)
+        self.assertTrue(ok, detail)
+        self.assertIn("repaired and verified", detail)
         run.assert_called_once()
-        self.assertIn("--ordType oco",run.call_args.args[0])
-        self.assertIn("--reduceOnly",run.call_args.args[0])
-        self.assertTrue(read.call_args.kwargs["force"])
+        self.assertIn("--ordType oco", run.call_args.args[0])
+        self.assertIn("--reduceOnly", run.call_args.args[0])
+        self.assertEqual(read.call_count, 2)
+        self.assertEqual(positions.call_count, 2)
+        self.assertTrue(all(call.kwargs["force"] for call in read.call_args_list))
 
     def test_stale_order_query_failure_aborts_cleanup(self):
         with patch.object(ai_factor_trader,"run_cmd_result",return_value={"ok":False,"data":None,"stderr":"timeout","stdout":""}):

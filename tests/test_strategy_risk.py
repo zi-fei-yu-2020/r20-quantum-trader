@@ -51,14 +51,71 @@ class StrategyRiskTests(unittest.TestCase):
         self.assertTrue(risk.monotonic_stop('short',90,88,80))
 
     def test_stop_function_refuses_loosen_and_does_not_advance_on_unknown(self):
-        position={'TEST-USDT-SWAP':{'posSide':'long','markPx':120,'avgPx':100}}
-        old={'algoId':'a','instId':'TEST-USDT-SWAP','posSide':'long','state':'live','slTriggerPx':'110'}
-        for proposed,last,expected_calls,expected_stop in [(105,old,0,110),(112,{**old,'slTriggerPx':'112'},1,112),(112,RuntimeError('unknown'),1,110)]:
-            tracker={'TEST-USDT-SWAP_long':{'trailingStopPx':110}}
-            payload={'timestamp':int(time.time()),'instructions':[{'instId':'TEST-USDT-SWAP','action':'UPDATE_SL','suggested_sl_price':proposed}]}
-            with patch.object(trader.os.path,'exists',return_value=True),patch('builtins.open',return_value=io.StringIO(json.dumps(payload))),patch.object(trader.algo_reader,'read_algo_orders',side_effect=[[old],last if isinstance(last,Exception) else [last]]),patch.object(trader.market,'_selected',return_value=self.env),patch.object(trader,'okx_private_command',side_effect=lambda c:c),patch.object(trader,'run_cmd_result',return_value={'ok':False}) as write,patch.object(trader.strategy_evidence,'best_effort'):
-                trader.execute_ai_position_management(position,tracker,'test',[])
-            self.assertEqual(write.call_count,expected_calls);self.assertEqual(tracker['TEST-USDT-SWAP_long']['trailingStopPx'],expected_stop)
+        position = {'TEST-USDT-SWAP': {'instId': 'TEST-USDT-SWAP', 'posSide': 'long',
+                                     'pos': '1', 'markPx': '120', 'avgPx': '100'}}
+        old = {'algoId': 'a', 'instId': 'TEST-USDT-SWAP', 'ordType': 'oco', 'posSide': 'long',
+               'side': 'sell', 'state': 'live', 'reduceOnly': 'true', 'sz': '1',
+               'tpTriggerPx': '150', 'slTriggerPx': '110'}
+        for proposed, last, expected_calls, expected_stop in [
+            (105, old, 0, 110),
+            (112, {**old, 'slTriggerPx': '112'}, 1, 112),
+            (112, RuntimeError('unknown'), 1, 110),
+        ]:
+            tracker = {'TEST-USDT-SWAP_long': {'trailingStopPx': 110}}
+            payload = {'timestamp': int(time.time()), 'instructions': [
+                {'instId': 'TEST-USDT-SWAP', 'action': 'UPDATE_SL', 'suggested_sl_price': proposed}]}
+            with (
+                self.subTest(proposed=proposed, unknown=isinstance(last, Exception)),
+                patch.object(trader.os.path, 'exists', return_value=True),
+                patch('builtins.open', side_effect=lambda *args, **kwargs: io.StringIO(json.dumps(payload))),
+                patch.object(trader.algo_reader, 'read_algo_orders', side_effect=[
+                    [old], last if isinstance(last, Exception) else [last]]) as read,
+                patch.object(trader.market, '_selected', return_value=self.env),
+                patch.object(trader.market, 'get_json', return_value={'data': [META]}) as metadata,
+                patch.object(trader, 'query_positions', return_value=(True, list(position.values()), '')) as positions,
+                patch.object(trader, 'okx_private_command', side_effect=lambda command: command),
+                patch.object(trader, 'run_cmd_result', return_value={'ok': False}) as write,
+                patch.object(trader.strategy_evidence, 'best_effort') as evidence_write,
+            ):
+                trader.execute_ai_position_management(position, tracker, 'test', [])
+                self.assertEqual(write.call_count, expected_calls)
+                state = tracker['TEST-USDT-SWAP_long']
+                self.assertEqual(state['trailingStopPx'], expected_stop)
+                self.assertEqual(read.call_count, 1 + expected_calls)
+                self.assertTrue(all(call.kwargs['force'] for call in read.call_args_list))
+                metadata.assert_called_once()
+                if not expected_calls:
+                    positions.assert_not_called()
+                    evidence_write.assert_not_called()
+                    self.assertNotIn('pendingStopAmendment', state)
+                    self.assertNotIn('cloudProtection', state)
+                elif isinstance(last, Exception):
+                    positions.assert_called_once_with()
+                    self.assertEqual(state['cloudProtection']['status'], 'unknown')
+                    self.assertNotIn('verifiedAt', state['cloudProtection'])
+                    pending = dict(state['pendingStopAmendment'])
+                    self.assertEqual(pending['algoId'], 'a')
+                    self.assertEqual(float(pending['requestedStop']), proposed)
+                    self.assertFalse(evidence_write.call_args.args[2]['verified'])
+                    # Ordinary coverage verification must not erase an unresolved write.
+                    state['cloudProtection'] = {'verifiedAt': 'other-loop', 'detail': 'coverage verified'}
+                    read.side_effect = [[old]]
+                    trader.execute_ai_position_management(position, tracker, 'test', [])
+                    write.assert_called_once()
+                    positions.assert_called_once_with()
+                    metadata.assert_called_once()
+                    evidence_write.assert_called_once()
+                    self.assertEqual(read.call_count, 3)
+                    self.assertEqual(state['pendingStopAmendment'], pending)
+                    self.assertEqual(state['trailingStopPx'], 110)
+                else:
+                    self.assertEqual(positions.call_count, 2)
+                    self.assertEqual(state['cloudProtection']['status'], 'verified')
+                    self.assertEqual(state['cloudProtection']['verifiedAt'], 'test')
+                    self.assertNotIn('pendingStopAmendment', state)
+                    # An uncertain write can succeed only through authoritative read-back.
+                    self.assertFalse(evidence_write.call_args.args[2]['transport_ok'])
+                    self.assertTrue(evidence_write.call_args.args[2]['verified'])
 
     def test_drawdown_uses_marked_equity_and_adjusts_external_flow(self):
         first=risk.update_equity_state(None,equity=1000,at=100000,cash_flow=0,complete=True)
