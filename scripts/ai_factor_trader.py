@@ -39,6 +39,7 @@ import public_market as market
 import instrument_support as support
 import algo_reader
 from scripts import trade_lock, risk_policy, entry_gateway, strategy_evidence
+from scripts.execution_profiles import runtime as execution_runtime
 import fcntl
 from typing import Tuple, Dict, Any, List, Optional
 from concurrent.futures import ThreadPoolExecutor
@@ -103,10 +104,10 @@ ASSET_CLASS_PROFILES = {
     "crypto": {
         "entry_threshold": 2.2,
         "min_profit_ratio": 0.0250,
-        "tp_atr_mult": 2.8,
-        "sl_atr_mult": 1.4,
-        "trailing_kick_in": 2.2,
-        "trailing_pullback": 0.80
+        "tp_atr_mult": 3.5,
+        "sl_atr_mult": 1.5,
+        "trailing_kick_in": 2.5,
+        "trailing_pullback": 1.2
     }
 }
 
@@ -115,12 +116,49 @@ MAX_SAME_DIRECTION_POSITIONS = 6
 LAST_ENTRY_PLAN = {}
 TAKER_FEE_RATE = 0.0005
 MAKER_FEE_RATE = 0.0002 # Limit Order Maker Fee (60% Lower Than Market Taker)
-MAX_DAILY_LOSS_USDT = 150.0
+MAX_DAILY_LOSS_USDT = 75.0
 
 # 🚀 Pyramiding Scale-In Hard Risk Gateways (顺势浮盈金字塔加仓风控硬门禁)
 MAX_SINGLE_ASSET_MARGIN = 600.0   # 单标的最大累计占用保证金上限 (USDT)
 MAX_SCALE_IN_COUNT = 1            # 单标的最大顺势加仓次数 (底仓+最多1次顺势追加)
 MIN_SCALE_IN_PROFIT_RATIO = 0.008 # 允许顺势加仓的最小底仓浮盈率 (+0.8%)
+
+# Exit-engine ratchet thresholds, split by execution preset. The 300U small-account
+# preset cannot afford the same give-back as a standard swing account: fees eat a larger
+# share of each winner, so it locks profit earlier and exits on a smaller pullback.
+# standard = swing-tuned (let winners run to 1.5R+); small300 = conservative (earlier lock).
+EXIT_THRESHOLDS = {
+    'standard': {
+        'time_stop_seconds': 21600,   # 6h, only when losing
+        'time_stop_profit_atr': 0.15, # exit only if profit < this (losing/near-flat)
+        'tier1_breakeven_atr': 2.5,   # move to breakeven-plus at this profit
+        'tier2_lock_atr': 4.0,        # lock a bigger band at this profit
+        'tier1_floor_atr': 0.5,       # breakeven floor distance from entry
+        'tier2_floor_atr': 1.5,       # lock floor distance from entry
+        'kinetic_peak_atr': 2.5,      # kinetic exit activates at this peak profit
+        'kinetic_pullback_atr': 1.2,  # exit on this pullback from peak
+    },
+    'small300': {
+        'time_stop_seconds': 14400,   # 4h: small account exits dead money sooner
+        'time_stop_profit_atr': 0.10, # only when clearly losing (<0.10 ATR)
+        'tier1_breakeven_atr': 1.8,   # earlier breakeven; fees dominate, can't give back
+        'tier2_lock_atr': 3.0,       # earlier big-win lock
+        'tier1_floor_atr': 0.3,       # tighter breakeven floor
+        'tier2_floor_atr': 1.0,       # tighter lock floor
+        'kinetic_peak_atr': 1.8,     # earlier kinetic exit
+        'kinetic_pullback_atr': 0.8, # smaller pullback tolerance
+    },
+}
+
+def _exit_preset():
+    """Return the active execution-preset exit thresholds. Falls back to standard
+    if the profile is unreadable or not small300. Never blocks the exit engine."""
+    try:
+        rid = execution_runtime()['execution']['id']
+        return EXIT_THRESHOLDS.get(rid, EXIT_THRESHOLDS['standard'])
+    except Exception:
+        return EXIT_THRESHOLDS['standard']
+
 
 def is_tradfi_market_liquid(asset_type: str) -> bool:
     """Strict US Regular Trading Window (BJ 21:30 ~ 次日 04:00)"""
@@ -1077,6 +1115,10 @@ def manage_position_tp_and_trailing(f, curr_pos, trackers, timestamp_full, execu
     atr = max(f["atr"], cur_px * 0.005)
     prec = f["precision"]
     ct_val = f["ctVal"]
+    # Exit thresholds are execution-preset aware: a 300U small account locks profit
+    # earlier and tolerates less give-back than a standard swing account, because fees
+    # consume a larger share of each winner on small size.
+    ex = _exit_preset()
     
     pos_sz = float(curr_pos["pos"])
     is_long = "long" in curr_pos["side"].lower()
@@ -1218,9 +1260,9 @@ def manage_position_tp_and_trailing(f, curr_pos, trackers, timestamp_full, execu
         return True, "保护核验安全退出"
     t["cloudProtection"] = {"verifiedAt": timestamp_full, "detail": protection_detail}
 
-    # 2. Volatility Time-Stop Exit (After 8 Hours dead consolidation without expansion)
+    # 2. Volatility Time-Stop Exit (dead consolidation without expansion)
     hold_duration_sec = now_ts - t["entryTs"]
-    if hold_duration_sec > 28800 and abs(cur_profit_px) < 0.15 * atr:
+    if hold_duration_sec > ex['time_stop_seconds'] and cur_profit_px < ex['time_stop_profit_atr'] * atr:
         closed, close_detail = close_position_confirmed(inst_id, "long" if is_long else "short", pos_sz, exit_reason='time_exit', position=curr_pos)
         if not closed:
             executed_actions.append(f"[{name}] 时间止损平仓失败，仓位仍保留: {close_detail}")
@@ -1253,17 +1295,17 @@ def manage_position_tp_and_trailing(f, curr_pos, trackers, timestamp_full, execu
     # Tier 2: 50% Profit Lock-In at +1.8x ATR profit (Lock in at least +0.9x ATR solid profit)
     # Tier 3: Kinetic Reversal Exit from Peak (Protect accumulated big wins)
     
-    tier1_breakeven_trigger = 1.5 * atr
-    tier2_lock_trigger = 2.2 * atr
+    tier1_breakeven_trigger = ex['tier1_breakeven_atr'] * atr
+    tier2_lock_trigger = ex['tier2_lock_atr'] * atr
     
     if is_long:
         # Dynamic Ratchet Stop Calculation
         dynamic_floor_sl = t["trailingStopPx"]
         if peak_profit_px >= tier2_lock_trigger:
-            dynamic_floor_sl = max(dynamic_floor_sl, entry_px + 1.0 * atr)
+            dynamic_floor_sl = max(dynamic_floor_sl, entry_px + ex['tier2_floor_atr'] * atr)
             t["stage_desc"] = f"锁定大波段利润 (保底止损 {dynamic_floor_sl})"
         elif peak_profit_px >= tier1_breakeven_trigger:
-            dynamic_floor_sl = max(dynamic_floor_sl, entry_px + 0.0020 * entry_px)
+            dynamic_floor_sl = max(dynamic_floor_sl, entry_px + ex['tier1_floor_atr'] * atr)
             t["stage_desc"] = f"已收紧保本保护 (保底止损 {dynamic_floor_sl})"
         t["localTrailingStopPx"] = dynamic_floor_sl
         t["trailingStopPx"] = dynamic_floor_sl  # local fail-safe; cloud confirmation is separate
@@ -1298,8 +1340,8 @@ def manage_position_tp_and_trailing(f, curr_pos, trackers, timestamp_full, execu
             if pos_key in trackers: del trackers[pos_key]
             return True, "已阶梯锁利"
 
-        # B. Kinetic Momentum Pullback Exit from Peak (Pullback >= 0.75x ATR when profit >= 2.0x ATR)
-        if peak_profit_px >= 2.0 * atr and cur_px <= (t["highWaterMark"] - 0.75 * atr):
+        # B. Kinetic Momentum Pullback Exit from Peak (Pullback >= kinetic_pullback_atr when profit >= kinetic_peak_atr)
+        if peak_profit_px >= ex['kinetic_peak_atr'] * atr and cur_px <= (t["highWaterMark"] - ex['kinetic_pullback_atr'] * atr):
             closed, close_detail = close_position_confirmed(inst_id, "long", pos_sz, exit_reason='trailing_exit', position=curr_pos)
             if not closed:
                 executed_actions.append(f"[{name}] 动能见顶移动止盈失败，仓位仍保留: {close_detail}")
@@ -1332,10 +1374,10 @@ def manage_position_tp_and_trailing(f, curr_pos, trackers, timestamp_full, execu
         # Dynamic Ratchet Stop Calculation for Short
         dynamic_floor_sl = t["trailingStopPx"]
         if peak_profit_px >= tier2_lock_trigger:
-            dynamic_floor_sl = min(dynamic_floor_sl, entry_px - 1.0 * atr)
+            dynamic_floor_sl = min(dynamic_floor_sl, entry_px - ex['tier2_floor_atr'] * atr)
             t["stage_desc"] = f"锁定大波段利润 (保底止损 {dynamic_floor_sl})"
         elif peak_profit_px >= tier1_breakeven_trigger:
-            dynamic_floor_sl = min(dynamic_floor_sl, entry_px - 0.0020 * entry_px)
+            dynamic_floor_sl = min(dynamic_floor_sl, entry_px - ex['tier1_floor_atr'] * atr)
             t["stage_desc"] = f"已推保本无风险 (保底止损 {dynamic_floor_sl})"
         t["localTrailingStopPx"] = dynamic_floor_sl
         t["trailingStopPx"] = dynamic_floor_sl  # local fail-safe; cloud confirmation is separate
@@ -1370,8 +1412,8 @@ def manage_position_tp_and_trailing(f, curr_pos, trackers, timestamp_full, execu
             if pos_key in trackers: del trackers[pos_key]
             return True, "已阶梯锁利"
 
-        # B. Kinetic Momentum Pullback Exit from Peak
-        if peak_profit_px >= 1.5 * atr and cur_px >= (t["lowWaterMark"] + 0.5 * atr):
+        # B. Kinetic Momentum Pullback Exit from Peak (Pullback >= kinetic_pullback_atr when profit >= kinetic_peak_atr)
+        if peak_profit_px >= ex['kinetic_peak_atr'] * atr and cur_px >= (t["lowWaterMark"] + ex['kinetic_pullback_atr'] * atr):
             closed, close_detail = close_position_confirmed(inst_id, "short", pos_sz, exit_reason='trailing_exit', position=curr_pos)
             if not closed:
                 executed_actions.append(f"[{name}] 动能见底移动止盈失败，仓位仍保留: {close_detail}")
