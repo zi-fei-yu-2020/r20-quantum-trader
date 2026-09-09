@@ -33,6 +33,7 @@ import json
 import time
 import datetime
 import math
+import re
 import subprocess
 import urllib.request
 import public_market as market
@@ -361,9 +362,9 @@ def is_circuit_breaker_active():
 
     return False, ""
 
-def query_positions() -> Tuple[bool, List[Dict[str, Any]], str]:
+def query_positions(timeout=20) -> Tuple[bool, List[Dict[str, Any]], str]:
     """Distinguish an exchange-confirmed empty account from a failed query."""
-    result = run_cmd_result(okx_private_command("okx account positions --json"), timeout=20)
+    result = run_cmd_result(okx_private_command("okx account positions --json"), timeout=timeout)
     if not result["ok"] or not isinstance(result.get("data"), list):
         return False, [], result["stderr"] or result["stdout"] or "invalid positions response"
     return True, result["data"], ""
@@ -385,26 +386,35 @@ def close_position_confirmed(inst_id: str, pos_side: str, before_size: float, *,
         print(f"[Close Pre-Clean] Warning cancelling pending orders for {inst_id}: {e}")
 
     close_started = time.time()
+    import uuid
+    attempt_id = uuid.uuid4().hex
+    transport_code = None
     def journal(status, response):
         try:
             from scripts.close_evidence import record_close
             record_close(market._selected(),inst_id=inst_id,side=pos_side,size=before_size,
                 started_at=close_started,confirmed_at=time.time(),reason=exit_reason,position=position,
-                result=response,status=status)
+                result=response,status=status,attempt_id=attempt_id,transport_code=transport_code)
         except Exception:
             pass  # Never retry or suppress a protective close because audit storage failed.
+    journal('submitted', None)
     result = run_cmd_result(
         okx_private_command(f"okx swap close --instId {inst_id} --mgnMode cross --posSide {pos_side} --autoCxl --json"),
         timeout=20,
     )
-    if not result["ok"]:
-        return False, result["stderr"] or result["stdout"] or "close command failed"
-
-    journal('accepted',result.get('data'))
+    accepted = bool(result.get('ok'))
+    if not accepted:
+        code = re.search(r'(?:Code:|OKX|HTTP)\s*(\d{3,6})', str(result.get('stderr') or result.get('stdout') or ''))
+        transport_code = code.group(1) if code else 'unconfirmed_transport'
+    journal('accepted' if accepted else 'unconfirmed', result.get('data'))
     saw_successful_query = False
+    deadline = time.monotonic() + 8
     for _ in range(6):
+        remaining_budget = deadline - time.monotonic()
+        if remaining_budget <= .6:
+            break
         time.sleep(0.6)
-        query_ok, positions, query_error = query_positions()
+        query_ok, positions, query_error = query_positions(timeout=min(2., max(.1, deadline - time.monotonic())))
         if not query_ok:
             continue
         saw_successful_query = True
@@ -414,11 +424,12 @@ def close_position_confirmed(inst_id: str, pos_side: str, before_size: float, *,
                 remaining = abs(float(current_position.get("pos", 0) or 0))
                 break
         if remaining < max(1e-12, abs(before_size) * 0.001):
-            journal('confirmed',result.get('data'))
-            return True, "exchange position closed"
+            journal('confirmed' if accepted else 'flat_observed',result.get('data'))
+            return True, ('exchange position closed' if accepted else 'position flat after uncertain close response; execution source requires order evidence')
+    journal('unconfirmed', result.get('data'))
     if not saw_successful_query:
-        return False, "position verification failed: no successful exchange response"
-    return False, f"exchange still reports an open position after close request (before={before_size})"
+        return False, "position verification failed: no successful exchange response; no write retry"
+    return False, f"exchange still reports an open position after one close request (before={before_size}); no write retry"
 
 
 def prune_trackers(trackers: Dict[str, Any], real_pos_dict: Dict[str, Any]) -> int:
@@ -859,6 +870,7 @@ def fetch_single_instrument_data(item, all_positions, usdt_available):
                 f["position"] = {
                     "instId": inst_id,
                     "name": name,
+                    "posId": p.get("posId"), "cTime": p.get("cTime"),
                     "side": p.get("posSide", p.get("side", "")),
                     "pos": pos_val,
                     "avgPx": float(p.get("avgPx", 0)),
@@ -1096,19 +1108,24 @@ def manage_position_tp_and_trailing(f, curr_pos, trackers, timestamp_full, execu
 
     now_ts = int(time.time())
     if pos_key not in trackers:
-        # Do not invent a new initial stop from current ATR for an already-held trade.
-        try:
-            rows = algo_reader.orders_for_instrument(algo_reader.read_algo_orders(market._selected(), priority='risk'), inst_id)
-            side_name = 'long' if is_long else 'short'
-            rows = [o for o in rows if _live_oco_coverage([o], side_name) > 0]
-            if _live_oco_coverage(rows, side_name) < pos_sz * .999:
-                raise ValueError('No authoritative full-position initial protection')
-            adopted_stop = (min if is_long else max)(float(o['slTriggerPx']) for o in rows)
-            adopted_tp = float(rows[0]['tpTriggerPx'])
-        except Exception:
-            closed, detail = close_position_confirmed(inst_id, 'long' if is_long else 'short', pos_sz, exit_reason='oco_unverified', position=curr_pos)
-            executed_actions.append(f"[{name}] 新发现持仓缺少可确认的原始保护，安全退出确认={closed}")
+        # Completed but insufficient snapshots get one fresh recheck; read errors
+        # have already exhausted their reader budget. No guessed repair or write retry.
+        from scripts.initial_protection import verify as verify_initial_protection
+        side_name = 'long' if is_long else 'short'
+        initial = verify_initial_protection(market._selected(), inst_id, side_name, pos_sz, curr_pos, query_positions)
+        if initial['status'] == 'flat':
+            executed_actions.append(f"[{name}] 新持仓复查已归零，未发送平仓指令；等待账本回执")
+            return True, '持仓已归零'
+        if initial['status'] == 'changed':
+            executed_actions.append(f"[{name}] 新持仓身份或数量已变化，保留云端保护并等待新快照")
+            return False, '持仓快照已变化'
+        if initial['status'] != 'verified':
+            closed, detail = close_position_confirmed(inst_id, side_name, pos_sz, exit_reason='oco_unverified', position=curr_pos)
+            executed_actions.append(f"[{name}] 新持仓保护经有界复查仍未确认（{initial['detail']}），安全退出确认={closed}；{detail}")
             return closed, '初始保护核验未知'
+        rows = initial['orders']
+        adopted_stop = (min if is_long else max)(float(o['slTriggerPx']) for o in rows)
+        adopted_tp = float(rows[0]['tpTriggerPx'])
         score, action, reasons, strat_tag, strat_desc = evaluate_asset_signal(f)
         trackers[pos_key] = {
             "instId": inst_id,
@@ -2227,6 +2244,7 @@ def execute_portfolio():
     with open(LOG_FILE, "a", encoding="utf-8") as f:
         f.write(log_entry)
     print(log_entry.strip())
+    return {"completed": True, "timestamp": timestamp_full, "actions": executed_actions}
 
 if __name__ == "__main__":
     # Account/quote aborts and lock skips must not be reported as completed work.

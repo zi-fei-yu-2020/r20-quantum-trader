@@ -28,15 +28,15 @@ def stamp(value):
     except ValueError:return 0.
 
 
-def record_close(env, *, inst_id, side, size, started_at, confirmed_at, reason='strategy_close',position=None,result=None,status='confirmed'):
+def record_close(env, *, inst_id, side, size, started_at, confirmed_at, reason='strategy_close',position=None,result=None,status='confirmed',attempt_id=None,transport_code=None):
     position=position or {}
     result_rows=result if isinstance(result,list) else [result] if isinstance(result,dict) else []
     payload={'instId':inst_id,'posSide':side,'size':abs(float(size)),'started_at':started_at,'confirmed_at':confirmed_at,
-             'reason_code':reason if reason in LABELS else 'strategy_close','status':status,'position_id':str(position.get('posId') or ''),
+             'reason_code':reason if reason in LABELS else 'strategy_close','status':status,'attempt_id':attempt_id,'transport_code':transport_code,'position_id':str(position.get('posId') or ''),
              'position_created_at':position.get('cTime'),'transport':'existing_cli_close','response_order_ids':[str(r['ordId']) for r in result_rows if isinstance(r,dict) and str(r.get('ordId') or '').isdigit()]}
     identity=evidence.best_effort(env.identity,'close_execution',payload)
     try:
-        if status=='confirmed':ledger_monitor.request_refresh('strategy_close')
+        if status in {'confirmed','flat_observed'}:ledger_monitor.request_refresh('strategy_close')
     except Exception:pass  # A successful close must not become a retryable trade failure.
     return identity
 
@@ -63,8 +63,8 @@ def read_events(scope,kind,limit=5000):
 def action_reason(action):
     """Recognize only the program's completed-close phrases, not generic model opinions."""
     if not isinstance(action,str):return None
-    patterns=(('hard_stop',r'触发硬止损.+并确认平仓'),('time_exit',r'时间止损平仓释放保证金'),
-              ('profit_lock',r'触发阶梯动态锁利平仓'),('trailing_exit',r'动能见顶.*移动止盈|高点回撤止盈|移动止盈.*确认平仓'),
+    patterns=(('hard_stop',r'触发硬止损.+并确认平仓'),('time_exit',r'时间止损平仓释放保证金|时间退出，交易所确认平仓'),
+              ('profit_lock',r'触发阶梯动态锁利平仓|触发浮盈保护.+并确认平仓'),('trailing_exit',r'动能见顶.*移动止盈|高点回撤止盈|移动止盈.*确认平仓|动能止盈已确认'),
               ('oco_unverified',r'(?:已安全平仓|已按安全策略确认平仓)'),('ai_exit',r'AI高置信度整仓退出:'))
     if any(word in action for word in ('平仓失败','退出失败','确认=False','未获交易所确认')):return None
     for code,pattern in patterns:
@@ -105,6 +105,7 @@ def legacy_job_events(rows,scope):
 def local_close_events(scope):
     result=read_events(scope,'close_execution',2000)
     for row in result:row.update(scope=scope,evidence_kind='close_execution_journal')
+    journal = list(result)
     for row in read_events(scope,'execution_cycle',2000):
         start=stamp(row.get('timestamp'));end=float(row.get('at') or 0)
         if start and 0<=end-start<=900:result.extend(actions_to_events(row.get('actions',[]),scope,start,end,'scoped_execution_cycle'))
@@ -119,7 +120,14 @@ def local_close_events(scope):
                 rows=[dict(r) for r in db.execute("SELECT started_at,finished_at,detail FROM job_runs WHERE job_name='trader' AND status='success' ORDER BY id DESC LIMIT 2000")]
             result.extend(legacy_job_events(rows,scope))
     except (OSError,sqlite3.Error):pass
-    return result
+    # An explicit attempt journal outranks reconstructed text. In particular,
+    # flat-after-unknown transport must not become "our close confirmed" because
+    # an outer guard logged that the position is now absent.
+    def overlaps(event, direct):
+        return (event.get('instId') == direct.get('instId')
+                and float(event.get('started_at') or 0) <= float(direct.get('confirmed_at') or direct.get('started_at') or 0) + 1
+                and float(event.get('confirmed_at') or 0) >= float(direct.get('started_at') or 0) - 1)
+    return journal + [event for event in result[len(journal):] if not any(overlaps(event, direct) for direct in journal)]
 
 
 def load_inputs(env,orders):

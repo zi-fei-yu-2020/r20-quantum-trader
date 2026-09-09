@@ -4,6 +4,7 @@ import AppDialog from './ui/AppDialog.vue'
 import AppButton from './ui/AppButton.vue'
 import AppTable from './ui/AppTable.vue'
 import { isSettlementPending } from '../utils/tradeSettlement'
+import { tradeDuration } from '../utils/tradeDuration'
 import { observedNumber } from '../utils/observationDisplay'
 import { feeAccounting, feeText, ledgerValue, ledgerNumberText, ledgerNumberColor } from '../utils/feeAccounting'
 
@@ -285,7 +286,7 @@ function clean(v: any, fallback = '--'): string {
                 </template>
               </td>
               <td class="py-3 px-3 text-center num-tabular" style="color: var(--text-muted)">
-                {{ clean(t.hold_duration || t.duration, '--') }}
+                {{ tradeDuration(t) }}
               </td>
               <td class="py-3 px-4 text-xs" style="color: var(--text-muted)">
                 <span

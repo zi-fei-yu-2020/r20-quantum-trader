@@ -20,6 +20,7 @@ import os
 import datetime
 import tempfile
 from scripts import ledger_monitor
+from scripts.ledger_duration import duration_seconds, format_duration
 from scripts.close_attribution import reason as close_reason
 from scripts.close_evidence import load_inputs as close_inputs
 from scripts.fill_accounting import read_archive as read_fill_archive, reconcile as reconcile_fill_fees
@@ -140,13 +141,8 @@ def build_lifecycle_ledger(*, notify=True):
         t_info = trackers.get(pos_k, {})
         strat_tag = t_info.get("strategy_tag") or ("🌊 低吸" if side == "多" else "⚡ 高空")
 
-        try:
-            t1 = datetime.datetime.strptime(open_time, "%Y-%m-%d %H:%M:%S").replace(tzinfo=tz_bj)
-            now_dt = datetime.datetime.now(tz_bj)
-            dur_mins = int((now_dt - t1).total_seconds() / 60)
-            duration_str = f"{dur_mins}分钟" if dur_mins < 60 else f"{dur_mins//60}时{dur_mins%60}分"
-        except Exception:
-            duration_str = "--"
+        held_seconds = duration_seconds(c_ts, datetime.datetime.now(tz_bj).timestamp())
+        duration_str = format_duration(held_seconds)
 
         trades_lifecycle.append({
             "id": f"holding_{inst}_{side}",
@@ -169,6 +165,7 @@ def build_lifecycle_ledger(*, notify=True):
             "net_pnl": round(upl, 2),
             "roi_pct": roi_pct,
             "duration": duration_str,
+            "duration_seconds": held_seconds,
             "status": "holding",
             "exit_reason": "⏳ 运行监控中"
         })
@@ -203,14 +200,9 @@ def build_lifecycle_ledger(*, notify=True):
         gross_pnl, fee, funding_fee, net_pnl, margin_usdt, roi_pct = (
             amounts[k] for k in ('gross_pnl', 'fee', 'funding_fee', 'net_pnl', 'margin', 'roi_pct'))
 
-        # Duration
-        try:
-            t1 = datetime.datetime.strptime(open_time, "%Y-%m-%d %H:%M:%S")
-            t2 = datetime.datetime.strptime(close_time, "%Y-%m-%d %H:%M:%S")
-            dur_mins = int((t2 - t1).total_seconds() / 60)
-            duration_str = f"{dur_mins}分钟" if dur_mins < 60 else f"{dur_mins//60}时{dur_mins%60}分"
-        except Exception:
-            duration_str = "--"
+        # Preserve sub-minute elapsed time from the exchange's millisecond receipts.
+        held_seconds = duration_seconds(c_ts, u_ts)
+        duration_str = format_duration(held_seconds)
 
         # Strategy tag
         strat_tag = "🌊 顺势做多" if side == "多" else "⚡ 阻力高空"
@@ -248,6 +240,7 @@ def build_lifecycle_ledger(*, notify=True):
             "roi": roi_pct,
             "roi_pct": roi_pct,
             "duration": duration_str,
+            "duration_seconds": held_seconds,
             "status": "closed",
             "close_notification_status": previous.get("close_notification_status", "legacy") if previous else "pending",
             **attribution,

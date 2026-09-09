@@ -59,7 +59,8 @@ class PortfolioEntryBoundaryTests(unittest.TestCase):
             stack.enter_context(patch.object(trader.support,'opening_status',return_value={'can_open':True}))
             risk=stack.enter_context(patch.object(trader.entry_gateway,'prepare',side_effect=risk_policy.RiskRejected('isolated final-risk boundary reached')))
             stack.enter_context(patch('sys.stdout',new_callable=io.StringIO))
-            trader.execute_portfolio()
+            result = trader.execute_portfolio()
+            self.assertTrue(result['completed'])
             self.assertFalse(any('swap place' in str(c) for c in transport.call_args_list))
             return risk.call_args_list
 

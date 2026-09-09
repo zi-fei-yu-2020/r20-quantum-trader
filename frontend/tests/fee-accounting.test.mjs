@@ -7,6 +7,7 @@ import { parse, compileScript } from '@vue/compiler-sfc'
 import ts from 'typescript'
 import * as accounting from '../src/utils/feeAccounting.ts'
 import { isSettlementPending } from '../src/utils/tradeSettlement.ts'
+import { tradeDuration } from '../src/utils/tradeDuration.ts'
 import { observedNumber } from '../src/utils/observationDisplay.ts'
 
 const verified = { status: 'closed', fee_allocation: 'verified_from_archived_fills', fee_reconciliation: {status:'verified'}, open_fee:-.00786281,close_fee:-.00785893 }
@@ -45,6 +46,7 @@ async function render(row){
     if(name.includes('observationDisplay'))return {observedNumber}
     if(name.includes('feeAccounting'))return accounting
     if(name.includes('tradeSettlement'))return {isSettlementPending}
+    if(name.includes('tradeDuration'))return {tradeDuration}
     if(name.endsWith('.vue'))return {__esModule:true,default:Box}
     throw Error(name)
   }

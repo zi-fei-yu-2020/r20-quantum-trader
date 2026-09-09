@@ -64,7 +64,7 @@ def order_source(order,history,orders,algos,executions,scope):
     def response_ids(event):
         ids=event.get('response_order_ids',[])
         return ids if isinstance(ids,list) and all(isinstance(x,str) for x in ids) else []
-    direct=[e for e in executions if isinstance(e,dict) and scope and e.get('scope')==scope and e.get('status') in ('accepted','confirmed')
+    direct=[e for e in executions if isinstance(e,dict) and scope and e.get('scope')==scope and e.get('status') in ('accepted','confirmed','unconfirmed','flat_observed')
             and e.get('instId')==order.get('instId') and (not e.get('posSide') or e['posSide']==order.get('posSide'))
             and str(order['ordId']) in response_ids(e)]
     if direct:

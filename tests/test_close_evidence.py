@@ -136,9 +136,11 @@ class CloseTransportTests(unittest.TestCase):
 
     def test_failed_close_never_gets_confirmed_journal(self):
         import ai_factor_trader as trader
-        with patch.object(trader,'run_cmd_result',side_effect=[{'ok':True,'data':[]},{'ok':False,'stderr':'failed','stdout':''}]),patch.object(trader,'okx_private_command',side_effect=lambda s:s),patch.object(receipts,'record_close') as journal:
+        with patch.object(trader,'run_cmd_result',side_effect=[{'ok':True,'data':[]},{'ok':False,'stderr':'failed','stdout':''}]),patch.object(trader,'okx_private_command',side_effect=lambda s:s),patch.object(trader,'query_positions',return_value=(False,[],'unavailable')),patch.object(trader.time,'sleep'),patch.object(receipts,'record_close') as journal:
             ok,_=trader.close_position_confirmed('TEST-USDT-SWAP','long',5)
-        self.assertFalse(ok);journal.assert_not_called()
+        self.assertFalse(ok)
+        self.assertEqual(journal.call_args_list[0].kwargs['status'],'submitted')
+        self.assertNotIn('confirmed',[call.kwargs['status'] for call in journal.call_args_list])
 
 
 class CompactReportingTests(unittest.TestCase):
@@ -163,7 +165,7 @@ class FinalEvidenceRegressionTests(unittest.TestCase):
         with patch.object(trader,'run_cmd_result',return_value={'ok':True,'data':[]}),patch.object(trader,'okx_private_command',side_effect=lambda s:s),patch.object(trader,'query_positions',return_value=(True,[other],'')),patch.object(trader.time,'sleep'),patch.object(receipts,'record_close') as journal:
             closed,_=trader.close_position_confirmed('TEST-USDT-SWAP','long',5,exit_reason='time_exit',position=original)
         self.assertTrue(closed)
-        self.assertEqual(journal.call_count,2)
+        self.assertEqual(journal.call_count,3)
         self.assertEqual(journal.call_args.kwargs['status'],'confirmed')
         self.assertEqual(journal.call_args.kwargs['position'],original)
 
