@@ -143,6 +143,8 @@ export interface LLMRuntime {
 }
 
 export interface DashboardResponse {
+  account_source_id?: string
+  initializing?: boolean
   scenario_shadow?: ScenarioShadowStatus
   capital_pool?: CapitalPoolStatus
   wait_audit?: WaitAuditState

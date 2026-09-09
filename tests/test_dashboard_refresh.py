@@ -1,4 +1,6 @@
 import threading
+import asyncio
+import json
 import time
 import unittest
 from unittest.mock import patch
@@ -35,7 +37,16 @@ class DashboardRefreshTests(unittest.TestCase):
         self.assertTrue(result['initializing'])
         self.assertEqual(result['account'], {})
         self.assertEqual(result['okx_environment'], 'demo')
+        self.assertEqual(result['account_source_id'], self.env.identity)
         refresh.assert_called_once()
+
+    def test_refresh_keeps_complete_prompt_history_and_other_full_payload_fields(self):
+        cached={**self.snapshot(),'ai_last_prompt':'FULL PROMPT','ai_brain_history':[{'time':'x','ai_last_prompt':'HISTORIC PROMPT'}],
+                'review':{'original':'FULL REVIEW'},'state_snapshot':{'data':'KEEP'},'trades':[]}
+        with patch.object(dashboard,'CACHE_DATA',cached), patch.object(dashboard,'LAST_CACHE_TIME',time.time()):
+            value=json.loads(asyncio.run(dashboard.get_all_data()).body)
+        for key in ('ai_last_prompt','ai_brain_history','review','state_snapshot'):
+            self.assertEqual(value[key],cached[key])
 
     def test_wrong_account_snapshot_is_never_served(self):
         cached = self.snapshot()

@@ -1466,6 +1466,7 @@ def monitoring_snapshot():
     if not matches:
         return {
             "timestamp": "", "okx_environment": environment.mode,
+            "account_source_id": environment.identity,
             "initializing": True,
             "data_health": {"status": "OFFLINE", "partial": True, "errors": [], "refreshing": True},
             "account": {}, "positions_summary": {"items": [], "total": 0},

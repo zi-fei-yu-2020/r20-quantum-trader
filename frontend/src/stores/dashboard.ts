@@ -3,12 +3,14 @@ import { defineStore } from 'pinia'
 import { dashboardIsStale } from '../utils/dashboardHealth'
 import { instrumentSupport } from '../utils/instrumentSupport'
 import { createSingleFlight } from '../utils/singleFlight'
-import { ref, computed } from 'vue'
+import { ref, shallowRef, computed } from 'vue'
+import { shareSnapshot } from '../utils/dashboardSnapshot'
+import { observedNumber } from '../utils/observationDisplay'
 import type { DashboardResponse, InstrumentFactor, PositionItem, PendingOrderItem } from '../types/dashboard'
 
 export const useDashboardStore = defineStore('dashboard', () => {
   const activeTab = ref<'trading' | 'factors' | 'news' | 'lab' | 'history'>('trading')
-  const data = ref<DashboardResponse | null>(null)
+  const data = shallowRef<DashboardResponse | null>(null)
   const loading = ref<boolean>(false)
   const isRefreshing = ref<boolean>(false)
   const error = ref<string | null>(null)
@@ -16,11 +18,6 @@ export const useDashboardStore = defineStore('dashboard', () => {
   const isConnected = ref<boolean>(true)
   const pollingTimer = ref<any>(null)
   const showAboutModal = ref<boolean>(false)
-  const degradedSince = ref<number | null>(null)
-  const statusCheckedAt = ref(Date.now())
-  const showConnectionNotice = computed(() => !data.value?.account || data.value.account.total_eq == null ||
-    (degradedSince.value !== null && statusCheckedAt.value-degradedSince.value >= 90000))
-
   // Getters
   const account = computed(() => data.value?.account || null)
   const positions = computed<PositionItem[]>(() => data.value?.positions_summary?.items || [])
@@ -79,18 +76,24 @@ export const useDashboardStore = defineStore('dashboard', () => {
     api_format: 'openai_chat',
   })
   const logs = computed(() => data.value?.logs || [])
-  const isStale = computed(() => dashboardIsStale(data.value))
+  const isStale = computed(() => !isConnected.value || dashboardIsStale(data.value))
 
   // Actions
   const sharedFetch = createSingleFlight<void>()
+  let refreshGeneration = 0
+  let activeController: AbortController | null = null
+  let manualRequests = 0
   async function fetchDashboard(silent = false) {
-    if (!silent) isRefreshing.value = true
-    try { await sharedFetch('monitoring', refreshDashboard) }
-    finally { if (!silent) isRefreshing.value = false }
+    const generation = refreshGeneration
+    if (!silent) { manualRequests += 1; isRefreshing.value = true }
+    try { await sharedFetch('monitoring:' + generation, () => refreshDashboard(generation)) }
+    finally { if (!silent) { manualRequests -= 1; isRefreshing.value = manualRequests > 0 } }
   }
 
-  async function refreshDashboard() {
+  async function refreshDashboard(generation: number) {
+    if (generation !== refreshGeneration) return
     const controller = new AbortController()
+    activeController = controller
     const timeout = setTimeout(() => controller.abort(), 8000)
     try {
       const resp = await fetch(`/api/all?_t=${Date.now()}`, {
@@ -103,22 +106,29 @@ export const useDashboardStore = defineStore('dashboard', () => {
         throw new Error(`HTTP ${resp.status}: ${resp.statusText}`)
       }
       const json: DashboardResponse = await resp.json()
-      data.value = json
-      lastUpdated.value = new Date()
+      if (generation !== refreshGeneration) return
+      if (!json || typeof json !== 'object' || Array.isArray(json) || !json.account || typeof json.account !== 'object' || Array.isArray(json.account)) {
+        throw new Error('Invalid dashboard snapshot')
+      }
+      const previous = data.value
+      const sameScope = !!json.account_source_id && previous?.account_source_id === json.account_source_id
+      const retain = sameScope && observedNumber(previous?.account?.total_eq) !== null &&
+        (json.initializing === true || observedNumber(json.account.total_eq) === null)
+      const next = retain ? { ...previous!, initializing: true, is_stale: true,
+        data_health: { ...json.data_health, status: 'STALE' as const, partial: true } } : json
+      data.value = sameScope ? shareSnapshot(previous, next) : next
+      if (!retain) lastUpdated.value = new Date()
       isConnected.value = true
       error.value = null
-      statusCheckedAt.value = Date.now()
-      if (['STALE','OFFLINE'].includes(json.data_health?.status || '')) degradedSince.value ??= statusCheckedAt.value
-      else degradedSince.value = null
     } catch (err: any) {
+      if (generation !== refreshGeneration) return
       console.error('[DashboardStore] fetch failed:', err)
       error.value = err.message || '获取数据失败'
       isConnected.value = false
-      statusCheckedAt.value = Date.now()
-      degradedSince.value ??= statusCheckedAt.value
     } finally {
       clearTimeout(timeout)
-      loading.value = false
+      if (generation === refreshGeneration) loading.value = false
+      if (activeController === controller) activeController = null
     }
   }
 
@@ -128,7 +138,7 @@ export const useDashboardStore = defineStore('dashboard', () => {
 
   function startPolling(intervalMs = 3000) {
     stopPolling()
-    fetchDashboard(false)
+    void fetchDashboard(true)
     document.addEventListener('visibilitychange', onVisible)
     pollingTimer.value = setInterval(() => {
       if (document.visibilityState === 'visible') void fetchDashboard(true)
@@ -136,6 +146,9 @@ export const useDashboardStore = defineStore('dashboard', () => {
   }
 
   function stopPolling() {
+    refreshGeneration += 1
+    activeController?.abort()
+    activeController = null
     document.removeEventListener('visibilitychange', onVisible)
     if (pollingTimer.value) {
       clearInterval(pollingTimer.value)
@@ -162,7 +175,6 @@ export const useDashboardStore = defineStore('dashboard', () => {
     logs,
     isStale,
     showAboutModal,
-    showConnectionNotice,
     fetchDashboard,
     startPolling,
     stopPolling,

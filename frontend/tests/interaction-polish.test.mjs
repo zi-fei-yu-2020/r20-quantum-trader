@@ -18,11 +18,13 @@ test('all research disclosures are styled as explicit actions',()=>{
  for(const f of ['components/DecisionAuditPanel.vue','components/EvolutionReviewPanel.vue'])assert.ok(read(f).includes('action-disclosure'))
  assert.ok(read('style.css').includes('.action-disclosure > summary::after'))
 })
-test('short refresh failures are quiet, prolonged faults remain visible',()=>{
- const source=read('stores/dashboard.ts')
- assert.ok(source.includes('90000'))
- assert.ok(read('views/DashboardView.vue').includes('store.showConnectionNotice'))
- assert.ok(source.includes('degradedSince.value = null'))
+test('initial, transient and prolonged refresh delays use only the status badge',()=>{
+ const view=read('views/DashboardView.vue')
+ assert.ok(view.includes('data-monitor-connection'))
+ assert.ok(view.includes("'数据更新延迟' : '数据已更新'"))
+ for(const text of ['账户数据尚未就绪','connection-notice','后台重连中','showConnectionNotice'])assert.ok(!view.includes(text))
+ assert.ok(!read('stores/dashboard.ts').includes('useToast'))
+ assert.ok(read('stores/dashboard.ts').includes('void fetchDashboard(true)'))
 })
 
 test('refresh request is bounded and cannot permanently stall single-flight polling',()=>{

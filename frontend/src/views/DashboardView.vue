@@ -2,6 +2,7 @@
 import { computed, ref, onMounted, onUnmounted, watch } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { useDashboardStore } from '../stores/dashboard'
+import { observedNumber } from '../utils/observationDisplay'
 import HeaderBar from '../components/HeaderBar.vue'
 import TopHudRibbon from '../components/TopHudRibbon.vue'
 import TacticalDesk from '../components/TacticalDesk.vue'
@@ -15,7 +16,7 @@ import FloatingActions from '../components/FloatingActions.vue'
 import AboutModal from '../components/AboutModal.vue'
 import PageHeader from '../components/ui/PageHeader.vue'
 import AppBadge from '../components/ui/AppBadge.vue'
-import { Columns2, Rows2, RefreshCw, Info } from 'lucide-vue-next'
+import { Columns2, Rows2, RefreshCw } from 'lucide-vue-next'
 const router = useRouter()
 const route = useRoute()
 const store = useDashboardStore()
@@ -28,7 +29,7 @@ const descriptions = {
   history: ['交易记录', '查阅订单生命周期、历史成交与执行日志。'],
 } as const
 const heading = computed(() => descriptions[store.activeTab])
-const hasAccount = computed(() => store.data?.account?.total_eq != null)
+const hasAccount = computed(() => observedNumber(store.data?.account?.total_eq) !== null)
 function syncTabFromRoute() {
   const tab = route.meta.tab
   if (typeof tab === 'string' && tab in descriptions)
@@ -73,15 +74,11 @@ function setLayout(mode: 'dual' | 'stacked') {
             {{ store.data.okx_environment === 'demo' ? 'OKX 模拟盘' : 'OKX 实盘' }}
           </AppBadge>
           <AppBadge
-            :tone="store.error ? 'danger' : !hasAccount || store.isStale ? 'warning' : 'success'"
+            data-monitor-connection
+            class="min-w-[7.5rem] justify-center"
+            :tone="store.error || !hasAccount || store.isStale ? 'warning' : 'success'"
             dot
-            >{{
-              store.error
-                ? (hasAccount && !store.showConnectionNotice ? '后台重连中' : '连接异常')
-                : !hasAccount || store.isStale
-                  ? (hasAccount && !store.showConnectionNotice ? '后台更新中' : '数据更新延迟')
-                  : '数据已更新'
-            }}</AppBadge
+            >{{ store.error || !hasAccount || store.isStale ? '数据更新延迟' : '数据已更新' }}</AppBadge
           ><button
             class="ui-icon-button"
             :disabled="store.isRefreshing"
@@ -112,28 +109,6 @@ function setLayout(mode: 'dual' | 'stacked') {
               <Columns2 class="size-4" />
             </button></div></template
       ></PageHeader>
-      <div
-        v-if="store.showConnectionNotice && (store.error || !hasAccount || store.isStale)"
-        class="connection-notice"
-        role="status"
-      >
-        <Info class="size-5 shrink-0" />
-        <div>
-          <strong>{{
-            store.error
-              ? '暂时无法获取监控数据'
-              : !hasAccount
-                ? '账户数据尚未就绪'
-                : '当前显示最近一次有效快照'
-          }}</strong>
-          <p class="mt-1">
-            {{
-              store.error ||
-              '请在控制台核对账户连接与任务状态。未就绪的数据以“—”展示，不会用模拟收益代替。'
-            }}
-          </p>
-        </div>
-      </div>
       <div
         v-show="store.activeTab === 'trading'"
         class="terminal-overview"
