@@ -2582,6 +2582,10 @@ def cache(resource: str, x_r20_admin_token: str | None = Header(default=None), x
     return JSONResponse(read_json(filename, {} if resource != "ledger" else []))
 
 
+from r20_backend.chart_market import router as chart_market_router
+app.include_router(chart_market_router)
+
+
 @app.get("/api/v1/market/{inst_id}")
 def market(inst_id: str) -> dict[str, Any]:
     if not inst_id.endswith("-SWAP"):
