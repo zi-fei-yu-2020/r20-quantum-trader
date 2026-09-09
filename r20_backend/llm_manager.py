@@ -1093,6 +1093,7 @@ def execute_llm_request(
     temperature: Optional[float] = 0.2,
     response_format: Optional[Dict[str, Any]] = None,
     timeout: float = 50.0,
+    max_attempts: Optional[int] = None,
 ) -> Tuple[str, str, Dict[str, Any], int]:
     """Unified executor for LLM calls across all 3 protocols.
     Returns: (content, reasoning_content, usage_dict, latency_ms)
@@ -1117,7 +1118,7 @@ def execute_llm_request(
         reasoning_type=target_rtype,
     )
 
-    res_json, _, latency_ms, attempts = request_json(endpoint, headers, payload, timeout)
+    res_json, _, latency_ms, attempts = request_json(endpoint, headers, payload, timeout, **({"max_attempts":max_attempts} if max_attempts is not None else {}))
 
     content = ""
     reasoning_content = ""

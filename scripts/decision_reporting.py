@@ -16,7 +16,7 @@ def summarize(cache, notices=None, *, unavailable_reason='', circuit_breaker=Fal
                      'reason':clean(decision.get('validation_reason') or decision.get('summary_reason'),240),
                      'long_blocker':clean((audit.get('long') or {}).get('reason'),160),
                      'short_blocker':clean((audit.get('short') or {}).get('reason'),160),
-                     'previous_check':decision.get('previous_wait_review',{}),'entry_plans':decision.get('entry_plans'),
+                     'previous_check':decision.get('previous_wait_review',{}),'wait_repair':decision.get('wait_repair'),'entry_plans':decision.get('entry_plans'),
                      'candidate_id':decision.get('candidate_id'),'candidate_reviews':decision.get('candidate_reviews',[])})
     counts={key:sum(r['status']==key for r in rows) for key in ('audited_wait','incomplete','entry_candidate','execution_rejected')}
     counts['program_plans']=sum(len((r.get('entry_plans') or {}).get('plans',[])) for r in rows)
@@ -36,7 +36,13 @@ def format_summary(summary):
         for status,label in (('incomplete','不完整'),('execution_rejected','风控拒绝')):
             names=[r['name'] for r in summary['items'] if r['status']==status]
             if names:text+=f" | {label}{len(names)}({','.join(names[:6])})"
-    if summary.get('wait_alert'):text+=f" | 连续{summary.get('no_entry_candidate_streak',0)}轮无候选"
+    diagnostics=summary.get('wait_diagnostics')
+    if diagnostics:
+        streaks=diagnostics.get('streaks',{})
+        if (streaks.get('no_program_plans') or 0)>=8:text+=f" | 连续{streaks['no_program_plans']}轮无草案"
+        if (streaks.get('audit_incomplete') or 0)>0:text+=f" | 审计异常连续{streaks['audit_incomplete']}轮"
+        elif (streaks.get('model_all_wait') or 0)>=8 and not streaks.get('no_program_plans'):text+=f" | 模型连续{streaks['model_all_wait']}轮WAIT"
+    elif summary.get('wait_alert'):text+=f" | 最终WAIT连续{summary.get('no_entry_candidate_streak',0)}轮（含校验失败）"
     notices=summary.get('environment_notices') or []
     if notices:
         names=[clean(n,100).split('：',1)[0].split(':',1)[0].strip('[] ') for n in notices]

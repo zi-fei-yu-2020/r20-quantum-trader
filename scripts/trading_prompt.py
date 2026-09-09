@@ -251,7 +251,8 @@ def compose(profile,runtime,packages,*,override='',positions=None,pending=None,r
     if not allow:system+='\n偏好或输入未通过准入检查：本轮禁止开仓/加仓，decisions 必须全部 WAIT；独立保护仍继续。'
     from scripts.entry_candidates import catalog as entry_catalog
     entry_plans={p['instId']:entry_catalog(p,constraints) for p in packages}
-    user=json.dumps({'user_preferences':layers,'runtime_data':runtime,'facts':facts,'entry_candidates':entry_plans,
+    wait_constraints={inst:wait_audit.constraints(catalog,(runtime.get('previous_wait_reviews') or {}).get(inst)) for inst,catalog in facts.items()}
+    user=json.dumps({'user_preferences':layers,'runtime_data':runtime,'facts':facts,'entry_candidates':entry_plans,'wait_constraints':wait_constraints,
                     'position_ids':list(position_map),'pending_order_ids':[{'instId':p.get('instId'),'ordId':p.get('ordId')} for p in pending]},
                     ensure_ascii=False,allow_nan=False,separators=(',',':'))+'\n\n【推演与决策任务】\n'+TASK+'\n【输出字段定义】\n'+canonical(output_schema())
     manifest={'contract_version':VERSION,'profile_id':profile.get('id',''),'profile_hash':fingerprint(canonical(profile)),

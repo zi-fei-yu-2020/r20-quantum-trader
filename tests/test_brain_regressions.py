@@ -206,6 +206,35 @@ class BrainRegressions(unittest.TestCase):
                 self.assertEqual("/smart_money/weighted_long_pct" in facts, action == "BUY_LONG")
         self.llm.assert_not_called()
 
+    def test_invalid_wait_gets_one_bounded_correction_before_any_write(self):
+        from test_wait_repair import macro_wait
+        fixed=macro_wait();bad=copy.deepcopy(fixed);bad['wait_audit']['short']['code']='position_constraint'
+        initial=proposal();initial['decisions'][INST]=bad
+        self.council_config.return_value={'enabled':False}
+        self.llm.side_effect=[(json.dumps(initial),'',{},1),(json.dumps({'decisions':{INST:fixed}}),'',{},1)]
+        result=self.run_cycle()
+        self.assertEqual(result[INST]['decision']['decision_status'],'audited_wait')
+        self.assertEqual(result[INST]['decision']['wait_repair']['status'],'corrected')
+        self.assertEqual(self.llm.call_count,2)
+        self.assertEqual(self.llm.call_args.kwargs['max_attempts'],1)
+        self.assertEqual(self.llm.call_args.kwargs['timeout'],20)
+        self.writer.assert_not_called();self.barrier.assert_not_called()
+        events=[c for c in self.evidence.best_effort.call_args_list if c.args[1]=='wait_audit_repair']
+        self.assertEqual(len(events),1)
+        self.assertEqual(events[0].args[2]['report']['original_waits'][INST]['value'],bad)
+
+    def test_correction_transport_failure_keeps_incomplete_without_call_loop(self):
+        from test_wait_repair import macro_wait
+        bad=macro_wait();bad['wait_audit']['short']['code']='position_constraint'
+        initial=proposal();initial['decisions'][INST]=bad
+        self.council_config.return_value={'enabled':False}
+        self.llm.side_effect=[(json.dumps(initial),'',{},1),TimeoutError('fixture')]
+        result=self.run_cycle()
+        self.assertEqual(result[INST]['decision']['decision_status'],'incomplete')
+        self.assertEqual(result[INST]['decision']['wait_repair']['status'],'failed')
+        self.assertEqual(self.llm.call_count,2)
+        self.writer.assert_not_called();self.barrier.assert_not_called()
+
     def test_invalid_council_output_is_rejected_before_model_directed_writes(self):
         output = proposal()
         del output["contract_version"]

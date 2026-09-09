@@ -3,7 +3,7 @@ import { computed } from 'vue'
 import AppCard from './ui/AppCard.vue'
 import AppBadge from './ui/AppBadge.vue'
 import { checkLabel, setupLabel, sideLabel, mergedAuditRows, compactAuditStatus, directionSummary } from '../utils/entryPlanDisplay'
-import { conditionText, reviewLabel } from '../utils/waitAudit'
+import { conditionText, reviewLabel, waitStreakBadges } from '../utils/waitAudit'
 import type { WaitAuditState, DecisionCycle } from '../utils/waitAudit'
 
 const props = defineProps<{ audit?: WaitAuditState; cycle?: DecisionCycle }>()
@@ -11,6 +11,9 @@ const rows = computed(() => mergedAuditRows(props.cycle, props.audit).map(row =>
   directions: (['long', 'short'] as const).map(side => ({ side, ...directionSummary(row, side) })),
 })))
 const counts = computed(() => props.cycle?.counts)
+const diagnostics = computed(() => props.audit?.diagnostics || props.cycle?.wait_diagnostics)
+const streakBadges = computed(() => waitStreakBadges(props.audit, diagnostics.value))
+const diagnosticStart = computed(() => diagnostics.value ? new Date(diagnostics.value.since * 1000).toLocaleString('zh-CN', {timeZone:'Asia/Shanghai',hour12:false}) : '尚未开始')
 const headline = computed(() => {
   if (props.audit?.status === 'error' || props.cycle?.unavailable_reason) return '本轮数据待核验'
   if ((counts.value?.incomplete || 0) > 0) return '有决策需要补全'
@@ -45,9 +48,9 @@ const numberText = (value?: number) => Number.isFinite(value) ? value!.toFixed(2
     <div class="audit-overview">
       <div class="audit-overview__heading">
         <h4>{{ headline }}</h4>
-        <span v-if="(audit?.no_entry_candidate_streak || 0) > 0" class="audit-streak" :class="{ 'audit-streak--alert': audit?.alert }" data-audit-streak>
-          连续 {{ audit!.no_entry_candidate_streak }} 轮无候选
-        </span>
+        <div v-if="streakBadges.length" class="audit-streaks" data-audit-streak>
+          <span v-for="badge in streakBadges" :key="badge.key" class="audit-streak" :class="{ 'audit-streak--alert': badge.warning }">{{ badge.label }}</span>
+        </div>
       </div>
       <dl v-if="stats.length" class="audit-stats">
         <div v-for="stat in stats" :key="stat.label" :class="{ 'audit-stat--warning': stat.warning }">
@@ -107,8 +110,14 @@ const numberText = (value?: number) => Number.isFinite(value) ? value!.toFixed(2
               </li>
             </ul>
           </section>
-          <section v-if="row.record || row.item?.reason || row.programError" class="audit-detail-section" data-model-audit>
+          <section v-if="row.record || row.item?.reason || row.programError || row.repair" class="audit-detail-section" data-model-audit>
             <h4>模型与审计说明 <span v-if="row.record && reviewLabel(row.record)">{{ reviewLabel(row.record) }}</span></h4>
+            <div v-if="row.repair" class="audit-repair" data-wait-repair-status>
+              <p>{{ row.repair.status === 'corrected' ? '一次纠错后审计通过，动作仍为 WAIT，不授权交易。' : row.repair.status === 'deferred_for_actions' ? '本轮优先处理已有有效候选或风控指令，未追加纠错延迟；原错误保留。' : row.repair.status === 'failed' ? '纠错过程失败，未采纳输出；原审计错误保留。' : row.repair.attempted ? '已进行一次受限纠错，仍未通过；保留决策不完整。' : '本轮未进行纠错；原审计错误保留。' }}</p>
+              <p v-if="row.repair.error_type">纠错状态：{{ row.repair.error_type }}<span v-if="row.repair.http_status"> · HTTP {{ row.repair.http_status }}</span></p>
+              <p>初次错误：{{ row.repair.initial_error }}</p>
+              <p v-if="row.repair.remaining_error">纠错核验：{{ row.repair.remaining_error }}</p>
+            </div>
             <p v-if="row.item?.reason">{{ row.item.reason }}</p>
             <p v-if="row.programError" class="audit-diagnostic">草案生成：{{ row.programError }}</p>
             <template v-if="row.record">
@@ -141,6 +150,14 @@ const numberText = (value?: number) => Number.isFinite(value) ? value!.toFixed(2
         <summary>执行记录 <span>{{ cycle.executed_actions.length }} 条</span></summary>
         <ul><li v-for="(action,index) in cycle.executed_actions" :key="index">{{ action }}</li></ul>
       </details>
+      <details class="audit-footer-disclosure" data-wait-diagnostics>
+        <summary>连续统计口径</summary>
+        <div v-if="diagnostics" class="audit-diagnostic-counts">
+          <p>无程序草案：{{ diagnostics.streaks.no_program_plans ?? '未知' }} 轮 · 模型全 WAIT：{{ diagnostics.streaks.model_all_wait ?? '未知' }} 轮 · 审计异常：{{ diagnostics.streaks.audit_incomplete ?? '未知' }} 轮</p>
+          <p>有草案且审计通过后全 WAIT：{{ diagnostics.streaks.audited_wait_with_plans ?? '未知' }} 轮。分类统计起于 {{ diagnosticStart }}，已记录 {{ diagnostics.observed_rounds }} 轮，不把旧数据推算成新口径。</p>
+        </div>
+        <p>历史最终 WAIT 连续 {{ audit?.legacy_final_wait_streak ?? audit?.no_entry_candidate_streak ?? '未知' }} 轮，包含校验失败，不等于全部正常审查通过。分类统计不改变入场条件，也不触发强制交易。</p>
+      </details>
       <details class="audit-footer-disclosure" data-audit-explanation>
         <summary>审计说明</summary>
         <p>审计通过只表示证据与条件可核验，不代表已证明没有交易优势。程序草案、模型选择均不等于订单；条件触发仅要求重新研究，不会强制开仓。</p>
@@ -157,6 +174,8 @@ const numberText = (value?: number) => Number.isFinite(value) ? value!.toFixed(2
 .audit-time { font-size: .75rem; color: var(--text-muted); font-variant-numeric: tabular-nums; }
 .audit-overview { margin: 1rem 0; padding: .875rem 1rem; border-radius: .75rem; background: var(--bg-card-subtle); border: 1px solid var(--border-subtle); }
 .audit-overview h4 { font-size: 1rem; font-weight: 650; }
+.audit-streaks { display: flex; flex-wrap: wrap; gap: .375rem; }
+.audit-repair { padding: .75rem; border: 1px solid var(--border-subtle); border-radius: .5rem; background: var(--bg-card-subtle); }
 .audit-streak { padding: .25rem .5rem; font-size: .75rem; color: var(--text-muted); border-radius: .375rem; }
 .audit-streak--alert { background: var(--color-warn-bg); color: var(--text-main); border: 1px solid var(--color-warn-border); }
 .audit-stats { display: flex; flex-wrap: wrap; gap: .5rem 1.25rem; margin-top: .625rem; }

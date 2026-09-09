@@ -56,7 +56,7 @@ test('actual audit component separates validation reason from program trigger ch
  assert.ok(html.includes('净 R:R 0.29'))
  assert.ok(html.includes('3 项 · 保留全部形态'))
  assert.equal((html.match(/data-wait-audit-card=/g)||[]).length,1)
- assert.ok(!html.includes('最终 WAIT'))
+ assert.ok(!html.includes('最终 WAIT · WAIT'))
  assert.ok(html.includes('data-plan-check-details'))
 })
 test('cycle and audit records merge into one instrument without changing source data',()=>{
@@ -79,7 +79,8 @@ test('one visible summary replaces duplicate symbol grids and omits zero excepti
  const html=await renderToString(Vue.createSSRApp(exports.default,{cycle,audit:state}))
  assert.equal((html.match(/data-wait-audit-card=/g)||[]).length,5)
  assert.equal((html.match(/<strong>BTC<\/strong>/g)||[]).length,1)
- assert.ok(html.includes('本轮暂无开仓候选'));assert.ok(html.includes('连续 14 轮无候选'))
+ assert.ok(html.includes('本轮暂无开仓候选'));assert.ok(html.includes('最终 WAIT 连续 14 轮'))
+ assert.ok(!html.includes('连续 14 轮无候选'))
  assert.ok(!html.includes('<dt>待补全</dt>'));assert.ok(!html.includes('<dt>执行未通过</dt>'))
  assert.ok(!html.includes('WAIT ·'));assert.ok(html.includes('data-audit-explanation'))
 })
@@ -102,6 +103,24 @@ test('no cycle counts means unknown not zero and program errors remain visible',
  assert.ok(empty.includes('等待本轮决策'));assert.ok(!empty.includes('<dd>0</dd>'))
  const broken=await renderToString(Vue.createSSRApp(exports.default,{cycle:{items:[{...item,status:'audited_wait',entry_plans:{plans:[],checks:[],error:'entry_candle_gap_or_duplicate'}}]}}))
  assert.ok(broken.includes('entry_candle_gap_or_duplicate'))
+})
+
+test('new diagnostic streaks separate absent drafts and bad audits without relabeling history',async()=>{
+ const diagnostics={version:'wait-diagnostics-v2',since:1788962400,observed_rounds:3,streaks:{no_program_plans:3,model_all_wait:3,audit_incomplete:2,audited_wait_with_plans:0}}
+ const html=await renderToString(Vue.createSSRApp(exports.default,{cycle:{items:[item]},audit:{status:'incomplete',items:[],no_entry_candidate_streak:14,legacy_final_wait_streak:14,diagnostics}}))
+ assert.ok(html.includes('连续 3 轮无程序草案'));assert.ok(html.includes('审计异常连续 2 轮'))
+ assert.ok(html.includes('历史最终 WAIT 连续 14 轮'));assert.ok(html.includes('不把旧数据推算成新口径'))
+ assert.equal((html.match(/class="audit-streak(?:\s|")/g)||[]).length,2)
+})
+test('repair disclosure distinguishes original error, failed correction and still-WAIT success',async()=>{
+ const corrected={...item,status:'audited_wait',reason:'已重新核验宏观限制',wait_repair:{status:'corrected',attempted:true,initial_error:'原始类别错误'}}
+ let html=await renderToString(Vue.createSSRApp(exports.default,{cycle:{items:[corrected]}}))
+ assert.ok(html.includes('一次纠错后审计通过，动作仍为 WAIT，不授权交易。'));assert.ok(html.includes('原始类别错误'))
+ const bad={...item,wait_repair:{status:'not_validated',attempted:true,initial_error:'原始类别错误',remaining_error:'仍缺少前轮复查'}}
+ html=await renderToString(Vue.createSSRApp(exports.default,{cycle:{items:[bad]}}))
+ assert.ok(html.includes('审计未通过：仍缺少前轮复查'));assert.ok(html.includes('保留决策不完整'))
+ html=await renderToString(Vue.createSSRApp(exports.default,{cycle:{items:[{...item,wait_repair:{status:'failed',attempted:true,initial_error:'原始错误',error_type:'LLMRequestError',http_status:503}}]}}))
+ assert.ok(html.includes('纠错过程失败'));assert.ok(html.includes('HTTP 503'))
 })
 
 test('published memory disclosures have visible action styling and distinct content targets',()=>{

@@ -835,6 +835,27 @@ def execute_batch_ai_brain_cycle(pos_summary: str = "当前总持仓 0/6", activ
             positions=active_positions_detail, pending=pending_orders_list,
             allow_open=prompt_bundle.allow_open and not brain_output.get('prompt_conflicts'),
             previous_wait_reviews=prompt_bundle.previous_wait_reviews, risk_contract=prompt_bundle.risk_contract)
+        from scripts import wait_repair
+        def request_wait_correction(*, messages, timeout, max_attempts):
+            meter = ModelCallTelemetry('wait_audit_repair', model_name, str(effort), messages[0]['content'], messages[1]['content'])
+            try:
+                repaired_text, _, usage, _ = execute_llm_request(
+                    messages=messages, model=model_name, base_url=base_url, api_key=api_key,
+                    api_format=api_format, reasoning_effort=effort, temperature=0.2,
+                    response_format={'type':'json_object'}, timeout=timeout, max_attempts=max_attempts)
+            except Exception as exc:
+                meter.finish('failed', error=exc)
+                raise
+            meter.finish('success', {'usage':usage}, output_chars=len(repaired_text))
+            return repaired_text
+        brain_output, repair_report = wait_repair.attempt(original_brain_output, brain_output, packages,
+            request=request_wait_correction if execute_llm_request else None, positions=active_positions_detail,
+            previous_wait_reviews=prompt_bundle.previous_wait_reviews, risk_contract=prompt_bundle.risk_contract)
+        if repair_report['targets']:
+            strategy_evidence.best_effort(market._selected().identity, 'wait_audit_repair',
+                {'frame_time':time_str, 'model':model_name, 'report':repair_report})
+            print(f"[WAIT Audit] correction={repair_report['status']}; repaired={len(repair_report['corrected'])}/{len(repair_report['targets'])}; no trading actions authorized")
+        brain_output['validation']['wait_repair'] = wait_repair.public_report(repair_report)
         output_chars = len(content) if content is not None else len(trading_prompt.canonical(original_brain_output))
         atomic_write_json(os.path.join(DATA_DIR, 'trading_output_validation.json'), brain_output['validation'])
         decisions_dict = brain_output.get("decisions", {})
@@ -969,6 +990,7 @@ def execute_batch_ai_brain_cycle(pos_summary: str = "当前总持仓 0/6", activ
                     "confidence_role": "uncalibrated_diagnostic",
                     "decision_status": d_item.get('decision_status','incomplete') if not rejection_reason else 'execution_rejected',
                     "wait_audit": d_item.get('wait_audit'),
+                    "wait_repair": wait_repair.public_report(repair_report, inst_id),
                     "previous_wait_review": d_item.get('previous_wait_review',{}),
                     "validation_reason": rejection_reason or d_item.get('validation_reason'),
                     "model_reason": d_item.get('model_reason'),

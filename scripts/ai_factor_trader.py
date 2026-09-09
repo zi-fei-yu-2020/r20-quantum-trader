@@ -2183,6 +2183,7 @@ def execute_portfolio():
     if brain_cache:
         decision_cycle['no_entry_candidate_streak'] = latest_wait_status.get('no_entry_candidate_streak', 0)
         decision_cycle['wait_alert'] = latest_wait_status.get('alert', False)
+        decision_cycle['wait_diagnostics'] = latest_wait_status.get('diagnostics')
     # 5. Persist Latest State for Web Monitoring Dashboard
     state_payload = {
         "timestamp": timestamp_full,

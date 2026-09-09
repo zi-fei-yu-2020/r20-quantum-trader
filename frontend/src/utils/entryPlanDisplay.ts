@@ -41,9 +41,10 @@ export function mergedAuditRows(cycle?: DecisionCycle, audit?: WaitAuditState) {
     const item = cycleItems.get(instId)
     const record = auditItems.get(instId)
     const status = item?.status || record?.status || 'unknown'
-    const diagnostic = item ? incompleteReason(item, record?.status === status ? record.error : undefined)
+    const repair = item?.wait_repair || record?.wait_repair
+    const diagnostic = status === 'incomplete' && repair?.remaining_error ? repair.remaining_error : item ? incompleteReason(item, record?.status === status ? record.error : undefined)
       : status === 'incomplete' ? record?.error || record?.reason || '缺少完整审计说明' : ''
-    return { instId, item, record, status, diagnostic,
+    return { instId, item, record, status, diagnostic, repair,
       programError: item?.entry_plans?.error ? checkLabel(item.entry_plans.error) : '',
       executionReason: status === 'execution_rejected' ? item?.reason || record?.reason || '执行核验未通过，未确认下单' : '',
       checks: groupedPlanChecks(item?.entry_plans?.checks),
