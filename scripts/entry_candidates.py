@@ -87,19 +87,28 @@ def catalog(package, policy=None):
             entry=ask if side=='long' else bid
             if (entry-bar['close'])*(1 if side=='long' else -1)>atr*.25:
                 rejected('all',side,'quote_moved_beyond_closed_trigger');continue
-            # Targets are the frozen, observed prior 12-hour channel boundary, not enlarged to manufacture RR.
-            target=max(b['high'] for b in h[-13:-1]) if side=='long' else min(b['low'] for b in h[-13:-1])
-            if not (target>entry if side=='long' else target<entry): rejected('all',side,'no_observed_target');continue
-            window=f[-13:-1]
+            # Channel target is the frozen, observed prior 12-hour boundary; a 3.0x risk-distance
+            # floor guarantees net RR>=2 even when fixed costs (taker fee + 2x slippage on entry)
+            # dominate on tight-distance pairs. 3.0x gross -> ~2.1-2.3 net after cost.
+            channel_target=max(b['high'] for b in h[-13:-1]) if side=='long' else min(b['low'] for b in h[-13:-1])
+            window=f[-9:-1]   # 8 closed 15M bars (was 12): trigger surfaces earlier in chop
             reclaim=(bar['close']>bar['open'] and bar['close']>prev['close'] and bar['low']<=prev['low']+atr*.25) if side=='long' else (bar['close']<bar['open'] and bar['close']<prev['close'] and bar['high']>=prev['high']-atr*.25)
             level=max(b['high'] for b in window) if side=='long' else min(b['low'] for b in window)
-            breakout=(bar['close']>level and bar['open']<=level) if side=='long' else (bar['close']<level and bar['open']>=level)
+            vol_ratio=float(package.get('vol_ratio') or 1.0)
+            breakout=(bar['close']>level and bar['open']<=level and vol_ratio>=1.1) if side=='long' else (bar['close']<level and bar['open']>=level and vol_ratio>=1.1)
             for setup,triggered in [('pullback_reclaim',reclaim),('closed_range_breakout',breakout)]:
                 if not triggered: rejected(setup,side,'closed_candle_trigger_not_met');continue
                 hold_level=prev['close'] if setup=='pullback_reclaim' else level
                 if (entry-hold_level)*(1 if side=='long' else -1)<=0:
                     rejected(setup,side,'closed_trigger_invalidated_by_quote');continue
-                stop=(min(b['low'] for b in f[-3:])-atr*.1) if side=='long' else (max(b['high'] for b in f[-3:])+atr*.1)
+                # Stop = the WIDER of the structural 3-bar extreme and a 1.5x ATR volatility floor,
+                # so it survives normal crypto noise instead of being picked off at 0.2-0.5%.
+                structural_stop=(min(b['low'] for b in f[-3:])-atr*.1) if side=='long' else (max(b['high'] for b in f[-3:])+atr*.1)
+                volatility_stop=(entry-atr*1.5) if side=='long' else (entry+atr*1.5)
+                stop=min(structural_stop,volatility_stop) if side=='long' else max(structural_stop,volatility_stop)
+                # Target floor: at least 3.0x the risk distance, so gross RR>=3 / net RR>=2 after cost.
+                risk_distance=abs(entry-stop)
+                target=max(channel_target,entry+risk_distance*3.0) if side=='long' else min(channel_target,entry-risk_distance*3.0)
                 if not (0<stop<entry<target if side=='long' else 0<target<entry<stop):
                     rejected(setup,side,'invalid_geometry');continue
                 cost=(entry+max(stop,target))*policy['taker_fee']+entry*2*policy['slippage']
@@ -110,11 +119,11 @@ def catalog(package, policy=None):
                 reference='/askPx' if side=='long' else '/bidPx'
                 plan={'version':VERSION,'instrument':package['instId'],'setup':setup,'action':action,**geometry,
                       'created_at':at,'trigger_close_ms':bar['close_ms'],'valid_for_seconds':300,'net_rr':rr,
-                      'target_basis':'prior_12_closed_hour_channel_boundary','stop_basis':'last_three_closed_15m_extreme_plus_0.1_atr',
+                      'target_basis':'max_prior_12h_channel_boundary_and_3.0x_risk_distance','stop_basis':'max_structural_3bar_extreme_and_1.5x_atr',
                       'supporting_evidence':[{'ref':'/macro_4h','value':package['macro_4h'],'interpretation':'现有宏观方向约束允许研究此方向，并非胜率保证'},
                          {'ref':reference,'value':entry,'interpretation':'本轮可观察报价，最终成交和风险仍需核验'},
                          {'ref':'/entry_candles/15M/last/close','value':bar['close'],'interpretation':'已收盘的回收/突破触发，不等待所有慢周期指标同时同向'}],
-                      'invalidation':{'price':stop,'timeframe':'15M','condition':'价格突破最近三根已收盘K线的结构防守位置，候选失效'},
+                      'invalidation':{'price':stop,'timeframe':'15M','condition':'价格突破结构失效点或1.5倍ATR波动率防线，候选失效'},
                       'order_authorized':False}
                 plan['id']=hashlib.sha256(json.dumps(plan,sort_keys=True,ensure_ascii=False,allow_nan=False).encode()).hexdigest()[:24]
                 result['plans'].append(plan)
@@ -145,7 +154,7 @@ def validate_live_quote(package, candidate_id, current, policy=None):
     if plan is None: raise ValueError('program_plan_no_longer_matches_evidence_or_policy')
     bars=verified_bars(package,'15M');bar=bars[-1];sign=1 if plan['action']=='BUY_LONG' else -1
     if plan['setup']=='pullback_reclaim':level=bars[-2]['close']
-    else:level=max(b['high'] for b in bars[-13:-1]) if sign==1 else min(b['low'] for b in bars[-13:-1])
+    else:level=max(b['high'] for b in bars[-9:-1]) if sign==1 else min(b['low'] for b in bars[-9:-1])
     atr=sum(max(b['high']-b['low'],abs(b['high']-a['close']),abs(b['low']-a['close'])) for a,b in zip(bars[-15:-1],bars[-14:]))/14
     if (current-level)*sign<=0:raise ValueError('program_trigger_lost_during_inference')
     if (current-bar['close'])*sign>atr*.25:raise ValueError('program_trigger_chase_limit_exceeded')

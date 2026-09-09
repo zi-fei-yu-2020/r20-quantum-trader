@@ -76,8 +76,13 @@ class ProgramPlanTests(unittest.TestCase):
         p=package()
         for r in p['entry_candles']['1H']['rows']:r.update(open=100,close=100,high=100.2)
         result=plans.catalog(p)
-        self.assertEqual(result['plans'],[])
-        self.assertTrue(any(c['reason']=='net_rr_below_policy' for c in result['checks']))
+        # A flattened channel no longer starves the plan: the 3.0x risk-distance target floor
+        # guarantees net RR>=2 even when the prior-12H channel boundary sits too close to entry.
+        self.assertTrue(result['plans'])
+        plan=result['plans'][0]
+        self.assertGreaterEqual(plan['net_rr'],2)
+        self.assertIn('3.0x_risk_distance',plan['target_basis'])
+        self.assertIn('1.5x_atr',plan['stop_basis'])
 
     def test_wait_requires_specific_review_but_is_never_forced_into_a_trade(self):
         from test_wait_audit import valid_wait

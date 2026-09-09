@@ -19,7 +19,7 @@ def floor_plan(side, entry, current, peak, initial_stop, atr, *, taker_fee=.0005
     # A missing initial risk cannot invent a tiny R; use the configured movement floor.
     initial_risk=risk if risk>0 else max(atr,entry*.01)
     costs=entry*(2*taker_fee+2*slippage)
-    activation=max(costs*1.5,min(initial_risk*.8,max(atr*.6,entry*.003)))
+    activation=max(costs*1.5,min(initial_risk*.8,max(atr*1.5,entry*.006)))
     if gain<activation:return {'active':False,'reason':'profit_below_cost_adjusted_activation','activation':activation}
     distance=max(costs,gain*.45)
     if gain>=initial_risk:distance=max(distance,gain*.55)
