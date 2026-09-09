@@ -15,7 +15,9 @@ test('old corrupted logs are identified instead of invented or silently erased',
  assert.ok(read('components/LedgerLogs.vue').includes('readableLog(log)'))
 })
 test('all research disclosures are styled as explicit actions',()=>{
- for(const f of ['components/DecisionAuditPanel.vue','components/EvolutionReviewPanel.vue'])assert.ok(read(f).includes('action-disclosure'))
+ assert.ok(read('components/EvolutionReviewPanel.vue').includes('action-disclosure'))
+ const audit=read('components/DecisionAuditPanel.vue')
+ for(const token of ['audit-row__expand','when-closed','when-open','audit-row__summary:focus-visible'])assert.ok(audit.includes(token))
  assert.ok(read('style.css').includes('.action-disclosure > summary::after'))
 })
 test('initial, transient and prolonged refresh delays use only the status badge',()=>{

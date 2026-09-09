@@ -104,6 +104,47 @@ test('docs promise neither profit, zero bugs nor live safety from demo or maskin
   assert.doesNotMatch(text, /(?<!不)保证(?:盈利|零\s*bug)|稳赚|零风险/i)
 })
 
+test('entry and exit documentation matches observed targets and unified preset protection', () => {
+  includesAll(section('entry_exit'), ['closed-candle-plans-v2','8 根 15M','1.5 ATR','12 根已收盘小时 K 线','target_observation',
+    '不使用“3 × 止损距离”','position-exits-v1','6 小时','4 小时','2.5 ATR','1.8 ATR','0.15 ATR','0.10 ATR',
+    '估算往返成本 × 1.5','0.8R','UPDATE_SL','300 秒','已有更紧止损始终保留','last_verified','conservative_fallback',
+    'position_trackers.json','不会静默把 small300 切成 standard','active_profile','exit_evidence','lastExitAttempt','不增加下单、撤单或平仓的盲目重试'])
+  assert.ok(source.includes("id: 'entry_exit'"))
+  assert.doesNotMatch(section('entry_exit'),/3R.*保证.*净.*2/)
+})
+test('documented exit table stays in sync with the pure runtime presets', () => {
+  const policy=readFileSync(new URL('../../scripts/exit_policy.py',import.meta.url),'utf8')
+  const configs=['standard','small300'].map(id=>policy.match(new RegExp(`'${id}': \\{([\\s\\S]*?)\\}`))?.[1])
+  assert.ok(configs.every(Boolean))
+  const rows=[...template.matchAll(/<tr><th scope="row">([^<]+)<\/th><td>([^<]+)<\/td><td>([^<]+)<\/td><\/tr>/g)]
+  const fields=['time_stop_seconds','time_stop_profit_atr','tier1_breakeven_atr','tier2_lock_atr','tier1_floor_atr','tier2_floor_atr','kinetic_peak_atr','kinetic_pullback_atr']
+  assert.equal(rows.length,fields.length)
+  fields.forEach((field,index)=>configs.forEach((config,side)=>{
+    const value=Number(config.match(new RegExp(`'${field}': ([\\d.]+)`))?.[1])
+    assert.equal(parseFloat(rows[index][side+2]),field==='time_stop_seconds'?value/3600:value,field)
+  }))
+})
+
+test('audit and review reading guides describe actual grouping, evidence and distinct timestamps', () => {
+  includesAll(section('dashboard'),['每个标的只出现一次','另 N 项','全部形态检查','静默刷新','3 秒','净敞口','不是 24 小时资金净流入'])
+  includesAll(section('self_evolution'),['报告观察、待验证假设、数据缺口','模型自称的“已验证事实”','旧报告未记录',
+    '版本发布 / 纳管时间','有效内容变更时间','当前模型输入','版本与来源','基础策略'])
+  assert.doesNotMatch(text,/本地改动|尚未上线|尚未部署/)
+})
+test('documentation and dashboard use the same header and page heading components', () => {
+  const dashboard=readFileSync(new URL('../src/views/DashboardView.vue',import.meta.url),'utf8')
+  for(const view of [source,dashboard]){
+    assert.ok(view.includes("import HeaderBar from '../components/HeaderBar.vue'"))
+    assert.ok(view.includes('<HeaderBar />'));assert.ok(view.includes('<PageHeader'))
+  }
+  assert.ok(source.includes('terminal-shell docs-shell'));assert.ok(source.includes('terminal-main docs-main'))
+  assert.ok(!source.includes('<!-- Top Header Navigation (Slim & Clean) -->'))
+  assert.ok(source.includes('title="文档目录"'))
+  assert.ok(source.includes("prefers-reduced-motion: reduce"))
+  const toc=readFileSync(new URL('../src/components/DocsContents.vue',import.meta.url),'utf8')
+  for(const token of ['aria-label="文档章节目录"',':aria-current','min-height: 44px','focus-visible'])assert.ok(toc.includes(token),token)
+})
+
 test('all chapters, original screenshot order and zoom interactions remain available', () => {
   for (const id of ['overview', 'dashboard', 'council', 'prompt_studio', 'interceptors', 'llm_hub', 'self_evolution', 'deployment', 'faq']) section(id)
   const images = ['dashboard_trading', 'admin_council', 'admin_prompt_studio', 'admin_interceptors', 'admin_llm', 'admin_evolution']

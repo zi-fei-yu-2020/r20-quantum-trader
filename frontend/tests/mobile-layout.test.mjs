@@ -24,6 +24,6 @@ test('long strategy names and reasons wrap instead of determining the page width
  assert.match(css,/\.terminal-grid\s*\{\s*overflow-wrap:\s*anywhere/)
 })
 test('lab headings can wrap instead of squeezing model identifiers offscreen',()=>{
- assert.match(lab,/flex flex-wrap gap-3 items-center justify-between/)
- assert.match(lab,/flex flex-wrap min-w-0 max-w-full items-center gap-2/)
+ assert.match(lab,/\.evolution-toolbar\s*\{[^}]*flex-wrap: wrap/)
+ assert.match(lab,/\.evolution-toolbar__model\s*\{[^}]*min-width: 0;[^}]*overflow-wrap: anywhere/)
 })

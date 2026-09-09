@@ -1,4 +1,4 @@
-import type { DecisionCycle } from './waitAudit.ts'
+import type { DecisionCycle, WaitAuditState } from './waitAudit.ts'
 export type CycleItem = NonNullable<DecisionCycle['items']>[number]
 export type PlanCheck = NonNullable<CycleItem['entry_plans']>['checks'][number]
 
@@ -30,4 +30,53 @@ export function groupedPlanChecks(checks: PlanCheck[] = []) {
     group.checks.push(check); groups.set(key, group)
   }
   return [...groups.values()]
+}
+
+/** One disclosure per instrument; cycle results take priority over saved audit status. */
+export function mergedAuditRows(cycle?: DecisionCycle, audit?: WaitAuditState) {
+  const cycleItems = new Map((cycle?.items || []).map(item => [item.instId, item]))
+  const auditItems = new Map((audit?.items || []).map(item => [item.instId, item]))
+  const ids = [...new Set([...cycleItems.keys(), ...auditItems.keys()])]
+  return ids.map(instId => {
+    const item = cycleItems.get(instId)
+    const record = auditItems.get(instId)
+    const status = item?.status || record?.status || 'unknown'
+    const diagnostic = item ? incompleteReason(item, record?.status === status ? record.error : undefined)
+      : status === 'incomplete' ? record?.error || record?.reason || '缺少完整审计说明' : ''
+    return { instId, item, record, status, diagnostic,
+      programError: item?.entry_plans?.error ? checkLabel(item.entry_plans.error) : '',
+      executionReason: status === 'execution_rejected' ? item?.reason || record?.reason || '执行核验未通过，未确认下单' : '',
+      checks: groupedPlanChecks(item?.entry_plans?.checks),
+      plans: item?.entry_plans?.plans || [],
+      historical: !item && !!cycle?.items?.length }
+  })
+}
+export type AuditDisplayRow = ReturnType<typeof mergedAuditRows>[number]
+
+export function compactAuditStatus(status: string): string {
+  return ({audited_wait:'等待 · 已审计', incomplete:'决策待补全', execution_rejected:'执行未通过',
+    entry_candidate:'候选待核验'} as Record<string,string>)[status] || '待审计'
+}
+
+export function directionSummary(row: AuditDisplayRow, side: 'long' | 'short') {
+  const action = side === 'long' ? 'BUY_LONG' : 'SELL_SHORT'
+  const plans = row.plans.filter(plan => plan.action === action)
+  if (plans.length) {
+    const selected = plans.find(plan => plan.id === row.item?.candidate_id)
+    return { text: selected ? `${setupLabel(selected.setup)} · 模型已选择` : `${plans.length} 个程序方案 · 模型未选择`, extra: 0 }
+  }
+  const priority: Record<string,number> = { market_data_invalid:0, entry_candle_provenance_missing:0,
+    environment_not_verified_for_entry:0, invalid_geometry:1, no_observed_target:2,
+    net_rr_below_policy:3, existing_macro_direction_veto:4, quote_moved_beyond_closed_trigger:5,
+    closed_candle_trigger_not_met:6 }
+  const groups = row.checks.filter(group => group.side === side)
+    .sort((a,b) => (priority[a.reason] ?? 0) - (priority[b.reason] ?? 0))
+  const primary = groups[0]
+  if (primary) {
+    const shortLabels: Record<string,string> = { no_observed_target:'缺少目标位', net_rr_below_policy:'净盈亏比不足',
+      closed_candle_trigger_not_met:'等待收盘触发', existing_macro_direction_veto:'大周期方向限制' }
+    const ratios = primary.ratios.length ? `（${primary.ratios.map(value => value.toFixed(2)).join(' / ')}）` : ''
+    return { text: (shortLabels[primary.reason] || checkLabel(primary.reason)) + ratios, extra: groups.length - 1 }
+  }
+  return { text: row.record?.status === row.status ? row.record.audit?.[side]?.reason || '暂无方向说明' : '暂无方向说明', extra: 0 }
 }

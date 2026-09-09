@@ -1,33 +1,27 @@
 <script setup lang="ts">
 import AppDialog from '../components/ui/AppDialog.vue'
+import HeaderBar from '../components/HeaderBar.vue'
+import PageHeader from '../components/ui/PageHeader.vue'
+import AppBadge from '../components/ui/AppBadge.vue'
+import DocsContents from '../components/DocsContents.vue'
 import { useClipboard } from '../composables/useClipboard'
 const { copyText: copyToClipboard } = useClipboard()
-import { ref, onMounted, onUnmounted } from 'vue'
-import { useRouter } from 'vue-router'
-import { useTheme } from '../composables/useTheme'
+import { ref, nextTick, onMounted, onUnmounted } from 'vue'
 import {
   ShieldCheck,
   Cpu,
   FileText,
-  ArrowLeft,
   Copy,
   Terminal,
   Users,
   Brain,
   TrendingUp,
   Layers,
-  Lock,
   ShieldAlert,
-  ChevronRight,
   Menu,
-  X,
-  Sun,
-  Moon,
   Server,
 } from 'lucide-vue-next'
 
-const router = useRouter()
-const { theme, toggleTheme } = useTheme()
 
 const activeSection = ref('overview')
 const mobileMenuOpen = ref(false)
@@ -44,6 +38,7 @@ const sections = [
   { id: 'self_evolution', title: '7. 自进化认知与长期记忆闭环', icon: Brain },
   { id: 'deployment', title: '8. 生产部署与多通道通知', icon: Server },
   { id: 'faq', title: '9. 常见问题解答与风控底线 (FAQ)', icon: ShieldAlert },
+  { id: 'entry_exit', title: '10. 入场候选与统一退出规则', icon: Layers },
 ]
 
 async function copyText(text: string, tag: string) {
@@ -54,21 +49,24 @@ async function copyText(text: string, tag: string) {
   }, 2000)
 }
 
-function scrollToSection(id: string) {
+async function scrollToSection(id: string) {
   activeSection.value = id
   mobileMenuOpen.value = false
-  const el = document.getElementById(id)
-  if (el) {
-    el.scrollIntoView({ behavior: 'smooth', block: 'start' })
-  }
+  await nextTick()
+  requestAnimationFrame(() => {
+    const el = document.getElementById(id)
+    if (el) el.scrollIntoView({ behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'instant' : 'smooth', block: 'start' })
+  })
 }
 
 // Scroll spy
 function onScroll() {
-  const scrollPos = window.scrollY + 120
+  const headerBottom = document.querySelector('.terminal-header')?.getBoundingClientRect().bottom || 68
+  const scrollPadding = parseFloat(getComputedStyle(document.documentElement).scrollPaddingTop) || 0
   for (let i = sections.length - 1; i >= 0; i--) {
     const el = document.getElementById(sections[i].id)
-    if (el && el.offsetTop <= scrollPos) {
+    const anchorLine = el ? Math.max(headerBottom, scrollPadding + (parseFloat(getComputedStyle(el).scrollMarginTop) || 0)) + 2 : headerBottom
+    if (el && el.getBoundingClientRect().top <= anchorLine) {
       activeSection.value = sections[i].id
       break
     }
@@ -85,180 +83,28 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <div
-    class="min-h-screen font-sans transition-colors selection:bg-blue-500/30"
-    style="background-color: var(--bg-app); color: var(--text-main)"
-  >
-    <!-- Top Header Navigation (Slim & Clean) -->
-    <header
-      class="sticky top-0 z-40 backdrop-blur-md border-b px-3 sm:px-6 h-[48px] flex items-center justify-between transition-colors"
-      style="background-color: var(--bg-header); border-color: var(--border-subtle)"
-    >
-      <div class="flex items-center space-x-2 sm:space-x-3 min-w-0">
-        <button
-          @click="router.push('/')"
-          class="flex items-center space-x-1 px-2 py-1 rounded-lg border text-xs font-mono transition-colors cursor-pointer shadow-xs shrink-0"
-          style="
-            background-color: var(--bg-card);
-            border-color: var(--border-subtle);
-            color: var(--text-muted);
-          "
-          title="返回交易终端"
-        >
-          <ArrowLeft class="w-3.5 h-3.5" />
-          <span class="hidden sm:inline">返回终端</span>
-        </button>
-        <div
-          class="h-4 w-px hidden sm:block shrink-0"
-          style="background-color: var(--border-subtle)"
-        ></div>
-        <div class="flex items-center space-x-1.5 sm:space-x-2 min-w-0">
-          <span class="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse shrink-0"></span>
-          <span
-            class="font-mono font-black text-xs sm:text-sm tracking-wide shrink-0 whitespace-nowrap"
-            style="color: var(--text-main)"
-          >
-            R20 QUANTUM
-          </span>
-          <span
-            class="px-1.5 sm:px-2 py-0.2 rounded text-[10px] font-mono border font-bold shrink-0 whitespace-nowrap"
-            style="
-              background-color: var(--color-brand-bg);
-              color: var(--color-brand);
-              border-color: var(--color-brand-border);
-            "
-          >
-            <span class="hidden md:inline">v7.3.0 官方开发与使用指南</span>
-            <span class="hidden sm:inline md:hidden">v7.3.0 指南</span>
-            <span class="sm:hidden">DOCS</span>
-          </span>
-        </div>
-      </div>
-
-      <div class="flex items-center space-x-1.5 sm:space-x-2 shrink-0">
-        <!-- Mobile TOC Drawer Button -->
-        <button
-          @click="mobileMenuOpen = !mobileMenuOpen"
-          class="sm:hidden flex items-center justify-center w-7.5 h-7.5 rounded-lg border transition-all cursor-pointer shadow-xs"
-          style="
-            background-color: var(--bg-card);
-            border-color: var(--border-subtle);
-            color: var(--text-main);
-          "
-          title="目录索引 (TOC)"
-        >
-          <Menu v-if="!mobileMenuOpen" class="w-3.5 h-3.5" />
-          <X v-else class="w-3.5 h-3.5" />
-        </button>
-
-        <!-- Theme Toggle -->
-        <button
-          @click="toggleTheme"
-          class="flex items-center justify-center w-7.5 h-7.5 rounded-lg border transition-all cursor-pointer shadow-xs"
-          style="
-            background-color: var(--bg-card);
-            border-color: var(--border-subtle);
-            color: var(--text-main);
-          "
-          :title="theme === 'dark' ? '切换为亮色模式' : '切换为暗色模式'"
-        >
-          <Sun
-            v-if="theme === 'dark'"
-            class="w-3.5 h-3.5 text-amber-400 hover:rotate-45 transition-transform"
-          />
-          <Moon v-else class="w-3.5 h-3.5 text-slate-700 hover:-rotate-12 transition-transform" />
-        </button>
-
-        <!-- Admin Portal (Desktop only) -->
-        <button
-          @click="router.push('/admin')"
-          class="hidden sm:flex items-center space-x-1 px-2.5 py-1 rounded-lg border text-xs font-mono cursor-pointer transition-colors shadow-xs"
-          style="
-            background-color: var(--bg-card);
-            border-color: var(--border-subtle);
-            color: var(--text-muted);
-          "
-        >
-          <Lock class="w-3.5 h-3.5" />
-          <span>控制台</span>
-        </button>
-      </div>
-    </header>
-
-    <!-- Mobile TOC Backdrop Overlay -->
-    <div
-      v-if="mobileMenuOpen"
-      class="fixed inset-0 bg-black/60 backdrop-blur-xs z-40 sm:hidden transition-opacity"
-      @click="mobileMenuOpen = false"
-    ></div>
-
-    <!-- Main Container -->
-    <div class="max-w-7xl mx-auto px-4 sm:px-6 py-6 sm:py-8 flex gap-8">
-      <!-- Left Sticky Sidebar (TOC) -->
-      <aside
-        class="w-64 shrink-0 fixed inset-y-12 left-0 z-50 sm:z-30 sm:bg-transparent p-4 sm:p-0 border-r sm:border-r-0 transition-transform duration-200 sm:translate-x-0 sm:sticky sm:top-16 sm:h-[calc(100vh-5rem)] overflow-y-auto"
-        :class="
-          mobileMenuOpen
-            ? 'translate-x-0 bg-[var(--bg-card)] shadow-2xl'
-            : '-translate-x-full sm:translate-x-0'
-        "
-        style="border-color: var(--border-subtle)"
-      >
-        <div class="flex items-center justify-between mb-3 px-2">
-          <div
-            class="text-[11px] font-mono font-bold uppercase tracking-wider"
-            style="color: var(--text-faint)"
-          >
-            目录索引 (TOC)
-          </div>
-          <button
-            @click="mobileMenuOpen = false"
-            class="sm:hidden p-1 rounded-lg border text-xs cursor-pointer transition-colors"
-            style="
-              background-color: var(--bg-card-subtle);
-              border-color: var(--border-subtle);
-              color: var(--text-muted);
-            "
-            title="关闭目录"
-          >
-            <X class="w-3.5 h-3.5" />
+  <div class="terminal-shell docs-shell">
+    <HeaderBar />
+    <main class="terminal-main docs-main">
+      <PageHeader title="使用文档" description="按功能查阅账户连接、决策证据、持仓保护与运行记忆。" eyebrow="工作空间 / 文档中心">
+        <template #actions>
+          <AppBadge tone="neutral">v7.3.0</AppBadge>
+          <button type="button" class="ui-button ui-button--secondary docs-menu-button" aria-haspopup="dialog" :aria-expanded="mobileMenuOpen" @click="mobileMenuOpen = true" data-docs-menu>
+            <Menu class="size-4" aria-hidden="true" />章节目录
           </button>
-        </div>
-        <nav class="space-y-1">
-          <button
-            v-for="s in sections"
-            :key="s.id"
-            @click="scrollToSection(s.id)"
-            class="w-full text-left px-3 py-2 rounded-xl text-xs font-medium transition-all flex items-center justify-between group cursor-pointer border"
-            :style="
-              activeSection === s.id
-                ? {
-                    backgroundColor: 'var(--color-brand-bg)',
-                    color: 'var(--color-brand)',
-                    borderColor: 'var(--color-brand-border)',
-                    fontWeight: 'bold',
-                  }
-                : {
-                    backgroundColor: 'transparent',
-                    borderColor: 'transparent',
-                    color: 'var(--text-muted)',
-                  }
-            "
-          >
-            <div class="flex items-center space-x-2.5 truncate">
-              <component :is="s.icon" class="w-3.5 h-3.5 shrink-0" />
-              <span class="truncate">{{ s.title }}</span>
-            </div>
-            <ChevronRight
-              class="w-3 h-3 opacity-0 group-hover:opacity-100 transition-opacity"
-              :class="activeSection === s.id ? 'opacity-100' : ''"
-            />
-          </button>
-        </nav>
-      </aside>
-
-      <!-- Right Content Area -->
-      <main class="min-w-0 flex-1 space-y-14 pb-24">
+        </template>
+      </PageHeader>
+      <nav class="docs-shortcuts" aria-label="常用功能说明">
+        <button type="button" @click="scrollToSection('entry_exit')">入场与退出规则</button>
+        <button type="button" @click="scrollToSection('dashboard')">决策与等待审计</button>
+        <button type="button" @click="scrollToSection('self_evolution')">复盘与运行记忆</button>
+      </nav>
+      <div class="docs-layout">
+        <aside class="docs-sidebar" aria-label="章节索引">
+          <p class="docs-sidebar__label">文档目录</p>
+          <DocsContents :sections="sections" :active="activeSection" @select="scrollToSection" />
+        </aside>
+        <article class="docs-content min-w-0 space-y-14">
         <!-- 1. 系统概览与量化哲学 -->
         <section id="overview" class="space-y-4 pt-2">
           <div class="flex items-center space-x-2">
@@ -418,7 +264,7 @@ onUnmounted(() => {
                 $a$、三阶冲击 $j$ 与 ADX 趋势动量。<br />
                 •
                 <strong>聪明钱微结构</strong
-                >：追踪大户多空比与净流入流出，点击卡片即刻呼出深度数学推演与当轮实发 Prompt 抽屉。
+                >：展示官方聪明钱多头比例与净敞口（多头名义金额减空头名义金额），不是 24 小时资金净流入。资讯走独立资讯绑定，不会切换 demo/live 交易环境；缺失数据保留未知标记。点击卡片可查看数理推演与当轮 Prompt。
               </p>
             </div>
           </div>
@@ -450,6 +296,17 @@ onUnmounted(() => {
               class="w-full rounded-xl cursor-zoom-in group-hover:opacity-95 transition-opacity"
               @click="zoomImage = '/images/dashboard_trading.png'"
             />
+          </div>
+          <div class="docs-feature-note" data-docs-audit-layout>
+            <h3>如何阅读决策与等待审计</h3>
+            <p>面板按“本轮结论 → 标的主要阻碍 → 完整证据”组织。每个标的只出现一次；默认显示做多、做空的主要原因，同方向还有其他检查时标记“另 N 项”。点击该行的“详情”，可查看全部形态检查、程序方案、模型选择、净 R:R、重审条件及前轮复查。</p>
+            <ul>
+              <li>顶部保留审查、候选和等待已审数量；待补全、执行未通过等异常有值才展示，缺失数据不显示成零。</li>
+              <li>连续无候选轮数是诊断提示，不是强制开仓倒计时。审计通过仅表示证据和条件可核验，不代表已经证明没有交易优势。</li>
+              <li>审计不完整、草案生成错误、执行拒绝直接显示原因，不会被精简布局隐藏。程序草案与模型选择都不等于已下单或成交。</li>
+              <li>执行记录与审计解释按需展开，环境限制单独标注。前台和后台复用同一面板；静默刷新保留用户已展开的内容。</li>
+            </ul>
+            <p>桌面和手机使用同一组数据，支持明暗主题与键盘展开。监控仍以 3 秒周期请求完整快照；刷新延迟通过“数据更新延迟”状态提示，不用常驻错误弹窗打断阅读。</p>
           </div>
         </section>
 
@@ -631,7 +488,7 @@ onUnmounted(() => {
                   </td>
                   <td class="p-3" style="color: var(--text-main)">微积分数理</td>
                   <td class="p-3" style="color: var(--text-muted)">
-                    注入 6 币种最新价、微积分动力学 (v/a/j)、1H ADX 与聪明钱净流
+                    注入 6 币种最新价、微积分动力学 (v/a/j)、1H ADX 与聪明钱净敞口
                   </td>
                 </tr>
                 <tr class="hover:bg-[var(--bg-card-hover)] transition-colors">
@@ -978,6 +835,18 @@ onUnmounted(() => {
               @click="zoomImage = '/images/admin_evolution.png'"
             />
           </div>
+          <div class="docs-feature-note" data-docs-review-layout>
+            <h3>复盘结果与运行记忆分别阅读</h3>
+            <p>策略复盘页在宽屏并排展示“最新策略复盘”和“运行记忆”，手机端上下排列。报告区先展示任务状态、最近成功报告、样本量、样本胜率及本次变更建议；待审核与审核未通过数量独立呈现。</p>
+            <ul>
+              <li>关键发现分为“报告观察、待验证假设、数据缺口”；默认展示原文摘要节选，展开后保留全部原文。模型自称的“已验证事实”不等于程序已独立核验。</li>
+              <li>证据核对、改进建议、完整报告和任务详情按需展开。旧报告没有结构化证据时显示“旧报告未记录”，不会补造历史快照或伪装成已验证改进。</li>
+              <li>复盘失败、超时、账户范围不匹配与运行记忆不可用仍直接提示；上次成功报告可以保留，但不会冒充最近尝试成功。</li>
+              <li><strong>最近成功报告时间、版本发布 / 纳管时间、有效内容变更时间</strong>含义不同：纳管可以建立版本快照而不改变模型输入，NO_CHANGE 也不会为了推进日期而修改记忆。</li>
+              <li>运行记忆优先展示版本、内容最近变更和已审核启用规则数量。“当前模型输入”可查看实际完整文本，“历史兼容上下文”不是新审批规则；完整内容指纹位于“版本与来源”。</li>
+              <li>显示 0 条已审核启用规则不代表基础策略停止运行，也不表示自动启用旧心法。候选提交、审核发布和回滚仍使用原有权限、证据与确认流程。</li>
+            </ul>
+          </div>
         </section>
 
         <!-- 8. 生产部署与多通道通知 -->
@@ -1129,8 +998,62 @@ pip install -r requirements.txt
             </div>
           </div>
         </section>
-      </main>
-    </div>
+
+        <section id="entry_exit" class="space-y-4 pt-6 border-t" style="border-color:var(--border-subtle)">
+          <div class="flex flex-wrap items-center gap-2">
+            <span class="docs-chapter">CHAPTER 10</span>
+            <h2 class="text-xl sm:text-2xl font-semibold">入场候选与统一退出规则</h2>
+          </div>
+          <div class="docs-feature-note" data-docs-entry-target>
+            <h3>目标价必须有观察依据</h3>
+            <p><code>closed-candle-plans-v2</code> 使用已收盘 15M / 1H K 线，保留 8 根 15M K 线的突破窗口。初始止损取结构防守位置与 1.5 ATR 波动距离中较宽的一侧；最终数量仍由风险预算、精度和账户约束决定，不会因止损变宽而直接增加风险额度。</p>
+            <p>目标价采用此前 12 根已收盘小时 K 线的通道边界。候选中的 <code>target_observation</code> 保存时间框架、价格字段、窗口起止收盘时间和目标价格，不使用“3 × 止损距离”自动推远目标来凑盈亏比。成本后空间不足时记录实际几何与拒绝原因，不凭空假设更远的获利空间。</p>
+            <p>目标延伸必须另有明确、经过验证的规则，不能把人为远端目标视为已观察到的行情空间。候选版本或证据改变后，旧 <code>candidate_id</code> 不能授权新订单。既有订单与持仓的止盈止损不会因此被追溯改写。</p>
+          </div>
+          <div class="docs-feature-note" data-docs-exit-policy>
+            <h3>一套预设统一浮盈保护、阶梯锁利与动能退出</h3>
+            <p><code>scripts/exit_policy.py</code> 定义 <code>position-exits-v1</code>。下表是工程阈值，不是经过校准的获利概率，也不保证持有到固定 R 倍数。</p>
+            <div class="docs-table-scroll" tabindex="0" role="region" aria-label="退出预设参数对照，可横向滚动">
+              <table>
+                <thead><tr><th scope="col">参数</th><th scope="col">standard</th><th scope="col">small300</th></tr></thead>
+                <tbody>
+                  <tr><th scope="row">时间退出持有时长门槛</th><td>6 小时</td><td>4 小时</td></tr>
+                  <tr><th scope="row">时间退出价格浮盈上界</th><td>0.15 ATR</td><td>0.10 ATR</td></tr>
+                  <tr><th scope="row">一级浮盈保护启动</th><td>2.5 ATR</td><td>1.8 ATR</td></tr>
+                  <tr><th scope="row">二级锁利启动</th><td>4 ATR</td><td>3 ATR</td></tr>
+                  <tr><th scope="row">一级收益保留距离下限</th><td>0.5 ATR</td><td>0.3 ATR</td></tr>
+                  <tr><th scope="row">二级收益保留距离下限</th><td>1.5 ATR</td><td>1 ATR</td></tr>
+                  <tr><th scope="row">动能退出峰值门槛</th><td>2.5 ATR</td><td>1.8 ATR</td></tr>
+                  <tr><th scope="row">动能退出回撤距离</th><td>1.2 ATR</td><td>0.8 ATR</td></tr>
+                </tbody>
+              </table>
+            </div>
+            <ul>
+              <li>动态退出优先使用采集的 <code>atr_15m</code>，缺失时使用有效 <code>atr</code> 并标记来源；不额外注入价格百分比下限，不混用多个 ATR 启动口径。</li>
+              <li>一级启动距离为 <code>max(预设一级 ATR 门槛, 估算往返成本 × 1.5)</code>。不再用 <code>0.8R</code> 取较小值提前启动，成本保护、收益保留比例与阶梯下限在同一门槛后计算。</li>
+              <li>动能退出也须满足同一成本启动条件及所选预设的峰值、回撤条件。已有更紧止损始终保留，不能为延长持仓而放宽或重置。</li>
+              <li>AI 的 <code>UPDATE_SL</code> 止盈改单共用该启动条件，并核验成本覆盖、行情缓冲及最近 300 秒内的 ATR 观察。ATR 缺失或过期时不发改单，原云端保护保留。</li>
+              <li>硬止损、云端 OCO 核验失败后的安全退出，以及独立 AI 平仓校验不等待盈利门槛；不增加下单、撤单或平仓的盲目重试。</li>
+            </ul>
+          </div>
+          <div class="docs-feature-note" data-docs-exit-fallback>
+            <h3>预设读取异常时仍保持持仓保护</h3>
+            <p>每个持仓的 <code>exitPolicy</code> 保存最近核验的预设 ID、规则版本和执行签名，通过 <code>position_trackers.json</code> 持久化。读取失败时优先沿用同版本的有效快照，标记 <code>last_verified</code>，不会静默把 small300 切成 standard。</p>
+            <p>没有有效历史快照时使用明确标记的 <code>conservative_fallback</code>：从现有预设取较早的启动、时间和回撤门槛，以及较高的保护下限。降级不覆盖已核验快照；状态变化时告警，同一异常不持续刷屏，恢复读取后回到 <code>active_profile</code>。新开仓仍受独立风险校验约束。</p>
+          </div>
+          <div class="docs-feature-note" data-docs-exit-evidence>
+            <h3>退出日志对应实际条件</h3>
+            <p>时间退出要求持仓时间严格超过预设门槛，且有符号价格浮盈低于所选 ATR 上界；可能是亏损，也可能是小幅盈利，不统一称作“无波动横盘”。巡检说明与交易记录备注使用同一份实际参数。</p>
+            <pre class="docs-example">预设 small300：持仓 4.02h &gt; 4h，价格浮盈 -0.200 ATR &lt; 0.1 ATR，时间退出</pre>
+            <p><code>exit_evidence</code> 记录预设及来源、实际持有时长、触发门槛、价格浮盈以及 ATR 数值、来源和观察时间。未获平仓确认时保留持仓及 <code>lastExitAttempt</code>，不会记录为成功平仓。日志中的平仓前浮盈不是最终净收益，结算仍以交易所回执和账本为准。</p>
+          </div>
+        </section>
+        </article>
+      </div>
+    </main>
+    <AppDialog :open="mobileMenuOpen" title="文档目录" size="sm" @update:open="mobileMenuOpen = $event">
+      <DocsContents :sections="sections" :active="activeSection" @select="scrollToSection" />
+    </AppDialog>
 
     <!-- Image Zoom Modal -->
     <AppDialog
@@ -1153,3 +1076,31 @@ pip install -r requirements.txt
     </AppDialog>
   </div>
 </template>
+
+<style scoped>
+.docs-main { padding-bottom: 100px; }
+.docs-layout { display: grid; grid-template-columns: minmax(0,1fr); gap: 2rem; align-items: start; }
+.docs-sidebar { display: none; position: sticky; top: 88px; max-height: calc(100dvh - 110px); overflow-y: auto; min-width: 0; }
+.docs-sidebar__label { margin: 0 .75rem .75rem; color: var(--text-muted); font-size: .75rem; font-weight: 600; }
+.docs-content { max-width: 1040px; overflow-wrap: anywhere; }
+/* The application already reserves 84px via html scroll-padding-top. */
+.docs-content > section { scroll-margin-top: 16px; }
+.docs-shortcuts { display: flex; flex-wrap: wrap; gap: .5rem; margin: 0 0 1.5rem; }
+.docs-shortcuts button { min-height: 44px; padding: .5rem .875rem; border: 1px solid var(--border-subtle); border-radius: .5rem; color: var(--text-muted); background: var(--bg-card); font-size: .8125rem; cursor: pointer; }
+.docs-shortcuts button:hover { color: var(--color-brand); border-color: var(--color-brand-border); background: var(--color-brand-bg); }
+.docs-shortcuts button:focus-visible, .docs-table-scroll:focus-visible { outline: 2px solid var(--color-brand); outline-offset: 2px; }
+.docs-feature-note { padding: 1rem; border: 1px solid var(--border-subtle); border-radius: .75rem; background: var(--bg-card); display: grid; gap: .75rem; font-size: .8125rem; line-height: 1.8; min-width: 0; }
+.docs-feature-note h3 { font-weight: 650; font-size: .9375rem; color: var(--text-main); }
+.docs-feature-note p, .docs-feature-note ul { color: var(--text-muted); }
+.docs-feature-note ul { display: grid; gap: .5rem; list-style: disc; padding-left: 1.25rem; }
+.docs-chapter { padding: .25rem .5rem; font-size: .75rem; font-weight: 600; color: var(--color-brand); border: 1px solid var(--color-brand-border); background: var(--color-brand-bg); border-radius: .375rem; }
+.docs-table-scroll { min-width: 0; overflow-x: auto; max-width: 100%; border: 1px solid var(--border-subtle); border-radius: .5rem; }
+.docs-table-scroll table { min-width: 440px; font-size: .8125rem; }
+.docs-table-scroll th, .docs-table-scroll td { padding: .625rem .75rem; }
+.docs-example { white-space: pre-wrap; overflow-wrap: anywhere; padding: .875rem; background: var(--bg-card-subtle); border: 1px solid var(--border-subtle); border-radius: .5rem; }
+@media (min-width: 1024px) {
+  .docs-layout { grid-template-columns: 240px minmax(0,1fr); }
+  .docs-sidebar { display: block; }
+  .docs-menu-button { display: none; }
+}
+</style>

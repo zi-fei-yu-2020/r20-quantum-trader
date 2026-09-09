@@ -1,4 +1,4 @@
-"""Offline safety regressions: compile only the three allowed production functions.
+"""Offline safety regressions: compile only the four allowed production functions.
 
 No trader module import (which loads runtime config); every I/O boundary is a mock.
 Run on Windows or WSL: python -m unittest discover -s tests -p test_protection_policy.py
@@ -11,6 +11,7 @@ import unittest
 from unittest.mock import Mock, mock_open
 
 from scripts.protection_policy import oco_coverage, rounded_stop, trigger_geometry
+from scripts import exit_policy
 
 
 INST = 'TEST-USDT-SWAP'
@@ -27,13 +28,14 @@ def position(side='long', **changes):
 
 
 def trader_functions():
-    names = {'_live_oco_coverage', 'ensure_cloud_position_protection', 'execute_ai_position_management'}
+    names = {'_live_oco_coverage', 'ensure_cloud_position_protection', 'execute_ai_position_management', '_exit_preset'}
     path = Path(__file__).resolve().parents[1] / 'scripts' / 'ai_factor_trader.py'
     tree = ast.parse(path.read_text(encoding='utf-8'))
     selected = [n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name in names]
-    assert len(selected) == 3
+    assert len(selected) == 4
     env = SimpleNamespace(identity='offline-fake', simulated=True)
-    ns = dict(List=list, Dict=dict, Any=object, Tuple=tuple,
+    ns = dict(List=list, Dict=dict, Any=object, Tuple=tuple, exit_policy=exit_policy,
+              execution_runtime=Mock(return_value={'execution':{'id':'standard'},'signature':'offline-standard'}),
               os=SimpleNamespace(path=SimpleNamespace(exists=Mock(return_value=True))),
               time=SimpleNamespace(time=lambda: 1000, monotonic=lambda: 1000, sleep=Mock()),
               json=json, AI_POSITION_MANAGEMENT_FILE='never-open-a-real-file.json',
@@ -208,9 +210,36 @@ class AmendmentMockTests(unittest.TestCase):
         self.actions = []
 
     def amend(self, proposed=112.29):
+        for tracker in self.trackers.values():
+            tracker.setdefault('exitVolatility', {'value':1.,'source':'atr_15m','observed_at':1000})
         payload = {'timestamp': 1000, 'instructions': [{'instId': INST, 'action': 'UPDATE_SL', 'suggested_sl_price': proposed}]}
         self.ns['open'] = mock_open(read_data=json.dumps(payload))
         self.ns['execute_ai_position_management'](self.positions, self.trackers, 'offline', self.actions)
+
+    def test_ai_amendment_cannot_bypass_preset_activation(self):
+        self.positions[INST]['markPx'] = '101.3'
+        self.amend(100.6)
+        self.read.assert_not_called()
+        self.write.assert_not_called()
+        self.assertTrue(self.actions)
+
+    def test_missing_stale_or_future_exit_atr_cannot_authorize_amendment(self):
+        for volatility in ({}, {'value':1.,'observed_at':699}, {'value':1.,'observed_at':1001},
+                           {'value':0,'observed_at':1000}, {'value':'nan','observed_at':1000}):
+            with self.subTest(volatility=volatility):
+                self.trackers[INST+'_long']['exitVolatility'] = volatility
+                self.amend()
+                self.read.assert_not_called()
+                self.write.assert_not_called()
+
+    def test_explicit_ai_exit_is_not_blocked_by_profit_amendment_activation(self):
+        payload = {'timestamp':1000,'instructions':[{'instId':INST,'action':'CLOSE_MARKET','confidence':90}]}
+        self.ns['open'] = mock_open(read_data=json.dumps(payload))
+        self.ns['close_position_confirmed'].side_effect = None
+        self.ns['close_position_confirmed'].return_value = (True, 'confirmed')
+        self.ns['execute_ai_position_management'](self.positions, self.trackers, 'offline', self.actions)
+        self.ns['close_position_confirmed'].assert_called_once()
+        self.assertNotIn(INST+'_long', self.trackers)
 
     def test_every_segment_is_amended_with_write_read_interleaving(self):
         a, b = order(slTriggerPx='105'), order('b', slTriggerPx='110')

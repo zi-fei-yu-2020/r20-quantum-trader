@@ -9,7 +9,7 @@ import hashlib
 import json
 import math
 
-VERSION = 'closed-candle-plans-v1'
+VERSION = 'closed-candle-plans-v2'
 WIDTHS = {'15M': 900_000, '1H': 3_600_000}
 
 
@@ -87,9 +87,9 @@ def catalog(package, policy=None):
             entry=ask if side=='long' else bid
             if (entry-bar['close'])*(1 if side=='long' else -1)>atr*.25:
                 rejected('all',side,'quote_moved_beyond_closed_trigger');continue
-            # Channel target is the frozen, observed prior 12-hour boundary; a 3.0x risk-distance
-            # floor guarantees net RR>=2 even when fixed costs (taker fee + 2x slippage on entry)
-            # dominate on tight-distance pairs. 3.0x gross -> ~2.1-2.3 net after cost.
+            # A target must be supported by frozen observations. Extending it to a
+            # multiple of stop distance cannot establish additional market space.
+            # A separately validated extension setup can be added in a future version.
             channel_target=max(b['high'] for b in h[-13:-1]) if side=='long' else min(b['low'] for b in h[-13:-1])
             window=f[-9:-1]   # 8 closed 15M bars (was 12): trigger surfaces earlier in chop
             reclaim=(bar['close']>bar['open'] and bar['close']>prev['close'] and bar['low']<=prev['low']+atr*.25) if side=='long' else (bar['close']<bar['open'] and bar['close']<prev['close'] and bar['high']>=prev['high']-atr*.25)
@@ -106,9 +106,7 @@ def catalog(package, policy=None):
                 structural_stop=(min(b['low'] for b in f[-3:])-atr*.1) if side=='long' else (max(b['high'] for b in f[-3:])+atr*.1)
                 volatility_stop=(entry-atr*1.5) if side=='long' else (entry+atr*1.5)
                 stop=min(structural_stop,volatility_stop) if side=='long' else max(structural_stop,volatility_stop)
-                # Target floor: at least 3.0x the risk distance, so gross RR>=3 / net RR>=2 after cost.
-                risk_distance=abs(entry-stop)
-                target=max(channel_target,entry+risk_distance*3.0) if side=='long' else min(channel_target,entry-risk_distance*3.0)
+                target=channel_target
                 if not (0<stop<entry<target if side=='long' else 0<target<entry<stop):
                     rejected(setup,side,'invalid_geometry');continue
                 cost=(entry+max(stop,target))*policy['taker_fee']+entry*2*policy['slippage']
@@ -119,7 +117,10 @@ def catalog(package, policy=None):
                 reference='/askPx' if side=='long' else '/bidPx'
                 plan={'version':VERSION,'instrument':package['instId'],'setup':setup,'action':action,**geometry,
                       'created_at':at,'trigger_close_ms':bar['close_ms'],'valid_for_seconds':300,'net_rr':rr,
-                      'target_basis':'max_prior_12h_channel_boundary_and_3.0x_risk_distance','stop_basis':'max_structural_3bar_extreme_and_1.5x_atr',
+                      'target_basis':'prior_12_closed_hour_channel_boundary','stop_basis':'max_structural_3bar_extreme_and_1.5x_atr',
+                      'target_observation':{'timeframe':'1H','field':'high' if side=='long' else 'low',
+                          'window_start_close_ms':h[-13]['close_ms'],'window_end_close_ms':h[-2]['close_ms'],
+                          'price':target,'extrapolated':False},
                       'supporting_evidence':[{'ref':'/macro_4h','value':package['macro_4h'],'interpretation':'现有宏观方向约束允许研究此方向，并非胜率保证'},
                          {'ref':reference,'value':entry,'interpretation':'本轮可观察报价，最终成交和风险仍需核验'},
                          {'ref':'/entry_candles/15M/last/close','value':bar['close'],'interpretation':'已收盘的回收/突破触发，不等待所有慢周期指标同时同向'}],

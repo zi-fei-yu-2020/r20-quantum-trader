@@ -38,7 +38,7 @@ import urllib.request
 import public_market as market
 import instrument_support as support
 import algo_reader
-from scripts import trade_lock, risk_policy, entry_gateway, strategy_evidence
+from scripts import trade_lock, risk_policy, entry_gateway, strategy_evidence, exit_policy
 from scripts.execution_profiles import runtime as execution_runtime
 import fcntl
 from typing import Tuple, Dict, Any, List, Optional
@@ -123,41 +123,14 @@ MAX_SINGLE_ASSET_MARGIN = 600.0   # 单标的最大累计占用保证金上限 (
 MAX_SCALE_IN_COUNT = 1            # 单标的最大顺势加仓次数 (底仓+最多1次顺势追加)
 MIN_SCALE_IN_PROFIT_RATIO = 0.008 # 允许顺势加仓的最小底仓浮盈率 (+0.8%)
 
-# Exit-engine ratchet thresholds, split by execution preset. The 300U small-account
-# preset cannot afford the same give-back as a standard swing account: fees eat a larger
-# share of each winner, so it locks profit earlier and exits on a smaller pullback.
-# standard = swing-tuned (let winners run to 1.5R+); small300 = conservative (earlier lock).
-EXIT_THRESHOLDS = {
-    'standard': {
-        'time_stop_seconds': 21600,   # 6h, only when losing
-        'time_stop_profit_atr': 0.15, # exit only if profit < this (losing/near-flat)
-        'tier1_breakeven_atr': 2.5,   # move to breakeven-plus at this profit
-        'tier2_lock_atr': 4.0,        # lock a bigger band at this profit
-        'tier1_floor_atr': 0.5,       # breakeven floor distance from entry
-        'tier2_floor_atr': 1.5,       # lock floor distance from entry
-        'kinetic_peak_atr': 2.5,      # kinetic exit activates at this peak profit
-        'kinetic_pullback_atr': 1.2,  # exit on this pullback from peak
-    },
-    'small300': {
-        'time_stop_seconds': 14400,   # 4h: small account exits dead money sooner
-        'time_stop_profit_atr': 0.10, # only when clearly losing (<0.10 ATR)
-        'tier1_breakeven_atr': 1.8,   # earlier breakeven; fees dominate, can't give back
-        'tier2_lock_atr': 3.0,       # earlier big-win lock
-        'tier1_floor_atr': 0.3,       # tighter breakeven floor
-        'tier2_floor_atr': 1.0,       # tighter lock floor
-        'kinetic_peak_atr': 1.8,     # earlier kinetic exit
-        'kinetic_pullback_atr': 0.8, # smaller pullback tolerance
-    },
-}
-
-def _exit_preset():
-    """Return the active execution-preset exit thresholds. Falls back to standard
-    if the profile is unreadable or not small300. Never blocks the exit engine."""
-    try:
-        rid = execution_runtime()['execution']['id']
-        return EXIT_THRESHOLDS.get(rid, EXIT_THRESHOLDS['standard'])
-    except Exception:
-        return EXIT_THRESHOLDS['standard']
+def _exit_preset(tracker, executed_actions, name):
+    """Keep last verified selection across restarts; warn once per degraded state."""
+    previous = tracker.get('exitPolicyStatus')
+    settings, status = exit_policy.resolve(tracker, execution_runtime)
+    if status['source'] != 'active_profile' and status != previous:
+        source = '沿用最近核验预设' if status['source'] == 'last_verified' else '采用保守保护参数'
+        executed_actions.append(f"[{name}] 退出预设读取异常({status['error_type']})，{source} {status['preset_id']}；硬止损与云端保护继续")
+    return settings
 
 
 def is_tradfi_market_liquid(asset_type: str) -> bool:
@@ -1115,10 +1088,6 @@ def manage_position_tp_and_trailing(f, curr_pos, trackers, timestamp_full, execu
     atr = max(f["atr"], cur_px * 0.005)
     prec = f["precision"]
     ct_val = f["ctVal"]
-    # Exit thresholds are execution-preset aware: a 300U small account locks profit
-    # earlier and tolerates less give-back than a standard swing account, because fees
-    # consume a larger share of each winner on small size.
-    ex = _exit_preset()
     
     pos_sz = float(curr_pos["pos"])
     is_long = "long" in curr_pos["side"].lower()
@@ -1161,6 +1130,10 @@ def manage_position_tp_and_trailing(f, curr_pos, trackers, timestamp_full, execu
         }
 
     t = trackers[pos_key]
+    ex = _exit_preset(t, executed_actions, name)
+    volatility = exit_policy.volatility(f)
+    exit_atr = volatility['value']
+    t['exitVolatility'] = {**volatility, 'observed_at': now_ts}
     t["currentSz"] = pos_sz
     if "entryTs" not in t:
         t["entryTs"] = now_ts
@@ -1175,7 +1148,7 @@ def manage_position_tp_and_trailing(f, curr_pos, trackers, timestamp_full, execu
         cur_profit_px = entry_px - cur_px
         peak_profit_px = entry_px - t["lowWaterMark"]
 
-    # Cost-aware profit lock does not wait for an oversized ATR multiple.
+    # One activation gate for cost floor, tier floors and kinetic exits.
     from scripts.profit_protection import floor_plan
     from scripts.risk_policy import load_policy
     try: policy=load_policy()
@@ -1186,7 +1159,8 @@ def manage_position_tp_and_trailing(f, curr_pos, trackers, timestamp_full, execu
             t['initialRiskStopPx']=original
     protection=floor_plan('long' if is_long else 'short',entry_px,cur_px,
         t['highWaterMark'] if is_long else t['lowWaterMark'],t.get('initialRiskStopPx'),
-        f.get('atr_15m') or atr,taker_fee=policy.taker_fee,slippage=policy.slippage) if policy is not None else {'active':False,'reason':'cost_policy_unavailable'}
+        exit_atr,taker_fee=policy.taker_fee,slippage=policy.slippage,thresholds=ex) if policy is not None else {'active':False,'reason':'cost_policy_unavailable'}
+    t['exitEvaluation'] = {**protection, 'policy': dict(t['exitPolicyStatus']), 'atr': dict(t['exitVolatility'])}
     if protection.get('active'):
         desired=protection['stop'];old=float(t.get('trailingStopPx') or 0)
         if not old or (desired>old if is_long else desired<old):
@@ -1260,15 +1234,23 @@ def manage_position_tp_and_trailing(f, curr_pos, trackers, timestamp_full, execu
         return True, "保护核验安全退出"
     t["cloudProtection"] = {"verifiedAt": timestamp_full, "detail": protection_detail}
 
-    # 2. Volatility Time-Stop Exit (dead consolidation without expansion)
+    # 2. Time exit: signed price profit below the selected ATR allowance.
+    # This includes losses and small gains, not necessarily sideways/no volatility.
     hold_duration_sec = now_ts - t["entryTs"]
-    if hold_duration_sec > ex['time_stop_seconds'] and cur_profit_px < ex['time_stop_profit_atr'] * atr:
+    if exit_atr > 0 and hold_duration_sec > ex['time_stop_seconds'] and cur_profit_px < ex['time_stop_profit_atr'] * exit_atr:
+        exit_evidence = {'rule': 'time_exit', 'policy': dict(t['exitPolicyStatus']),
+                         'hold_seconds': hold_duration_sec, 'threshold_seconds': ex['time_stop_seconds'],
+                         'profit_price': cur_profit_px, 'profit_atr': cur_profit_px / exit_atr,
+                         'profit_threshold_atr': ex['time_stop_profit_atr'], 'atr': dict(t['exitVolatility'])}
+        time_reason = (f"预设 {t['exitPolicyStatus']['preset_id']}：持仓 {hold_duration_sec/3600:.2f}h > {ex['time_stop_seconds']/3600:g}h，"
+                       f"价格浮盈 {cur_profit_px/exit_atr:.3f} ATR < {ex['time_stop_profit_atr']:g} ATR，时间退出")
+        t['lastExitAttempt'] = exit_evidence
         closed, close_detail = close_position_confirmed(inst_id, "long" if is_long else "short", pos_sz, exit_reason='time_exit', position=curr_pos)
         if not closed:
-            executed_actions.append(f"[{name}] 时间止损平仓失败，仓位仍保留: {close_detail}")
+            executed_actions.append(f"[{name}] {time_reason}，平仓失败，仓位仍保留: {close_detail}")
             return False, "平仓失败"
         close_fee = (pos_sz * ct_val * cur_px) * TAKER_FEE_RATE
-        executed_actions.append(f"[{name}] ⌛ 超过 8 小时无波动横盘，时间止损平仓释放保证金")
+        executed_actions.append(f"[{name}] ⌛ {time_reason}，交易所确认平仓")
         record_trade({
             "is_trade": True,
             "time": timestamp_full,
@@ -1277,170 +1259,45 @@ def manage_position_tp_and_trailing(f, curr_pos, trackers, timestamp_full, execu
             "action": "平仓",
             "action_type": "时间止损",
             "direction": f"平{'多' if is_long else '空'}",
-            "side": f"{'多' if is_long else '空'}单无波动出场",
+            "side": f"{'多' if is_long else '空'}单时间退出",
             "size": pos_sz,
             "sz": pos_sz,
             "price": cur_px,
             "fee": close_fee,
             "pnl": curr_pos["upl"],
-            "remark": "持仓超 3.5 小时无突破，主动平仓释放配比"
+            "remark": time_reason,
+            "exit_evidence": exit_evidence
         })
         if notify_trade_close:
             notify_trade_close(inst=name, pnl=float(curr_pos.get("upl", 0.0) or 0.0), stage="时间止损平仓", exit_px=cur_px)
         if pos_key in trackers: del trackers[pos_key]
         return True, "时间止损"
 
-    # 3. Three-Tier Ratchet Profit-Locking & Momentum Take-Profit Engine
-    # Legacy ATR ratchet can further tighten the cost-aware floor; no guarantee.
-    # Tier 2: 50% Profit Lock-In at +1.8x ATR profit (Lock in at least +0.9x ATR solid profit)
-    # Tier 3: Kinetic Reversal Exit from Peak (Protect accumulated big wins)
-    
-    tier1_breakeven_trigger = ex['tier1_breakeven_atr'] * atr
-    tier2_lock_trigger = ex['tier2_lock_atr'] * atr
-    
-    if is_long:
-        # Dynamic Ratchet Stop Calculation
-        dynamic_floor_sl = t["trailingStopPx"]
-        if peak_profit_px >= tier2_lock_trigger:
-            dynamic_floor_sl = max(dynamic_floor_sl, entry_px + ex['tier2_floor_atr'] * atr)
-            t["stage_desc"] = f"锁定大波段利润 (保底止损 {dynamic_floor_sl})"
-        elif peak_profit_px >= tier1_breakeven_trigger:
-            dynamic_floor_sl = max(dynamic_floor_sl, entry_px + ex['tier1_floor_atr'] * atr)
-            t["stage_desc"] = f"已收紧保本保护 (保底止损 {dynamic_floor_sl})"
-        t["localTrailingStopPx"] = dynamic_floor_sl
-        t["trailingStopPx"] = dynamic_floor_sl  # local fail-safe; cloud confirmation is separate
-
-        # A. Hit Ratchet Floor Stop (Locked Profit Trigger)
-        if cur_px <= dynamic_floor_sl and peak_profit_px >= tier1_breakeven_trigger:
-            closed, close_detail = close_position_confirmed(inst_id, "long", pos_sz, exit_reason='profit_lock', position=curr_pos)
-            if not closed:
-                executed_actions.append(f"[{name}] 锁利平多失败，仓位仍保留: {close_detail}")
-                return False, "平仓失败"
-            close_fee = (pos_sz * ct_val * cur_px) * TAKER_FEE_RATE
-            pnl_val = curr_pos["upl"]
-            executed_actions.append(f"[{name}] 🛡️ 触发阶梯动态锁利平仓 (净盈亏: {pnl_val:+.2f}U)")
-            record_trade({
-                "is_trade": True,
-                "time": timestamp_full,
-                "inst": name,
-                "name": name,
-                "action": "平仓",
-                "action_type": "阶梯锁利",
-                "direction": "平多",
-                "side": "多单阶梯锁利平仓",
-                "size": pos_sz,
-                "sz": pos_sz,
-                "price": cur_px,
-                "fee": close_fee,
-                "pnl": pnl_val,
-                "remark": f"最高 {t['highWaterMark']} 触发阶梯利润锁定线 {dynamic_floor_sl}"
-            })
-            if notify_trade_close:
-                notify_trade_close(inst=name, pnl=pnl_val, stage="阶梯锁利平仓", exit_px=cur_px)
-            if pos_key in trackers: del trackers[pos_key]
-            return True, "已阶梯锁利"
-
-        # B. Kinetic Momentum Pullback Exit from Peak (Pullback >= kinetic_pullback_atr when profit >= kinetic_peak_atr)
-        if peak_profit_px >= ex['kinetic_peak_atr'] * atr and cur_px <= (t["highWaterMark"] - ex['kinetic_pullback_atr'] * atr):
-            closed, close_detail = close_position_confirmed(inst_id, "long", pos_sz, exit_reason='trailing_exit', position=curr_pos)
-            if not closed:
-                executed_actions.append(f"[{name}] 动能见顶移动止盈失败，仓位仍保留: {close_detail}")
-                return False, "平仓失败"
-            close_fee = (pos_sz * ct_val * cur_px) * TAKER_FEE_RATE
-            pnl_val = curr_pos["upl"]
-            executed_actions.append(f"[{name}] 🎯 触发高点回撤动能止盈 (净盈亏: {pnl_val:+.2f}U)")
-            record_trade({
-                "is_trade": True,
-                "time": timestamp_full,
-                "inst": name,
-                "name": name,
-                "action": "平仓",
-                "action_type": "移动止盈",
-                "direction": "平多",
-                "side": "多单高点回撤止盈",
-                "size": pos_sz,
-                "sz": pos_sz,
-                "price": cur_px,
-                "fee": close_fee,
-                "pnl": pnl_val,
-                "remark": f"最高 {t['highWaterMark']} 动能回撤触及移动止盈线"
-            })
-            if notify_trade_close:
-                notify_trade_close(inst=name, pnl=pnl_val, stage="移动止盈", exit_px=cur_px)
-            if pos_key in trackers: del trackers[pos_key]
-            return True, "已移动止盈"
-
-    else:
-        # Dynamic Ratchet Stop Calculation for Short
-        dynamic_floor_sl = t["trailingStopPx"]
-        if peak_profit_px >= tier2_lock_trigger:
-            dynamic_floor_sl = min(dynamic_floor_sl, entry_px - ex['tier2_floor_atr'] * atr)
-            t["stage_desc"] = f"锁定大波段利润 (保底止损 {dynamic_floor_sl})"
-        elif peak_profit_px >= tier1_breakeven_trigger:
-            dynamic_floor_sl = min(dynamic_floor_sl, entry_px - ex['tier1_floor_atr'] * atr)
-            t["stage_desc"] = f"已推保本无风险 (保底止损 {dynamic_floor_sl})"
-        t["localTrailingStopPx"] = dynamic_floor_sl
-        t["trailingStopPx"] = dynamic_floor_sl  # local fail-safe; cloud confirmation is separate
-
-        # A. Hit Ratchet Floor Stop (Locked Profit Trigger)
-        if cur_px >= dynamic_floor_sl and peak_profit_px >= tier1_breakeven_trigger:
-            closed, close_detail = close_position_confirmed(inst_id, "short", pos_sz, exit_reason='profit_lock', position=curr_pos)
-            if not closed:
-                executed_actions.append(f"[{name}] 锁利平空失败，仓位仍保留: {close_detail}")
-                return False, "平仓失败"
-            close_fee = (pos_sz * ct_val * cur_px) * TAKER_FEE_RATE
-            pnl_val = curr_pos["upl"]
-            executed_actions.append(f"[{name}] 🛡️ 触发阶梯动态锁利平仓 (净盈亏: {pnl_val:+.2f}U)")
-            record_trade({
-                "is_trade": True,
-                "time": timestamp_full,
-                "inst": name,
-                "name": name,
-                "action": "平仓",
-                "action_type": "阶梯锁利",
-                "direction": "平空",
-                "side": "空单阶梯锁利平仓",
-                "size": pos_sz,
-                "sz": pos_sz,
-                "price": cur_px,
-                "fee": close_fee,
-                "pnl": pnl_val,
-                "remark": f"最低 {t['lowWaterMark']} 触发阶梯利润锁定线 {dynamic_floor_sl}"
-            })
-            if notify_trade_close:
-                notify_trade_close(inst=name, pnl=pnl_val, stage="阶梯锁利平仓", exit_px=cur_px)
-            if pos_key in trackers: del trackers[pos_key]
-            return True, "已阶梯锁利"
-
-        # B. Kinetic Momentum Pullback Exit from Peak (Pullback >= kinetic_pullback_atr when profit >= kinetic_peak_atr)
-        if peak_profit_px >= ex['kinetic_peak_atr'] * atr and cur_px >= (t["lowWaterMark"] + ex['kinetic_pullback_atr'] * atr):
-            closed, close_detail = close_position_confirmed(inst_id, "short", pos_sz, exit_reason='trailing_exit', position=curr_pos)
-            if not closed:
-                executed_actions.append(f"[{name}] 动能见底移动止盈失败，仓位仍保留: {close_detail}")
-                return False, "平仓失败"
-            close_fee = (pos_sz * ct_val * cur_px) * TAKER_FEE_RATE
-            pnl_val = curr_pos["upl"]
-            executed_actions.append(f"[{name}] 🎯 触发低点反弹动能止盈 (净盈亏: {pnl_val:+.2f}U)")
-            record_trade({
-                "is_trade": True,
-                "time": timestamp_full,
-                "inst": name,
-                "name": name,
-                "action": "平仓",
-                "action_type": "移动止盈",
-                "direction": "平空",
-                "side": "空单低点反弹止盈",
-                "size": pos_sz,
-                "sz": pos_sz,
-                "price": cur_px,
-                "fee": close_fee,
-                "pnl": pnl_val,
-                "remark": f"最低 {t['lowWaterMark']} 动能反弹触及移动止盈线"
-            })
-            if notify_trade_close:
-                notify_trade_close(inst=name, pnl=pnl_val, stage="移动止盈", exit_px=cur_px)
-            if pos_key in trackers: del trackers[pos_key]
-            return True, "已移动止盈"
+    # 3. Kinetic exit uses the same preset, ATR and cost activation as the
+    # unified floor above. Hard/previously tightened stops always take priority.
+    if protection.get('kinetic_exit'):
+        exit_evidence = {**t['exitEvaluation'], 'rule': 'trailing_exit'}
+        t['lastExitAttempt'] = exit_evidence
+        closed, close_detail = close_position_confirmed(inst_id, "long" if is_long else "short", pos_sz, exit_reason='trailing_exit', position=curr_pos)
+        if not closed:
+            executed_actions.append(f"[{name}] 动能回撤止盈失败，仓位仍保留: {close_detail}")
+            return False, "平仓失败"
+        close_fee = (pos_sz * ct_val * cur_px) * TAKER_FEE_RATE
+        pnl_val = curr_pos["upl"]
+        reason = (f"预设 {t['exitPolicyStatus']['preset_id']}：峰值浮盈 {peak_profit_px/exit_atr:.3f} ATR，"
+                  f"回撤 {protection['pullback']/exit_atr:.3f} ATR >= {ex['kinetic_pullback_atr']:g} ATR")
+        executed_actions.append(f"[{name}] 🎯 {reason}，动能止盈已确认 (平仓前浮盈参考 {pnl_val:+.2f}U，结算以账本为准)")
+        record_trade({
+            "is_trade": True, "time": timestamp_full, "inst": name, "name": name,
+            "action": "平仓", "action_type": "移动止盈",
+            "direction": f"平{'多' if is_long else '空'}", "side": f"{'多' if is_long else '空'}单动能回撤止盈",
+            "size": pos_sz, "sz": pos_sz, "price": cur_px, "fee": close_fee, "pnl": pnl_val,
+            "remark": reason, "exit_evidence": exit_evidence,
+        })
+        if notify_trade_close:
+            notify_trade_close(inst=name, pnl=pnl_val, stage="移动止盈", exit_px=cur_px)
+        trackers.pop(pos_key, None)
+        return True, "已移动止盈"
 
     return False, "持仓监控中"
 
@@ -1489,7 +1346,17 @@ def execute_ai_position_management(real_pos_dict, trackers, timestamp_full, exec
             if positive(current_px) is None or positive(avg_px) is None:
                 executed_actions.append(f"[{name}] UNKNOWN: current or entry price unavailable; amendment not sent")
                 continue
-            atr_val = max(float(position.get("atr_1h", 0) or 0), float(position.get("atr", 0) or 0), current_px * 0.012)
+            tracker = trackers.get(f"{inst_id}_{pos_side}")
+            if tracker is None:
+                executed_actions.append(f"[{name}] 缺少持仓保护状态，未发送止盈改单，原云端保护保持不变")
+                continue
+            ex = _exit_preset(tracker, executed_actions, name)
+            volatility = tracker.get('exitVolatility') or {}
+            observed_at = positive(volatility.get('observed_at')) or 0
+            atr_val = positive(volatility.get('value')) or 0
+            if not atr_val or not 0 <= time.time() - observed_at <= 300:
+                executed_actions.append(f"[{name}] 退出ATR缺失或过期，未发送止盈改单，原云端保护保持不变")
+                continue
             
             from scripts.profit_protection import allow_ai_tightening
             from scripts.risk_policy import load_policy
@@ -1498,10 +1365,10 @@ def execute_ai_position_management(real_pos_dict, trackers, timestamp_full, exec
                 executed_actions.append(f"[{name}] Cost policy unavailable; retain existing cloud stop")
                 continue
             tightens_risk=allow_ai_tightening(pos_side,avg_px,current_px,new_sl,atr_val,
-                taker_fee=policy.taker_fee,slippage=policy.slippage)
+                taker_fee=policy.taker_fee,slippage=policy.slippage,thresholds=ex)
 
             if not tightens_risk:
-                executed_actions.append(f"[{name}] 浮盈空间不足或与现价缓冲过近({current_px} vs 拟调SL {new_sl})，未满足成本保本或最小行情缓冲")
+                executed_actions.append(f"[{name}] 浮盈空间不足或与现价缓冲过近({current_px} vs 拟调SL {new_sl})，未满足预设浮盈启动、成本保本或最小行情缓冲")
                 continue
             try:
                 algo_orders = algo_reader.orders_for_instrument(

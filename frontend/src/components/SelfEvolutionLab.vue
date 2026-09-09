@@ -1,5 +1,4 @@
 <script setup lang="ts">
-import AppCard from './ui/AppCard.vue'
 import PublishedMemoryPanel from './PublishedMemoryPanel.vue'
 import EvolutionReviewPanel from './EvolutionReviewPanel.vue'
 import { useDashboardStore } from '../stores/dashboard'
@@ -7,15 +6,23 @@ import { Sparkles } from 'lucide-vue-next'
 const store = useDashboardStore()
 </script>
 <template>
-  <div class="space-y-3.5 min-w-0">
-    <AppCard class="p-4 sm:p-5 flex flex-wrap gap-3 items-center justify-between">
-      <div class="min-w-0">
-        <h2 class="flex items-center gap-2 text-sm font-semibold" style="color:var(--text-main)"><Sparkles class="size-5 shrink-0" />AI 策略自进化与认知提炼中心</h2>
-        <p class="text-xs mt-2 leading-relaxed" style="color:var(--text-muted)">复盘、候选审核与运行记忆分别记录；显示真实任务结果，不自动改动交易规则。</p>
-      </div>
-      <span class="flex flex-wrap min-w-0 max-w-full items-center gap-2 text-xs break-all" style="color:var(--text-muted)">自进化主脑：{{ store.llmRuntime.model }}</span>
-    </AppCard>
-    <EvolutionReviewPanel :review="store.data?.evolution_review" />
-    <PublishedMemoryPanel :publication="store.data?.memory_publication" />
+  <div class="evolution-page min-w-0" data-evolution-page>
+    <header class="evolution-toolbar">
+      <span class="evolution-toolbar__scope"><Sparkles class="size-4 shrink-0" aria-hidden="true" />复盘结果与运行记忆</span>
+      <span class="evolution-toolbar__model">复盘模型 <strong>{{ store.llmRuntime.model }}</strong></span>
+    </header>
+    <div class="evolution-layout">
+      <EvolutionReviewPanel :review="store.data?.evolution_review" />
+      <PublishedMemoryPanel :publication="store.data?.memory_publication" />
+    </div>
   </div>
 </template>
+<style scoped>
+.evolution-page { container-type: inline-size; }
+.evolution-toolbar { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: .5rem 1rem; margin-bottom: 1rem; color: var(--text-muted); font-size: .8125rem; }
+.evolution-toolbar__scope { display: flex; align-items: center; gap: .5rem; }
+.evolution-toolbar__model { display: flex; flex-wrap: wrap; gap: .375rem; min-width: 0; overflow-wrap: anywhere; font-size: .75rem; }
+.evolution-toolbar__model strong { color: var(--text-main); font-weight: 500; }
+.evolution-layout { display: grid; grid-template-columns: minmax(0,1fr); gap: 1rem; align-items: start; }
+@container (min-width: 1040px) { .evolution-layout { grid-template-columns: minmax(0,1.6fr) minmax(0,1fr); } }
+</style>

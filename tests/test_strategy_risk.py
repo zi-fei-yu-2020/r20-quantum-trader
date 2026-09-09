@@ -61,7 +61,8 @@ class StrategyRiskTests(unittest.TestCase):
             (112, {**old, 'slTriggerPx': '112'}, 1, 112),
             (112, RuntimeError('unknown'), 1, 110),
         ]:
-            tracker = {'TEST-USDT-SWAP_long': {'trailingStopPx': 110}}
+            tracker = {'TEST-USDT-SWAP_long': {'trailingStopPx': 110,
+                'exitVolatility': {'value': 1., 'source': 'atr_15m', 'observed_at': int(time.time())}}}
             payload = {'timestamp': int(time.time()), 'instructions': [
                 {'instId': 'TEST-USDT-SWAP', 'action': 'UPDATE_SL', 'suggested_sl_price': proposed}]}
             with (

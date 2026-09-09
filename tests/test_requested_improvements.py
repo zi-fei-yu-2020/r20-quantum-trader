@@ -13,24 +13,26 @@ from test_entry_candidates import package,selection
 from scripts import trading_prompt
 
 class ProfitProtectionTests(unittest.TestCase):
-    def test_cost_adjusted_floor_activates_before_old_large_atr_gate(self):
-        # Old 1.2*max(ATR,price*1.2%) rejected +1% price profit.
-        plan=profit_protection.floor_plan('long',100,101,101,99,2)
+    def test_cost_adjusted_floor_and_ai_amendment_share_preset_activation(self):
+        early=profit_protection.floor_plan('long',100,101,101,99,1)
+        self.assertFalse(early['active'])
+        plan=profit_protection.floor_plan('long',100,103,103,98.5,1)
         self.assertTrue(plan['active']);self.assertGreater(plan['stop'],100.3)
-        self.assertLess(plan['stop'],101)
-        self.assertTrue(profit_protection.allow_ai_tightening('long',100,101,100.5,2))
+        self.assertLess(plan['stop'],103)
+        self.assertFalse(profit_protection.allow_ai_tightening('long',100,101,100.5,1))
+        self.assertTrue(profit_protection.allow_ai_tightening('long',100,103,101.5,1))
     def test_symmetry_and_peak_giveback(self):
-        long=profit_protection.floor_plan('long',100,103,104,99,2)
-        short=profit_protection.floor_plan('short',100,97,96,101,2)
+        long=profit_protection.floor_plan('long',100,103,104,99,1)
+        short=profit_protection.floor_plan('short',100,97,96,101,1)
         self.assertAlmostEqual(100-long['stop'],short['stop']-100)
-        drop=profit_protection.floor_plan('long',100,100.6,104,99,2)
+        drop=profit_protection.floor_plan('long',100,100.6,104,99,1)
         self.assertTrue(drop['crossed'])
     def test_real_position_manager_retains_profit_floor_and_exits_on_giveback(self):
         import ai_factor_trader as trader
-        factor={'market_data_valid':True,'instId':'TEST-USDT-SWAP','name':'TEST','price':101.,'type':'crypto','atr':2.,'atr_15m':2.,'precision':2,'ctVal':1}
-        position={'pos':1.,'side':'long','avgPx':100.,'upl':1.}
+        factor={'market_data_valid':True,'instId':'TEST-USDT-SWAP','name':'TEST','price':103.,'type':'crypto','atr':2.,'atr_15m':1.,'precision':2,'ctVal':1}
+        position={'pos':1.,'side':'long','avgPx':100.,'upl':3.}
         key='TEST-USDT-SWAP_long'
-        trackers={key:{'entryTs':time.time(),'trailingStopPx':99.,'exchangeStopPx':99.,'takeProfitPx':110.,'highWaterMark':101.,'lowWaterMark':100.}}
+        trackers={key:{'entryTs':time.time(),'trailingStopPx':99.,'exchangeStopPx':99.,'takeProfitPx':110.,'highWaterMark':103.,'lowWaterMark':100.}}
         with patch.object(trader,'ensure_cloud_position_protection',return_value=(True,'verified')),patch.object(trader,'record_trade'),patch.object(trader,'add_stop_cooldown'),patch.object(trader,'notify_trade_close'),patch.object(trader,'close_position_confirmed',return_value=(True,'closed')) as close:
             closed,_=trader.manage_position_tp_and_trailing(factor,position,trackers,'test',[])
             self.assertFalse(closed);self.assertGreater(trackers[key]['trailingStopPx'],100.3)

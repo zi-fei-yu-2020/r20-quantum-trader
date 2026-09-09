@@ -48,15 +48,62 @@ new Function('require','exports',code)(name=>{
 },exports)
 
 test('actual audit component separates validation reason from program trigger checks',async()=>{
- const html=await renderToString(Vue.createSSRApp(exports.default,{cycle:{items:[item],counts:{program_plans:0}},audit:{status:'ok',items:[]}}))
+ const html=await renderToString(Vue.createSSRApp(exports.default,{cycle:{items:[item],counts:{program_plans:0,incomplete:1}},audit:{status:'ok',items:[]}}))
  assert.ok(html.includes('审计未通过：声称盈亏比不足必须给出可计算方案'))
- assert.ok(html.includes('本轮未生成程序草案'))
- assert.ok(html.includes('回踩回收、区间突破'))
+ assert.ok(html.includes('有决策需要补全'))
+ assert.ok(html.includes('回踩回收'))
+ assert.ok(html.includes('区间突破'))
  assert.ok(html.includes('净 R:R 0.29'))
- assert.ok(html.includes('逐项检查（3 项）'))
+ assert.ok(html.includes('3 项 · 保留全部形态'))
+ assert.equal((html.match(/data-wait-audit-card=/g)||[]).length,1)
  assert.ok(!html.includes('最终 WAIT'))
  assert.ok(html.includes('data-plan-check-details'))
 })
+test('cycle and audit records merge into one instrument without changing source data',()=>{
+ const cycle={items:[item]},state={status:'ok',items:[{instId:item.instId,status:'audited_wait',reason:'old result'},{instId:'ETH-USDT-SWAP',status:'audited_wait'}]}
+ const before=structuredClone({cycle,state}),rows=display.mergedAuditRows(cycle,state)
+ assert.equal(rows.length,2);assert.equal(rows[0].status,'incomplete');assert.equal(rows[1].historical,true)
+ assert.equal(rows[0].record.reason,'old result')
+ assert.deepEqual({cycle,state},before)
+})
+test('direction preview prioritizes blockers while retaining raw checks and missing ratios',()=>{
+ const row=display.mergedAuditRows({items:[{...item,status:'audited_wait',entry_plans:{plans:[],checks:[...checks,{side:'long',setup:'pullback_reclaim',reason:'net_rr_below_policy',net_rr:0}]}}]})[0]
+ assert.deepEqual(display.directionSummary(row,'long'),{text:'净盈亏比不足（0.00）',extra:1})
+ assert.equal(row.item.entry_plans.checks.length,4)
+ assert.equal(display.directionSummary(row,'short').text,'净盈亏比不足（0.29）')
+ assert.equal(display.compactAuditStatus('unknown'),'待审计')
+})
+test('one visible summary replaces duplicate symbol grids and omits zero exceptions',async()=>{
+ const cycle={evaluated_count:5,counts:{entry_candidate:0,audited_wait:5,incomplete:0,execution_rejected:0},items:['BTC','ETH','SOL','DOGE','SUI'].map(name=>({...item,instId:name+'-USDT-SWAP',status:'audited_wait',reason:'waiting'}))}
+ const state={status:'ok',alert:true,no_entry_candidate_streak:14,items:cycle.items.map(row=>({...row}))}
+ const html=await renderToString(Vue.createSSRApp(exports.default,{cycle,audit:state}))
+ assert.equal((html.match(/data-wait-audit-card=/g)||[]).length,5)
+ assert.equal((html.match(/<strong>BTC<\/strong>/g)||[]).length,1)
+ assert.ok(html.includes('本轮暂无开仓候选'));assert.ok(html.includes('连续 14 轮无候选'))
+ assert.ok(!html.includes('<dt>待补全</dt>'));assert.ok(!html.includes('<dt>执行未通过</dt>'))
+ assert.ok(!html.includes('WAIT ·'));assert.ok(html.includes('data-audit-explanation'))
+})
+test('selected and rejected candidates remain honest and retain prices and reviews',async()=>{
+ const plan={id:'p1',action:'BUY_LONG',setup:'pullback_reclaim',entry_price:100,stop_loss_price:98,take_profit_price:110,net_rr:NaN}
+ const row={...item,status:'execution_rejected',reason:'Risk budget exhausted',candidate_id:'p1',entry_plans:{plans:[plan],checks:[]},candidate_reviews:[{candidate_id:'p1',reason:'explicit evidence'}]}
+ const html=await renderToString(Vue.createSSRApp(exports.default,{cycle:{items:[row]}}))
+ for(const value of ['Risk budget exhausted','模型已选择，但执行未通过','explicit evidence','<dd>100</dd>','<dd>98</dd>','<dd>110</dd>','<dd>—</dd>'])assert.ok(html.includes(value),value)
+ assert.ok(!html.includes('NaN'));assert.ok(!html.includes('已成交'))
+})
+test('audit outage and raw evidence are retained rather than summarized as a successful wait',async()=>{
+ const direction={reason:'full explanation',evidence:[{ref:'/price',value:100,interpretation:'source evidence'}],reconsider:{conditions:[{ref:'/price',op:'gt',value:101}],reason:'recheck once changed'}}
+ const state={status:'error',message:'audit unavailable',items:[{instId:'BTC-USDT-SWAP',status:'incomplete',error:'required evidence missing',audit:{long:direction,short:direction}}]}
+ const html=await renderToString(Vue.createSSRApp(exports.default,{audit:state,cycle:{executed_actions:['confirmed read-only fixture event'],environment_notices:['WLD demo unsupported']}}))
+ for(const value of ['本轮数据待核验','audit unavailable','required evidence missing','source evidence','recheck once changed','confirmed read-only fixture event','WLD demo unsupported'])assert.ok(html.includes(value),value)
+ assert.ok(!html.includes('本轮暂无开仓候选'))
+})
+test('no cycle counts means unknown not zero and program errors remain visible',async()=>{
+ const empty=await renderToString(Vue.createSSRApp(exports.default,{}))
+ assert.ok(empty.includes('等待本轮决策'));assert.ok(!empty.includes('<dd>0</dd>'))
+ const broken=await renderToString(Vue.createSSRApp(exports.default,{cycle:{items:[{...item,status:'audited_wait',entry_plans:{plans:[],checks:[],error:'entry_candle_gap_or_duplicate'}}]}}))
+ assert.ok(broken.includes('entry_candle_gap_or_duplicate'))
+})
+
 test('published memory disclosures have visible action styling and distinct content targets',()=>{
  const memory=readFileSync(new URL('../src/components/PublishedMemoryPanel.vue',import.meta.url),'utf8')
  assert.equal((memory.match(/class="action-disclosure text-xs min-w-0"/g)||[]).length,2)
