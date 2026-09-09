@@ -24,7 +24,8 @@ import urllib.request
 ROOT = Path(__file__).resolve().parents[1]
 OAUTH_ROOT = ROOT / 'data' / 'oauth-connections'
 AUTH_BINARY = Path.home() / '.okx' / 'bin' / ('okx-auth.exe' if os.name == 'nt' else 'okx-auth')
-NEWS_PATHS = {'/api/v5/orbit/news-search', '/api/v5/orbit/currency-sentiment-query'}
+NEWS_PATHS = {'/api/v5/orbit/news-search', '/api/v5/orbit/currency-sentiment-query',
+              '/api/v5/journal/smartmoney/overview'}
 READ_PATHS = {'/api/v5/account/config', '/api/v5/account/balance', '/api/v5/account/positions',
  '/api/v5/account/positions-history', '/api/v5/account/bills', '/api/v5/account/bills-archive',
  '/api/v5/account/leverage-info', '/api/v5/trade/orders-pending', '/api/v5/trade/orders-history',

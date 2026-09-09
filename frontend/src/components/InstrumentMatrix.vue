@@ -226,7 +226,7 @@ function getActionLabel(action?: string, status?: string) {
           <!-- Microstructure Flow -->
           <div
             class="flex flex-wrap gap-x-2 gap-y-1 items-center justify-between text-[10px] font-mono mb-2 px-0.5"
-            :title="item.smartMoneyDisplay.unavailable ? '未取得数据' : undefined"
+            :title="item.smartMoneyDisplay.unavailable ? '未取得数据：本轮资讯源未返回可用观测，横线不代表中性或零敞口' : '官方聪明钱聚合；净敞口为多头名义金额减空头名义金额，不是24小时资金净流入'"
             style="color: var(--text-muted)"
           >
             <span
@@ -236,7 +236,7 @@ function getActionLabel(action?: string, status?: string) {
               ></span
             >
             <span
-              >净流:
+              >净敞口:
               <strong class="num-tabular" style="color: var(--text-main)">{{
                 item.smartMoneyDisplay.flow
               }}</strong></span

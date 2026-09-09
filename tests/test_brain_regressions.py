@@ -183,7 +183,8 @@ class BrainRegressions(unittest.TestCase):
                 data = self.prompt_data()
                 self.assertFalse(any(k.startswith("/smart_money/") for k in data["facts"][INST]))
                 self.assertIn("加权做多占比=UNKNOWN", data["runtime_data"]["market_matrix"])
-                self.assertIn("24H净流入=UNKNOWN", data["runtime_data"]["market_matrix"])
+                self.assertIn("当前多空净名义敞口=UNKNOWN", data["runtime_data"]["market_matrix"])
+                self.assertNotIn("24H净流入=", data["runtime_data"]["market_matrix"])
         self.llm.assert_not_called()
 
     def test_smart_money_reference_is_checked_again_in_actual_cycle(self):

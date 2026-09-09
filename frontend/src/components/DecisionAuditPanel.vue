@@ -1,12 +1,17 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import AppCard from './ui/AppCard.vue'
+import AppBadge from './ui/AppBadge.vue'
+import { checkLabel, setupLabel, sideLabel, decisionLabel, incompleteReason, groupedPlanChecks } from '../utils/entryPlanDisplay'
 import { auditLabel, conditionText, reviewLabel } from '../utils/waitAudit'
 import type { WaitAuditState, DecisionCycle } from '../utils/waitAudit'
 const props = defineProps<{ audit?: WaitAuditState; cycle?: DecisionCycle }>()
 const rows = computed(() => props.audit?.items || [])
-const planRows = computed(() => (props.cycle?.items || []).filter(item => item.entry_plans))
-const checkLabel = (reason: string) => ({ existing_macro_direction_veto: '现有宏观方向限制', quote_moved_beyond_closed_trigger: '报价已偏离收盘触发位置', no_observed_target: '没有可观察的历史目标位', closed_candle_trigger_not_met: '收盘K线触发条件未满足', net_rr_below_policy: '成本后盈亏比不足', invalid_geometry: '价格结构无效', market_data_invalid: '行情不可用', environment_not_verified_for_entry: '环境尚未核验可开仓', entry_candle_provenance_missing: '缺少同一时点的收盘K线证据' } as Record<string,string>)[reason] || reason
+const planRows = computed(() => (props.cycle?.items || []).filter(item => item.entry_plans).map(item => ({
+  ...item, checks: groupedPlanChecks(item.entry_plans?.checks),
+  diagnostic: incompleteReason(item, rows.value.find(row => row.instId === item.instId)?.error),
+})))
+const programPlanCount = computed(() => planRows.value.reduce((sum, row) => sum + (row.entry_plans?.plans?.length || 0), 0))
 const timestamp = computed(() => props.audit?.updated_at
   ? new Date(props.audit.updated_at * 1000).toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai', hour12: false })
   : '尚无审计记录')
@@ -31,17 +36,27 @@ const timestamp = computed(() => props.audit?.updated_at
       {{ cycle?.unavailable_reason || '尚未取得结构化审计，不能将旧版 WAIT 视为已通过审查。' }}
     </p>
     <details v-if="planRows.length" class="action-disclosure min-w-0 text-xs" data-entry-plan-review>
-      <summary class="cursor-pointer min-h-11 flex items-center" style="color:var(--text-main)">程序草案与模型选择（{{ cycle?.counts?.program_plans || 0 }} 个草案，不等于订单）</summary>
+      <summary class="cursor-pointer min-h-11 flex items-center" style="color:var(--text-main)"><span class="min-w-0 flex-1"><span class="block">开仓条件与模型审计</span><span class="block mt-1 font-normal leading-relaxed" style="color:var(--text-muted)">{{ programPlanCount ? `本轮 ${programPlanCount} 个程序草案` : '本轮未生成程序草案，展开查看原因' }} · 草案不等于订单</span></span></summary>
       <div class="grid grid-cols-1 xl:grid-cols-2 items-start gap-2 min-w-0 mt-2">
         <section v-for="item in planRows" :key="item.instId" class="min-w-0 border rounded-lg p-3 space-y-2" style="border-color:var(--border-subtle);overflow-wrap:anywhere">
-          <p class="font-semibold">{{ item.instId.split('-')[0] }} · 最终 {{ item.action }} · {{ auditLabel(item.status) }}</p>
+          <header class="flex flex-wrap items-center justify-between gap-2"><strong class="text-sm" style="color:var(--text-main)">{{ item.instId.split('-')[0] }}</strong><AppBadge :tone="item.status === 'incomplete' || item.status === 'execution_rejected' ? 'warning' : 'neutral'">{{ decisionLabel(item) }}</AppBadge></header>
+          <p v-if="item.diagnostic" class="rounded-md border p-2 leading-relaxed" data-decision-diagnostic style="border-color:var(--color-warn-border);background:var(--color-warn-bg);color:var(--text-main)">审计未通过：{{ item.diagnostic }}</p>
           <p v-if="item.entry_plans?.error">候选生成未就绪：{{ checkLabel(item.entry_plans.error) }}</p>
           <div v-for="plan in item.entry_plans?.plans || []" :key="plan.id" class="space-y-1">
-            <p>{{ plan.action === 'BUY_LONG' ? '做多' : '做空' }} · {{ plan.setup === 'pullback_reclaim' ? '收盘回收结构' : '收盘区间突破' }} · {{ item.candidate_id === plan.id ? '模型已选择，仍需执行核验' : '未选择' }}</p>
+            <p>{{ plan.action === 'BUY_LONG' ? '做多' : '做空' }} · {{ setupLabel(plan.setup) }} · {{ item.candidate_id === plan.id ? (item.status === 'execution_rejected' ? '模型已选择，但执行未通过' : '模型已选择，仍需执行核验') : '未选择' }}</p>
             <p>入场 {{ plan.entry_price }} · 止损 {{ plan.stop_loss_price }} · 目标 {{ plan.take_profit_price }} · 成本后 R:R {{ Number.isFinite(plan.net_rr) ? plan.net_rr.toFixed(2) : '--' }}</p>
             <p v-for="review in (item.candidate_reviews || []).filter(r => r.candidate_id === plan.id)" :key="review.candidate_id" style="color:var(--text-muted)">拒绝说明：{{ review.reason }}</p>
           </div>
-          <ul v-if="!item.entry_plans?.plans?.length" class="space-y-1" style="color:var(--text-muted)"><li v-for="(check,index) in item.entry_plans?.checks || []" :key="index">{{ check.side === 'long' ? '多' : '空' }}：{{ checkLabel(check.reason) }}<span v-if="Number.isFinite(check.net_rr)">（R:R {{ check.net_rr!.toFixed(2) }}）</span></li></ul>
+          <div v-if="item.checks.length" class="space-y-2" data-plan-check-summary>
+            <div v-for="group in item.checks" :key="group.key" class="flex items-start gap-2 leading-relaxed">
+              <span class="shrink-0 rounded px-1.5 py-0.5 text-[10px] font-medium" style="background:var(--bg-card-subtle);color:var(--text-muted)">{{ sideLabel(group.side) }}</span>
+              <div class="min-w-0"><p style="color:var(--text-main)">{{ checkLabel(group.reason) }}<span v-if="group.ratios.length">（净 R:R {{ group.ratios.map(value => value.toFixed(2)).join(' / ') }}）</span></p><p class="text-[11px]" style="color:var(--text-muted)">{{ group.setups.map(setupLabel).join('、') }}</p></div>
+            </div>
+          </div>
+          <details v-if="item.entry_plans?.checks?.length" class="action-disclosure min-w-0 text-xs" data-plan-check-details>
+            <summary>逐项检查（{{ item.entry_plans.checks.length }} 项）</summary>
+            <ul class="mt-2 space-y-2 leading-relaxed" style="color:var(--text-muted)"><li v-for="(check,index) in item.entry_plans.checks" :key="index"><span class="font-medium">{{ sideLabel(check.side) }} · {{ setupLabel(check.setup) }}</span>：{{ checkLabel(check.reason) }}<span v-if="Number.isFinite(check.net_rr)">（净 R:R {{ check.net_rr!.toFixed(2) }}）</span></li></ul>
+          </details>
         </section>
       </div>
     </details>

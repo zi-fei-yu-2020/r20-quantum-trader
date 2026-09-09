@@ -336,12 +336,48 @@ def account_scope(selected=None):
     return _digest((selected.mode, selected.api_key, selected.secret_key, selected.passphrase))
 
 
+def _smart_money_news(ccys, connections, transport):
+    """Use the explicitly bound information connection, never the trading key.
+
+    Cache identity includes credential rotation. A failed/unbound news source
+    does not fall back to DEMO, a different account or a global OAuth profile.
+    """
+    def signature(connection):
+        return _digest((connection['id'], connection.get('generation', 0),
+                        connection.get('site'), connection.get('auth_type'),
+                        connection.get('credentials'), connection.get('capabilities', {}).get('live', {}).get('account_uid')))
+    connection = connections.news_connection()
+    identity = signature(connection)
+    deadline = _deadline(12)
+    def load():
+        with file_lock('authenticated-smart-money-cli', deadline):
+            remaining = deadline - time.monotonic()
+            if remaining <= 0: raise MarketDataError('Smart Money read deadline exceeded')
+            rows = transport.request(connection, 'news', 'live', 'GET',
+                '/api/v5/journal/smartmoney/overview', {'instCcyList': ','.join(ccys)},
+                timeout=min(8.0, remaining))
+            if not isinstance(rows, list) or any(not isinstance(row, dict) or not isinstance(row.get('ccy'), str) for row in rows):
+                raise MarketDataError('Invalid Smart Money response')
+            rows = [row for row in rows if row['ccy'] in ccys]
+            if not rows: raise MarketDataError('Smart Money information source returned no observations')
+            if len({row['ccy'] for row in rows}) != len(rows): raise MarketDataError('Duplicate Smart Money observations')
+            return rows
+    rows = cached_value(('smart-money-news-v1', identity, ccys), 30.0, load, deadline)
+    if signature(connections.news_connection()) != identity:
+        raise MarketDataError('Information connection changed during Smart Money read')
+    return rows
+
+
 def smart_money_overview(ccys):
-    """Authenticated READ kept separate from the credential-free public channel."""
+    """Authenticated information READ; managed accounts use the news binding."""
     try:
         ccys = sorted(set(ccys))
         if not ccys or any(not re.fullmatch(r"[A-Z0-9]{1,20}", c) for c in ccys):
             raise ValueError("Invalid Smart Money universe")
+        from r20_backend import account_connections, connection_transport
+        if account_connections.load().get("managed"):
+            return _smart_money_news(ccys, account_connections, connection_transport)
+        # Legacy unmanaged installations retain their explicit CLI environment.
         selected = _selected()
         scope = account_scope(selected)
         deadline = _deadline(12)

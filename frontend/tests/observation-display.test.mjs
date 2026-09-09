@@ -95,7 +95,7 @@ async function renderCard(item, rawMoney, supported = true) {
 test('actual matrix uses same-instrument raw validity, not merged factor-library defaults', async () => {
   const html = await renderCard({ smart_money: { weighted_long_pct: 50, net_flow_usdt: '0 U' } }, { valid: false })
   assert.match(html, /聪明钱:/)
-  assert.match(html, /净流:/)
+  assert.match(html, /净敞口:/)
   assert.match(html, /未取得数据/)
   assert.doesNotMatch(html, /50%多|99%多|0 U|0%|NaN|\+%|data-icon="Trending(?:Up|Down)"/)
   assert.match(html, /置信:/)

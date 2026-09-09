@@ -34,7 +34,7 @@ export interface ProgramEntryPlan {
   net_rr: number
 }
 export interface DecisionCycle {
-  items?: Array<{ instId: string; action: string; status: string; candidate_id?: string | null;
+  items?: Array<{ instId: string; action: string; status: string; reason?: string; candidate_id?: string | null;
     entry_plans?: { plans: ProgramEntryPlan[]; checks: Array<{ reason: string; side: string; setup: string; net_rr?: number }>; error?: string };
     candidate_reviews?: Array<{ candidate_id: string; reason: string }> }>
   executed_actions?: string[]
