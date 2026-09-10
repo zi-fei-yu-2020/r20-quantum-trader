@@ -92,7 +92,7 @@ class ProgramPlanTests(unittest.TestCase):
             self.assertEqual(plan['version'],'closed-candle-plans-v3')
             # Stop basis is setup-aware: pullback_reclaim anchors to the retest structure
             # (no 1.5xATR floor), closed_range_breakout keeps the 1.5xATR volatility floor.
-            self.assertIn(plan['stop_basis'],('retest_structure_3bar_extreme_plus_0.1_atr','max_structural_3bar_extreme_and_1.5x_atr'))
+            self.assertIn(plan['stop_basis'],('retest_structure_prev_extreme_plus_0.1_atr','max_structural_3bar_extreme_and_1.5x_atr'))
             if side=='short':
                 for i,r in enumerate(p['entry_candles']['1H']['rows']):r.update(open=100,close=100.05-i*.01,low=99.8)
                 result=plans.catalog(p)

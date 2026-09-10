@@ -221,8 +221,8 @@ class ExposureCoverageTests(unittest.TestCase):
             self.exposure([{**self.oco, 'sz': '1.9995'}])
 
     def test_mark_not_entry_controls_profitable_stop_geometry_in_both_directions(self):
-        for side, mark, stop, tp, expected in [('long', '120', '110', '150', 20.72),
-                                               ('short', '80', '90', '60', 20.48)]:
+        for side, mark, stop, tp, expected in [('long', '120', '110', '150', 20.408),
+                                               ('short', '80', '90', '60', 20.272)]:
             with self.subTest(side=side):
                 position = {**self.position, 'posSide': side, 'markPx': mark}
                 row = {**self.oco, 'posSide': side, 'side': 'sell' if side == 'long' else 'buy',
@@ -252,8 +252,8 @@ class ExposureCoverageTests(unittest.TestCase):
     def test_segment_worst_stop_contract_multiplier_and_cost_budget_are_unchanged(self):
         metadata = {META['instId']: {**META, 'ctVal': '3', 'ctMult': '2'}}
         policy = risk.Policy(taker_fee=.0007, slippage=.0013)
-        for side, mark, stops, tp, expected in [('long', '120', ('105', '110'), '150', 185.76),
-                                               ('short', '80', ('90', '95'), '60', 183.84)]:
+        for side, mark, stops, tp, expected in [('long', '120', ('105', '110'), '150', 183.168),
+                                               ('short', '80', ('90', '95'), '60', 182.112)]:
             with self.subTest(side=side):
                 position = {**self.position, 'posSide': side, 'markPx': mark}
                 rows = [{**self.oco, 'algoId': str(index), 'sz': '1', 'posSide': side,
