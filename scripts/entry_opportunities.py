@@ -184,7 +184,10 @@ def public_status(scope):
     import sqlite3
     from scripts.strategy_evidence import DB_PATH
     try:
+        if not DB_PATH.exists():return {'mode':'shadow','status':'pending','items':[]}
         with sqlite3.connect(DB_PATH.resolve().as_uri()+'?mode=ro',uri=True,timeout=.2) as db:
+            if not db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='opportunity_shadow'").fetchone():
+                return {'mode':'shadow','status':'pending','items':[]}
             row=db.execute('SELECT payload FROM opportunity_shadow WHERE scope=?',(scope,)).fetchone()
         if not row:return {'mode':'shadow','status':'pending','items':[]}
         result=json.loads(row[0]); result.pop('namespace',None);result.pop('scope',None)

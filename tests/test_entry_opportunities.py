@@ -6,6 +6,21 @@ from test_entry_candidates import package,selection
 from scripts.trading_prompt import candidate,facts_for
 
 class OpportunityTests(unittest.TestCase):
+    def test_first_cycle_not_collected_is_pending_without_read_side_effects(self):
+        import sqlite3
+        with tempfile.TemporaryDirectory() as tmp, patch.object(ev,'DB_PATH',Path(tmp)/'evidence.db'):
+            self.assertEqual(o.public_status('demo:a')['status'],'pending')
+            self.assertFalse(ev.DB_PATH.exists())
+            with sqlite3.connect(ev.DB_PATH) as db:db.execute('CREATE TABLE other(x)')
+            before=ev.DB_PATH.read_bytes()
+            self.assertEqual(o.public_status('demo:a')['status'],'pending')
+            self.assertEqual(before,ev.DB_PATH.read_bytes())
+
+    def test_corrupt_shadow_database_is_not_disguised_as_pending(self):
+        with tempfile.TemporaryDirectory() as tmp, patch.object(ev,'DB_PATH',Path(tmp)/'evidence.db'):
+            ev.DB_PATH.write_text('corrupt fixture')
+            self.assertEqual(o.public_status('demo:a')['status'],'unavailable')
+
     def test_shadow_is_pure_and_never_materializable(self):
         for side in ('long','short'):
             p=package(side); before=copy.deepcopy(p);r=o.scan(p)
