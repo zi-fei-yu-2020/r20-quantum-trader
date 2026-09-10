@@ -9,7 +9,7 @@ import hashlib
 import json
 import math
 
-VERSION = 'closed-candle-plans-v2'
+VERSION = 'closed-candle-plans-v3'
 WIDTHS = {'15M': 900_000, '1H': 3_600_000}
 
 
@@ -62,6 +62,26 @@ def candle_facts(package):
     return out
 
 
+def hourly_trend(package):
+    """Trend means ordered closed-hour structure, not merely no 4H veto."""
+    if package.get('entry_candles'):
+        rows=verified_bars(package,'1H');closes=[b['close'] for b in rows]
+        fast=sum(closes[-7:])/7;slow=sum(closes[-20:])/min(20,len(closes))
+        if closes[-1]>fast>slow:return 'long'
+        if closes[-1]<fast<slow:return 'short'
+        return 'range'
+    # Compatibility for verified adapters; absence is NOT inferred as bullish.
+    return {'1H_SWING_BULL':'long','1H_SWING_BEAR':'short'}.get(package.get('structure_1h'),'unknown')
+
+
+def validate_independent_direction(package, action):
+    side='long' if action=='BUY_LONG' else 'short'
+    trend=hourly_trend(package)
+    if trend != side:
+        raise ValueError('独立方案缺少同向1H趋势；逆向恢复必须选择已收盘突破候选，不能以减速或持仓占比代替反转')
+    return trend
+
+
 def catalog(package, policy=None):
     from scripts.risk_policy import Policy
     policy=policy or vars(Policy())
@@ -97,6 +117,8 @@ def catalog(package, policy=None):
             vol_ratio=float(package.get('vol_ratio') or 1.0)
             breakout=(bar['close']>level and bar['open']<=level and vol_ratio>=1.1) if side=='long' else (bar['close']<level and bar['open']>=level and vol_ratio>=1.1)
             for setup,triggered in [('pullback_reclaim',reclaim),('closed_range_breakout',breakout)]:
+                if setup=='pullback_reclaim' and hourly_trend(package)!=side:
+                    rejected(setup,side,'pullback_requires_established_trend');continue
                 if not triggered: rejected(setup,side,'closed_candle_trigger_not_met');continue
                 hold_level=prev['close'] if setup=='pullback_reclaim' else level
                 if (entry-hold_level)*(1 if side=='long' else -1)<=0:

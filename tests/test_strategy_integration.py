@@ -21,7 +21,7 @@ class StrategyIntegrationTests(unittest.TestCase):
         observer=patch.object(position_guard,'observe_equity',return_value={});observer.start();self.addCleanup(observer.stop)
 
     def test_full_final_preflight_uses_actual_leverage_and_commits_before_write(self):
-        identity=evidence.append(self.env.identity,'decision',{'instrument':META['instId'],'decision':{'action':'BUY_LONG','contract_version':'trading-evidence-v1','contract_valid':True,'valid_until':time.time()+300}})
+        identity=evidence.append(self.env.identity,'decision',{'instrument':META['instId'],'features':{'structure_1h':'1H_SWING_BULL'},'decision':{'action':'BUY_LONG','contract_version':'trading-evidence-v1','contract_valid':True,'valid_until':time.time()+300}})
         def private(method,path,params,env):
             self.assertEqual(method,'GET');self.assertEqual(env.mode,'demo')
             if path.endswith('/positions') or path.endswith('/orders-pending'):return []
@@ -41,7 +41,7 @@ class StrategyIntegrationTests(unittest.TestCase):
     def test_gateway_rounds_real_tick_and_cli_sends_identical_verified_prices(self):
         from scripts import risk_policy
         identity=evidence.append(self.env.identity,'decision',{'instrument':META['instId'],
-            'decision':{'action':'BUY_LONG','contract_version':'trading-evidence-v1','contract_valid':True,'valid_until':time.time()+300}})
+            'features':{'structure_1h':'1H_SWING_BULL'},'decision':{'action':'BUY_LONG','contract_version':'trading-evidence-v1','contract_valid':True,'valid_until':time.time()+300}})
         meta={**META,'tickSz':'0.00001'}
         def private(method,path,params,env):
             self.assertEqual(method,'GET')
@@ -72,7 +72,7 @@ class StrategyIntegrationTests(unittest.TestCase):
                'sz': '2', 'slTriggerPx': '110', 'tpTriggerPx': '150'}
         identity = evidence.append(self.env.identity, 'decision', {
             'instrument': META['instId'], 'position_basis': {'size': 2},
-            'decision': {'action': 'BUY_LONG', 'contract_version': 'trading-evidence-v1',
+            'features':{'structure_1h':'1H_SWING_BULL'},'decision': {'action': 'BUY_LONG', 'contract_version': 'trading-evidence-v1',
                          'contract_valid': True, 'valid_until': time.time() + 300}})
 
         def private(method, path, params, env):
@@ -119,7 +119,7 @@ class StrategyIntegrationTests(unittest.TestCase):
                   [oco, {**oco, 'algoId': 'unknown', 'state': 'effective'}]]
         identity = evidence.append(self.env.identity, 'decision', {
             'instrument': META['instId'], 'position_basis': {'size': 2},
-            'decision': {'action': 'BUY_LONG', 'contract_version': 'trading-evidence-v1',
+            'features':{'structure_1h':'1H_SWING_BULL'},'decision': {'action': 'BUY_LONG', 'contract_version': 'trading-evidence-v1',
                          'contract_valid': True, 'valid_until': time.time() + 300}})
 
         snapshot_ts = str(int(time.time() * 1000))

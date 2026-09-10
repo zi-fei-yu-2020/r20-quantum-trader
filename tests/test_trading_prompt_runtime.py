@@ -14,7 +14,7 @@ from scripts.okx_runtime import OKXEnvironment
 from test_trading_prompt_contract import package, response, candidate
 
 class PromptRuntimeTests(unittest.TestCase):
-    def exercise(self,output,*,pending=None,profile=None):
+    def exercise(self,output,*,pending=None,profile=None,texts=None):
         with tempfile.TemporaryDirectory() as folder,ExitStack() as stack:
             root=Path(folder);p=package()
             p.update(chg24h=1.,fundingRate=0.,oiUsd=1000.,takerNetUsd=50.,lsRatio=1.,data_as_of=time.time())
@@ -34,15 +34,41 @@ class PromptRuntimeTests(unittest.TestCase):
             active=stack.enter_context(patch.object(brain,'active_profile',return_value=copy.deepcopy(profile if profile is not None else prompt_library.PRESETS['stable'])))
             stack.enter_context(patch('r20_backend.council_manager.load_council_config',return_value={'enabled':False}))
             stack.enter_context(patch('r20_backend.llm_manager.get_active_llm_runtime',return_value={'model':'test','base_url':'https://example.invalid/v1','api_key':'FAKE','api_format':'openai_chat'}))
-            llm=stack.enter_context(patch('r20_backend.llm_manager.execute_llm_request',return_value=(json.dumps(output),'',{},1)))
+            llm=stack.enter_context(patch('r20_backend.llm_manager.execute_llm_request',return_value=(json.dumps(output),'',{},1),side_effect=[(text,'',{},1) for text in texts] if texts else None))
             stack.enter_context(patch.object(brain,'ModelCallTelemetry',return_value=MagicMock()))
             # A fresh old BUY must be cleared even if this response is rejected.
             (root/'AI_DECISION_CACHE_FILE').write_text(json.dumps({'OLD':{'decision':{'action':'BUY_LONG'}}}))
             result=brain.execute_batch_ai_brain_cycle(active_positions_detail=[],usdt_available=1000)
-            return {'result':result,'calls':cli.call_args_list,'profile_calls':active.call_count,'messages':llm.call_args.kwargs['messages'] if llm.call_args else [],'llm_calls':llm.call_count,
+            return {'result':result,'calls':cli.call_args_list,'profile_calls':active.call_count,'messages':llm.call_args.kwargs['messages'] if llm.call_args else [],'llm_calls':llm.call_count,'llm_args':[c.kwargs for c in llm.call_args_list],
                 'cache':json.loads((root/'AI_DECISION_CACHE_FILE').read_text()),
                 'manifest':json.loads((root/'trading_prompt_manifest.json').read_text()),
                 'validation':json.loads((root/'trading_output_validation.json').read_text())}
+
+    def test_invalid_json_regenerates_once_then_runs_original_entry_validator(self):
+        checked=self.exercise(response(),texts=['{"decisions":',json.dumps(response())])
+        self.assertEqual(checked['llm_calls'],2)
+        self.assertEqual(checked['llm_args'][1]['max_attempts'],1)
+        self.assertEqual(checked['llm_args'][1]['timeout'],20)
+        self.assertTrue(checked['llm_args'][0]['require_complete'])
+        self.assertEqual(checked['validation']['json_response']['status'],'regenerated')
+        self.assertEqual(checked['result']['BTC-USDT-SWAP']['decision']['action'],'BUY_LONG')
+        self.assertEqual(len(checked['calls']),1)  # pending read only; no new order retries
+
+    def test_bad_second_response_clears_old_signals_and_retains_diagnostics(self):
+        checked=self.exercise(response(),texts=['not json','{"decisions":'])
+        self.assertIsNone(checked['result']);self.assertEqual(checked['cache'],{})
+        self.assertEqual(checked['llm_calls'],2)
+        self.assertEqual(len(checked['validation']['json_response']['failures']),2)
+        self.assertEqual(checked['validation']['json_response']['status'],'rejected')
+        self.assertEqual(len(checked['calls']),1)
+
+    def test_json_regeneration_does_not_stack_wait_correction(self):
+        from test_wait_audit import valid_wait
+        output=response(valid_wait());output['decisions']['BTC-USDT-SWAP']['wait_audit']['long']['code']='made_up'
+        checked=self.exercise(output,texts=['not json',json.dumps(output)])
+        self.assertEqual(checked['llm_calls'],2)
+        self.assertEqual(checked['result']['BTC-USDT-SWAP']['decision']['action'],'WAIT')
+        self.assertFalse(checked['result']['BTC-USDT-SWAP']['decision']['contract_valid'])
 
     def test_single_profile_same_messages_and_validated_candidate_reaches_cache(self):
         checked=self.exercise(response())

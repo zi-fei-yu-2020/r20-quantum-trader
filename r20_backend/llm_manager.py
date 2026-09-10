@@ -1094,6 +1094,7 @@ def execute_llm_request(
     response_format: Optional[Dict[str, Any]] = None,
     timeout: float = 50.0,
     max_attempts: Optional[int] = None,
+    require_complete: bool = False,
 ) -> Tuple[str, str, Dict[str, Any], int]:
     """Unified executor for LLM calls across all 3 protocols.
     Returns: (content, reasoning_content, usage_dict, latency_ms)
@@ -1120,6 +1121,10 @@ def execute_llm_request(
 
     res_json, _, latency_ms, attempts = request_json(endpoint, headers, payload, timeout, **({"max_attempts":max_attempts} if max_attempts is not None else {}))
 
+    # Structured trading output must never consume a provider-declared partial answer.
+    if require_complete:
+        from scripts.model_json import verify_completion
+        verify_completion(res_json, target_format)
     content = ""
     reasoning_content = ""
     usage = res_json.get("usage") or {}
@@ -1152,10 +1157,14 @@ def execute_llm_request(
     # Protocol 3: OpenAI Chat Completions Response
     else:
         msg = (res_json.get("choices") or [{}])[0].get("message") or {}
-        content = str(msg.get("content") or "").strip()
+        from scripts.model_json import text_content
+        content = text_content(msg.get("content"))
         reasoning_content = str(msg.get("reasoning_content") or "").strip()
 
     if not content:
+        if require_complete:
+            from scripts.trading_prompt import ContractError
+            raise ContractError("模型响应内容为空，未提供决策JSON")
         raise LLMRequestError(200, attempts, "empty_model_output")
     return content, reasoning_content, usage, latency_ms
 

@@ -1106,6 +1106,17 @@ def manage_position_tp_and_trailing(f, curr_pos, trackers, timestamp_full, execu
     entry_px = float(curr_pos["avgPx"])
     pos_key = f"{inst_id}_{curr_pos['side']}"
 
+    from scripts.position_lifecycle import reconcile as reconcile_lifecycle, identity as position_identity
+    lifecycle=reconcile_lifecycle(trackers,pos_key,curr_pos,market._selected().identity)
+    if lifecycle=='unknown':
+        from scripts.initial_protection import verify as verify_initial_protection
+        initial=verify_initial_protection(market._selected(),inst_id,'long' if is_long else 'short',pos_sz,curr_pos,query_positions)
+        if initial['status'] not in ('verified','flat','changed'):
+            closed,detail=close_position_confirmed(inst_id,'long' if is_long else 'short',pos_sz,exit_reason='oco_unverified',position=curr_pos)
+            executed_actions.append(f"[{name}] 持仓身份与云端保护未确认，安全退出确认={closed}；{detail}")
+            return closed, '初始保护核验未知'
+        executed_actions.append(f"[{name}] 持仓生命周期身份缺失，未修改云端保护，跳过本地动态止损")
+        return False, '持仓身份待核验'
     now_ts = int(time.time())
     if pos_key not in trackers:
         # Completed but insufficient snapshots get one fresh recheck; read errors
@@ -1126,12 +1137,16 @@ def manage_position_tp_and_trailing(f, curr_pos, trackers, timestamp_full, execu
         rows = initial['orders']
         adopted_stop = (min if is_long else max)(float(o['slTriggerPx']) for o in rows)
         adopted_tp = float(rows[0]['tpTriggerPx'])
+        strategy_evidence.best_effort(market._selected().identity,'position_protection_adoption',{
+            'identity':position_identity(curr_pos,market._selected().identity),'orders':rows,
+            'adopted_stop':adopted_stop,'source':'trader','cloud_stop_changed':False})
         score, action, reasons, strat_tag, strat_desc = evaluate_asset_signal(f)
         trackers[pos_key] = {
             "instId": inst_id,
             "name": name,
             "side": curr_pos["side"],
-            "strategy_tag": strat_tag if strat_tag != "⚪ 观望" else ("🌊 顺势回踩" if is_long else "⚡ 阻力抛压"),
+            "strategy_tag": "多头持仓" if is_long else "空头持仓",
+            "positionIdentity": position_identity(curr_pos,market._selected().identity),
             "entryPx": entry_px,
             "entryTs": now_ts,
             "entryTime": timestamp_full,

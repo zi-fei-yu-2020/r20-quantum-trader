@@ -283,6 +283,12 @@ class AiFactorTraderMathProbTest(unittest.TestCase):
 
 
 class AiFactorTraderPositionProtectionTest(unittest.TestCase):
+    def setUp(self):
+        # These tests isolate protection thresholds, with lifecycle admission
+        # covered separately by test_entry_safety.LifecycleTests.
+        guard=patch('scripts.position_lifecycle.reconcile',return_value='same')
+        guard.start();self.addCleanup(guard.stop)
+
     def _factor(self, price=99.0):
         return {
             "market_data_valid": True, "instId": "SOL-USDT-SWAP", "name": "SOL",

@@ -33,7 +33,7 @@ class ProfitProtectionTests(unittest.TestCase):
         position={'pos':1.,'side':'long','avgPx':100.,'upl':3.}
         key='TEST-USDT-SWAP_long'
         trackers={key:{'entryTs':time.time(),'trailingStopPx':99.,'exchangeStopPx':99.,'takeProfitPx':110.,'highWaterMark':103.,'lowWaterMark':100.}}
-        with patch.object(trader,'ensure_cloud_position_protection',return_value=(True,'verified')),patch.object(trader,'record_trade'),patch.object(trader,'add_stop_cooldown'),patch.object(trader,'notify_trade_close'),patch.object(trader,'close_position_confirmed',return_value=(True,'closed')) as close:
+        with patch('scripts.position_lifecycle.reconcile',return_value='same'),patch.object(trader,'ensure_cloud_position_protection',return_value=(True,'verified')),patch.object(trader,'record_trade'),patch.object(trader,'add_stop_cooldown'),patch.object(trader,'notify_trade_close'),patch.object(trader,'close_position_confirmed',return_value=(True,'closed')) as close:
             closed,_=trader.manage_position_tp_and_trailing(factor,position,trackers,'test',[])
             self.assertFalse(closed);self.assertGreater(trackers[key]['trailingStopPx'],100.3)
             close.assert_not_called()
@@ -85,7 +85,7 @@ class ExecutionPresetTests(unittest.TestCase):
     def test_signature_change_rejects_before_exchange_reads(self):
         before=execution_profiles.runtime()
         d={'action':'BUY_LONG','contract_valid':True,'contract_version':trading_prompt.VERSION,'valid_until':time.time()+100}
-        identity=strategy_evidence.append(self.env.identity,'decision',{'instrument':'TEST-USDT-SWAP','decision':d,'execution_profile_signature':before['signature']})
+        identity=strategy_evidence.append(self.env.identity,'decision',{'instrument':'TEST-USDT-SWAP','features':{'structure_1h':'1H_SWING_BULL'},'decision':d,'execution_profile_signature':before['signature']})
         prompt_library.activate_profile('small300')
         env=__import__('scripts.okx_runtime',fromlist=['OKXEnvironment']).OKXEnvironment('demo','fake','fake','fake',account_scope=self.env.identity)
         with patch.object(entry_gateway,'_request',side_effect=AssertionError('no exchange read')) as read:
@@ -117,7 +117,7 @@ class ExecutionPresetTests(unittest.TestCase):
         env=OKXEnvironment('demo','fake','fake','fake',account_scope=self.env.identity)
         now=time.time();meta={'instId':'TEST-USDT-SWAP','ctType':'linear','settleCcy':'USDT','state':'live','ctVal':'1','ctMult':'1','lotSz':'.01','minSz':'.01','tickSz':'.01'}
         d={'action':'BUY_LONG','contract_valid':True,'contract_version':trading_prompt.VERSION,'valid_until':now+120}
-        identity=strategy_evidence.append(env.identity,'decision',{'instrument':meta['instId'],'decision':d,'execution_profile_signature':binding['signature']})
+        identity=strategy_evidence.append(env.identity,'decision',{'instrument':meta['instId'],'features':{'structure_1h':'1H_SWING_BULL'},'decision':d,'execution_profile_signature':binding['signature']})
         def private(method,path,params,environment):
             self.assertEqual(method,'GET')
             if path.endswith('/balance'):return [{'totalEq':'5000','uTime':str(int(now*1000)),'details':[{'ccy':'USDT','eq':'5000','availEq':'5000'}]}]

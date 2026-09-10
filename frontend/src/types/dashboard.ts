@@ -147,6 +147,7 @@ export interface DashboardResponse {
   initializing?: boolean
   scenario_shadow?: ScenarioShadowStatus
   capital_pool?: CapitalPoolStatus
+  entry_opportunities?: import('../utils/waitAudit').OpportunityShadow
   wait_audit?: WaitAuditState
   decision_cycle?: DecisionCycle
   macro_analysis?: MacroAnalysis

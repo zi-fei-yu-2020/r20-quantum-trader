@@ -14,7 +14,7 @@ def package(side='long'):
         if i==22:o,h,l,c=101,101.2,99,99.4
         if i==23:o,h,l,c=99.4,100.2,99,100
         raw.append([at-(24-i)*900_000,o,h,l,c,100,0,0,'1'])
-    hours=[[at-(24-i)*3_600_000,103,110,98,103,100,0,0,'1'] for i in range(24)]
+    hours=[[at-(24-i)*3_600_000,103,110,98,102+i*.1,100,0,0,'1'] for i in range(24)]
     p={'instId':'TEST-USDT-SWAP','name':'TEST','data_quality':'valid','data_as_of':at/1000+.05,
        'price':100,'bidPx':99.99,'askPx':100.01,'macro_4h':'4H_MACRO_BULL','adx_1h':25,'atr_1h':3,
        'environment_support':{'can_open':True},'entry_candles':{}}
@@ -74,7 +74,7 @@ class ProgramPlanTests(unittest.TestCase):
         p.update(price=99.5,bidPx=99.49,askPx=99.51)
         self.assertEqual(plans.catalog(p)['plans'],[])
         p=package()
-        for r in p['entry_candles']['1H']['rows']:r.update(open=100,close=100,high=100.2)
+        for i,r in enumerate(p['entry_candles']['1H']['rows']):r.update(open=100,close=99.95+i*.01,high=100.2)
         result=plans.catalog(p)
         self.assertEqual(result['plans'],[])
         rejection=next(c for c in result['checks'] if c['reason']=='net_rr_below_policy')
@@ -89,10 +89,10 @@ class ProgramPlanTests(unittest.TestCase):
             self.assertEqual(plan['take_profit_price'],observed)
             self.assertEqual(plan['target_observation']['price'],observed)
             self.assertFalse(plan['target_observation']['extrapolated'])
-            self.assertEqual(plan['version'],'closed-candle-plans-v2')
+            self.assertEqual(plan['version'],'closed-candle-plans-v3')
             self.assertIn('1.5x_atr',plan['stop_basis'])
             if side=='short':
-                for r in p['entry_candles']['1H']['rows']:r.update(open=100,close=100,low=99.8)
+                for i,r in enumerate(p['entry_candles']['1H']['rows']):r.update(open=100,close=100.05-i*.01,low=99.8)
                 result=plans.catalog(p)
                 self.assertEqual(result['plans'],[])
                 self.assertTrue(any(c['reason']=='net_rr_below_policy' for c in result['checks']))

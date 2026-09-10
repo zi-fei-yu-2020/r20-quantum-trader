@@ -8,7 +8,7 @@ from r20_backend.interceptor_manager import run_interceptor_pipeline
 class EntryScoreTests(unittest.TestCase):
     def package(self):
         return {'name': 'BTC', 'instId': 'BTC-USDT-SWAP', 'price': 100., 'macro_4h': '4H_MACRO_BULL',
-                'adx_1h': 25., 'atr_1h': 2., 'data_quality': 'valid', 'environment_support': {'can_open': True}}
+                'structure_1h':'1H_SWING_BULL', 'adx_1h': 25., 'atr_1h': 2., 'data_quality': 'valid', 'environment_support': {'can_open': True}}
 
     def decision(self, score):
         return {'action': 'BUY_LONG', 'confidence': score, 'entry_price': 100., 'stop_loss_price': 95., 'take_profit_price': 115.,

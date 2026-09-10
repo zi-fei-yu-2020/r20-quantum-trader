@@ -4,13 +4,13 @@ import AppCard from './ui/AppCard.vue'
 import AppBadge from './ui/AppBadge.vue'
 import { checkLabel, setupLabel, sideLabel, mergedAuditRows, compactAuditStatus, directionSummary } from '../utils/entryPlanDisplay'
 import { conditionText, reviewLabel, waitStreakBadges } from '../utils/waitAudit'
-import type { WaitAuditState, DecisionCycle } from '../utils/waitAudit'
+import type { WaitAuditState, DecisionCycle, OpportunityShadow } from '../utils/waitAudit'
 
-const props = defineProps<{ audit?: WaitAuditState; cycle?: DecisionCycle }>()
+const props = defineProps<{ audit?: WaitAuditState; cycle?: DecisionCycle; opportunities?: OpportunityShadow }>()
 const rows = computed(() => mergedAuditRows(props.cycle, props.audit).map(row => ({ ...row,
   directions: (['long', 'short'] as const).map(side => ({ side, ...directionSummary(row, side) })),
 })))
-const counts = computed(() => props.cycle?.counts)
+const counts = computed(() => props.cycle?.unavailable_reason ? undefined : props.cycle?.counts)
 const diagnostics = computed(() => props.audit?.diagnostics || props.cycle?.wait_diagnostics)
 const streakBadges = computed(() => waitStreakBadges(props.audit, diagnostics.value))
 const diagnosticStart = computed(() => diagnostics.value ? new Date(diagnostics.value.since * 1000).toLocaleString('zh-CN', {timeZone:'Asia/Shanghai',hour12:false}) : '尚未开始')
@@ -35,6 +35,8 @@ const stats = computed(() => {
 const timestamp = computed(() => props.audit?.updated_at
   ? new Date(props.audit.updated_at * 1000).toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai', hour12: false })
   : '尚无审计记录')
+const opportunitySetup = (value: string) => ({trend_pullback_reclaim:'趋势回踩恢复',closed_range_breakout:'区间突破',breakout_retest:'突破后回踩'} as Record<string,string>)[value] || value
+const opportunityState = (value: string) => ({observing:'观察触发',ready:'影子候选',blocked:'条件不足',awaiting_retest:'等待回踩',invalidated:'已失效',expired:'已过期'} as Record<string,string>)[value] || value
 const numberText = (value?: number) => Number.isFinite(value) ? value!.toFixed(2) : '—'
 </script>
 
@@ -60,7 +62,7 @@ const numberText = (value?: number) => Number.isFinite(value) ? value!.toFixed(2
     </div>
 
     <p v-if="audit?.status === 'error' || cycle?.unavailable_reason" role="status" class="audit-notice">
-      {{ cycle?.unavailable_reason || audit?.message || '审计数据不可用，请稍后复查。' }}
+      {{ cycle?.unavailable_reason || audit?.message || '审计数据不可用，请稍后复查。' }}<span v-if="rows.some(row => row.historical)"> 下方为历史审计，不代表本轮决策成功，也不会复用旧指令。</span>
     </p>
     <p v-if="!rows.length" class="audit-empty">尚无可展示的结构化决策，不能将旧版 WAIT 视为已审计。</p>
 
@@ -70,9 +72,9 @@ const numberText = (value?: number) => Number.isFinite(value) ? value!.toFixed(2
           <span class="audit-row__identity">
             <strong>{{ row.instId.split('-')[0] }}</strong>
             <AppBadge :tone="row.status === 'incomplete' || row.status === 'execution_rejected' ? 'warning' : row.status === 'entry_candidate' ? 'brand' : 'neutral'">
-              {{ compactAuditStatus(row.status) }}
+              {{ row.historical && row.status === 'audited_wait' ? '历史等待 · 已审计' : compactAuditStatus(row.status) }}
             </AppBadge>
-            <span v-if="row.historical" class="audit-saved">最近审计</span>
+
           </span>
           <span class="audit-row__preview" data-plan-check-summary>
             <span v-if="row.diagnostic" class="audit-diagnostic" data-decision-diagnostic>审计未通过：{{ row.diagnostic }}</span>
@@ -118,6 +120,8 @@ const numberText = (value?: number) => Number.isFinite(value) ? value!.toFixed(2
               <p>初次错误：{{ row.repair.initial_error }}</p>
               <p v-if="row.repair.remaining_error">纠错核验：{{ row.repair.remaining_error }}</p>
             </div>
+            <p v-if="row.historical" class="audit-notice">历史审计，仅供核对；完整理由和重审条件如下。</p>
+            <p v-if="row.diagnostic && row.diagnostic !== row.item?.reason">{{ row.diagnostic }}</p>
             <p v-if="row.item?.reason">{{ row.item.reason }}</p>
             <p v-if="row.programError" class="audit-diagnostic">草案生成：{{ row.programError }}</p>
             <template v-if="row.record">
@@ -145,6 +149,17 @@ const numberText = (value?: number) => Number.isFinite(value) ? value!.toFixed(2
     </div>
 
     <footer class="audit-footer">
+      <details v-if="opportunities" class="audit-footer-disclosure" data-opportunity-shadow>
+        <summary>入场机会对照 <span>影子运行 · 不下单{{ opportunities.stale ? ' · 数据延迟' : '' }}</span></summary>
+        <p>新识别机制跟踪趋势回踩、区间突破与突破后回踩，使用同一行情和风险预算；未经验证不会自动替换当前执行规则。</p>
+        <p v-if="!opportunities.items?.length">{{ opportunities.status === 'unavailable' ? '对照数据暂不可用' : '等待首轮机会采集' }}</p>
+        <ul><li v-for="item in opportunities.items" :key="item.instrument">
+          <strong>{{ item.instrument.split('-')[0] }}</strong>
+          <span v-if="item.error"> 数据待核验：{{ checkLabel(item.error) }}</span>
+          <span v-else> 当前规则 {{ item.baseline_plans ?? '—' }} 个草案 · 新规则 {{ item.ready_count ?? '—' }} 个影子候选</span>
+          <span v-for="op in item.opportunities" :key="op.id" class="audit-shadow-line">{{ sideLabel(op.side) }} · {{ opportunitySetup(op.setup) }}：{{ opportunityState(op.state) }}<span v-if="op.state === 'blocked'"> · {{ checkLabel(op.reason) }}</span></span>
+        </li></ul>
+      </details>
       <p v-if="cycle?.environment_notices?.length" class="audit-environment"><span>环境限制</span>{{ cycle.environment_notices.join('；') }}</p>
       <details v-if="cycle?.executed_actions?.length" class="audit-footer-disclosure" data-execution-records>
         <summary>执行记录 <span>{{ cycle.executed_actions.length }} 条</span></summary>
@@ -197,9 +212,11 @@ const numberText = (value?: number) => Number.isFinite(value) ? value!.toFixed(2
 .audit-row__preview { grid-column: 1 / -1; grid-row: 2; display: grid; gap: .375rem; min-width: 0; line-height: 1.6; }
 .audit-direction { display: flex; gap: .5rem; min-width: 0; align-items: baseline; }
 .audit-direction__label { color: var(--text-muted); flex-shrink: 0; font-size: .75rem; }
-.audit-direction__text { min-width: 0; }
+.audit-direction__text { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.audit-shadow-line { display: block; margin-top: .25rem; overflow-wrap: anywhere; }
 .audit-more { color: var(--text-muted); font-size: .75rem; }
-.audit-diagnostic { color: var(--text-main); }
+.audit-diagnostic { color: var(--text-main); overflow-wrap: anywhere; }
+.audit-row__preview .audit-diagnostic { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
 .audit-row__expand { grid-column: 2; grid-row: 1; display: flex; align-items: center; gap: .25rem; color: var(--color-brand); font-size: .75rem; }
 .audit-row__expand svg { transition: transform .15s ease; flex-shrink: 0; }
 .when-open { display: none; }

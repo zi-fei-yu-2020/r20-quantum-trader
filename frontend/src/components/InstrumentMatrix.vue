@@ -56,7 +56,7 @@ function getActionStyle(action?: string) {
 }
 
 function getActionLabel(action?: string, status?: string) {
-  if (action === 'BUY_LONG') return '顺势做多 BUY'
+  if (action === 'BUY_LONG') return '开多候选 BUY'
   if (action === 'SELL_SHORT') return '顺势做空 SELL'
   return status ? auditLabel(status) : '等待 · 未审计'
 }
@@ -66,7 +66,7 @@ function getActionLabel(action?: string, status?: string) {
   <div class="space-y-3">
     <CapitalPoolPanel :pool="store.data?.capital_pool" />
     <ScenarioShadowPanel :shadow="store.data?.scenario_shadow" />
-    <DecisionAuditPanel :audit="store.data?.wait_audit" :cycle="store.data?.decision_cycle" />
+    <DecisionAuditPanel :audit="store.data?.wait_audit" :cycle="store.data?.decision_cycle" :opportunities="store.data?.entry_opportunities" />
     <!-- Macro Summary Telemetry Strip -->
     <AppCard
       class="rounded-xl border p-3 sm:p-3.5 flex items-start space-x-2.5 transition-colors shadow-xs"

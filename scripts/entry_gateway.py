@@ -94,6 +94,10 @@ def prepare(env, *, inst_id, side, entry, stop, take_profit, requested_size, bud
         current_memory=memory_view(scope=env.identity)
         if memory_basis.get('scope')!=env.identity or current_memory['prompt_hash']!=memory_basis['prompt_hash']:
             raise risk.RiskRejected('Published memory changed after inference; fresh decision required')
+    if not decision.get('candidate_id'):
+        from scripts.entry_candidates import validate_independent_direction
+        try:validate_independent_direction(record.get('features',{}),decision.get('action'))
+        except (ValueError,TypeError,KeyError) as exc:raise risk.RiskRejected('Final entry direction rejected: '+str(exc)) from None
     expected='BUY_LONG' if side=='long' else 'SELL_SHORT'
     if record.get('instrument')!=inst_id or record.get('decision',{}).get('action')!=expected:
         raise risk.RiskRejected('Decision evidence does not authorize this instrument/direction')

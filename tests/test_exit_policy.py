@@ -136,6 +136,9 @@ class PositionExitIntegrationTests(unittest.TestCase):
         factor = {'market_data_valid': True, 'instId': INST, 'name': 'TEST', 'price': price,
                   'type': 'crypto', 'atr': broad_atr, 'atr_15m': atr, 'precision': 2, 'ctVal': 1.}
         pos = {'pos': 1., 'side': side, 'avgPx': 100., 'upl': sign*(price-100)}
+        pos.update(instId=INST,posId='fixture-position',cTime=str(int((NOW-age)*1000)))
+        from scripts.position_lifecycle import identity
+        self.trackers[key]['positionIdentity']=identity(pos,trader.market._selected().identity)
         return trader.manage_position_tp_and_trailing(factor, pos, self.trackers, 'offline-test', self.actions)
 
     def test_previous_087R_early_exit_is_fixed_for_both_presets_and_sides(self):

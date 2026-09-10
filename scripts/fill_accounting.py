@@ -167,6 +167,7 @@ def reconcile(history, archive, *, peers=(), active_positions=()):
                     "matched_fills": len(matched), "opening_size": str(open_size),
                     "closing_size": str(close_size), "receipt_fee": str(receipt_fee),
                     "allocated_fee": str(open_fee+close_fee), "tolerance": str(FEE_TOLERANCE),
-                    "bill_ids": sorted(matched)}}
+                    "bill_ids": sorted(matched),
+                    "opening_order_ids": sorted({str(f["ordId"]) for f in matched.values() if f["side"]==opening_side})}}
     except (ValueError, TypeError, KeyError, AttributeError, ArithmeticError):
         return unknown("invalid_accounting_evidence")

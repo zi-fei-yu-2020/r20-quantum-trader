@@ -111,6 +111,9 @@ def build_lifecycle_ledger(*, notify=True):
     fill_archive = read_fill_archive(env.identity)
     trades_lifecycle = []
 
+    from scripts.strategy_origin import index as strategy_index, resolve as strategy_origin
+    origins=strategy_index(env.identity)
+
     # Process Active Holding Positions FIRST
     for p in pos_data:
         pos_sz = float(p.get("pos", 0.0) or 0.0)
@@ -139,7 +142,7 @@ def build_lifecycle_ledger(*, notify=True):
 
         pos_k = f"{inst_id}_{'long' if side=='多' else 'short'}"
         t_info = trackers.get(pos_k, {})
-        strat_tag = t_info.get("strategy_tag") or ("🌊 低吸" if side == "多" else "⚡ 高空")
+        strat_tag = strategy_origin(p,fill_archive,origins)["strategy"]
 
         held_seconds = duration_seconds(c_ts, datetime.datetime.now(tz_bj).timestamp())
         duration_str = format_duration(held_seconds)
@@ -205,7 +208,7 @@ def build_lifecycle_ledger(*, notify=True):
         duration_str = format_duration(held_seconds)
 
         # Strategy tag
-        strat_tag = "🌊 顺势做多" if side == "多" else "⚡ 阻力高空"
+        # Strategy source is resolved after complete lifecycle fill reconciliation.
         
         attribution=close_reason(h,attribution_inputs['orders'],algos=attribution_inputs['algos'],executions=attribution_inputs['executions'],scope=env.identity)
         previous=next((row for row in old_trades if row.get('id')==f'pos_hist_{u_ts}_{inst}'),{})
@@ -215,6 +218,8 @@ def build_lifecycle_ledger(*, notify=True):
                 if field in previous:attribution[field]=previous[field]
 
         allocation = reconcile_fill_fees(h, fill_archive, peers=pos_history, active_positions=pos_data)
+        origin = strategy_origin(h,fill_archive,origins,allocation.get("fee_reconciliation"))
+        strat_tag = origin["strategy"]
         trades_lifecycle.append({
             "id": f"pos_hist_{u_ts}_{inst}",
             "instId":inst_id,"pos_id":str(h.get("posId") or ""),"closed_size":close_pos_sz,"environment_id":env.identity,"environment":env.mode,
@@ -222,6 +227,8 @@ def build_lifecycle_ledger(*, notify=True):
             "side": side,
             "lever": f"{lever:g}x" if lever is not None else "--",
             "strategy": strat_tag,
+            "strategy_evidence": origin["strategy_evidence"],
+            "strategy_decision_id": origin.get("decision_id"),
             "margin": margin_usdt,
             "sz": 0,
             "open_time": open_time,

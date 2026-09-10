@@ -171,7 +171,7 @@ def enrich_position_risk_fields(positions, trackers=None):
             "stopSource": "exchange_cloud" if exchange_stop else ("local_tracker" if tracker_stop else "unavailable"),
             "displayTakeProfit": exchange_tp or tracker_tp or None,
             "stageDesc": position.get("stageDesc") or tracker.get("stage_desc") or "持有监控中",
-            "strategyTag": position.get("strategyTag") or tracker.get("strategy_tag") or ("顺势做多" if "long" in side else "逢高做空"),
+            "strategyTag": position.get("strategyTag") or tracker.get("strategy_tag") or ("多头持仓" if "long" in side else "空头持仓"),
             "cloudProtectionLastVerified": (tracker.get("cloudProtection") or {}).get("verifiedAt"),
             "cloudProtectionLastDetail": (tracker.get("cloudProtection") or {}).get("detail"),
         })
@@ -379,7 +379,7 @@ def _inject_local_data_into_stale(stale, positions, timestamp_full):
             pass
 
     from r20_backend.macro_status import fields as macro_fields
-    from scripts import ledger_monitor, wait_audit, capital_pool, scenario_shadow
+    from scripts import ledger_monitor, wait_audit, capital_pool, scenario_shadow, entry_opportunities
     from scripts.okx_runtime import selected_environment
     stale.update(macro_fields(DATA_DIR, history=stale.get('ai_brain_history', []), state=state_data))
     stale['trades']=ledger_monitor.project_rows(stale.get('trades', []), selected_environment().identity)
@@ -389,6 +389,7 @@ def _inject_local_data_into_stale(stale, positions, timestamp_full):
     stale['memory_publication']=memory_publication(DATA_DIR,selected_environment().identity)
     stale['ai_trading_memory_md']=stale['memory_publication'].get('content','')
     stale['wait_audit']=wait_status(selected_environment().identity)
+    stale['entry_opportunities']=entry_opportunities.public_status(selected_environment().identity)
     stale['decision_cycle']=state_data.get('decision_cycle', {})
     stale['capital_pool']=capital_pool.status(selected_environment())
     stale['scenario_shadow']=scenario_shadow.public_status(selected_environment().identity)
@@ -1175,13 +1176,14 @@ def _update_cache_cycle():
     disk_free_gb = round(free_b / (1024 ** 3), 1)
 
     from r20_backend.macro_status import fields as macro_fields
-    from scripts import ledger_monitor, wait_audit, capital_pool, scenario_shadow
+    from scripts import ledger_monitor, wait_audit, capital_pool, scenario_shadow, entry_opportunities
     trades_table = ledger_monitor.project_rows(trades_table, environment.identity)
     published_memory=memory_publication(DATA_DIR,environment.identity)
     CACHE_DATA = {
         **macro_fields(DATA_DIR, ai_decisions, ai_history_list, state=state_data),
         "ledger_sync": ledger_monitor.load("ledger_sync_status.json", {}),
         "wait_audit": wait_audit.public_status(environment.identity),
+        "entry_opportunities": entry_opportunities.public_status(environment.identity),
         "capital_pool": capital_pool.status(environment),
         "scenario_shadow": scenario_shadow.public_status(environment.identity),
         "decision_cycle": state_data.get("decision_cycle", {}),

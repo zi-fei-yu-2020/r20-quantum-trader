@@ -54,6 +54,11 @@ def run_guard(*, observe_only=False):
                 except Exception as exc: actions.append({'status':'equity_guard_blocked_or_unknown','category':type(exc).__name__})
             held=[p for p in positions if abs(float(p.get('pos') or 0))>0]
             trackers=trader.load_trackers()
+            if not observe_only:
+                # A verified flat account retires old peaks/stops even between trader cycles.
+                live_keys={f"{p['instId']}_{p.get('posSide')}" for p in held}
+                for old_key in list(trackers):
+                    if old_key not in live_keys:trackers.pop(old_key,None)
             # Never assume a configured observation pool contains all held instruments.
             try:
                 catalog=market.get_json('https://www.okx.com/api/v5/public/instruments?instType=SWAP',simulated=env.simulated)['data'] if held else []
@@ -105,14 +110,26 @@ def run_guard(*, observe_only=False):
                         trackers.pop(key,None)
                         trader.add_stop_cooldown(inst,side,'Independent guard safety exit')
                     continue
+                from scripts.position_lifecycle import reconcile as reconcile_lifecycle, identity as position_identity
+                lifecycle=reconcile_lifecycle(trackers,key,position,env.identity)
+                if lifecycle=='unknown':
+                    if not covered:
+                        closed,detail=trader.close_position_confirmed(inst,side,abs(float(position['pos'])),exit_reason='independent_guard',position=position)
+                        actions.append({'instrument':inst,'status':'protection_unknown_exit','closed':closed})
+                        if closed:trackers.pop(key,None)
+                    actions.append({'instrument':inst,'status':'position_identity_unknown','coverage_confirmed':covered})
+                    continue
                 if key not in trackers and covered:
                     entry=float(position['avgPx'])
                     stop=(min if side=='long' else max)(float(o['slTriggerPx']) for o in matching)
                     trackers[key]={'instId':inst,'name':item['name'],'side':side,'entryPx':entry,
+                        'positionIdentity':position_identity(position,env.identity),
                         'entryTs':int(float(position.get('cTime') or time.time()*1000)/1000),'entryTime':timestamp,
                         'initialSz':abs(float(position['pos'])),'currentSz':abs(float(position['pos'])),
                         'highWaterMark':mark,'lowWaterMark':mark,'trailingStopPx':stop,
                         'takeProfitPx':float(matching[0]['tpTriggerPx']),'exchangeStopPx':stop,'initialRiskStopPx':stop}
+                    evidence.best_effort(env.identity,'position_protection_adoption',{'identity':position_identity(position,env.identity),
+                        'orders':matching,'adopted_stop':stop,'source':'independent_guard','cloud_stop_changed':False})
                 changed,detail=trader.manage_position_tp_and_trailing(factors,factors['position'],trackers,timestamp,actions)
                 if key not in trackers:continue
                 if trackers[key].get('pendingStopAmendment'):
@@ -131,6 +148,14 @@ def run_guard(*, observe_only=False):
                     rounded=rounded_stop(side,desired,float(current['slTriggerPx']),mark,items[inst]['tickSz'])
                     if rounded is None:continue
                     desired=float(rounded)
+                    # Write-ahead journal survives a crash between dispatch and read-back.
+                    trackers[key]['pendingStopAmendment']={'algoId':algo['algoId'],'requestedStop':desired,
+                        'positionIdentity':position_identity(position,env.identity),'source':'independent_guard'}
+                    trader.save_trackers(trackers)
+                    evidence.best_effort(env.identity,'guard_amendment_intent',{'instrument':inst,'algo_id':algo['algoId'],
+                        'old_stop':float(current['slTriggerPx']),'requested_stop':desired,
+                        'position_identity':position_identity(position,env.identity),
+                        'activation':trackers[key].get('exitEvaluation')})
                     result=trader.run_cmd_result(trader.okx_private_command(f"okx swap algo amend --instId {inst} --algoId {algo['algoId']} --newSlTriggerPx {desired} --newSlOrdPx=-1 --json"))
                     verified=False
                     try:
@@ -140,7 +165,11 @@ def run_guard(*, observe_only=False):
                     except Exception:pass
                     evidence.best_effort(env.identity,'guard_amendment',{'instrument':inst,'algo_id':algo['algoId'],'old_stop':old,'requested_stop':desired,'verified':verified,'transport_ok':result['ok']})
                     trackers[key]['stopAuthority']='cloud_confirmed' if verified else 'local_only_cloud_unconfirmed'
-                    if verified:trackers[key]['exchangeStopPx']=actual
+                    if verified:
+                        trackers[key]['exchangeStopPx']=actual
+                        trackers[key].pop('pendingStopAmendment',None)
+                    else:
+                        break  # Uncertain writes stay pending; never retry another segment blindly.
             if not observe_only:trader.save_trackers(trackers)
             result={'at':time.time(),'environment':env.mode,'observe_only':observe_only,'positions':len(held),'actions':actions}
             evidence.best_effort(env.identity,'position_guard',result)

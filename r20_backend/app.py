@@ -809,6 +809,8 @@ def admin_runtime(x_r20_admin_token: str | None = Header(default=None), x_r20_se
     from scripts.wait_audit import public_status as wait_status
     from scripts.okx_runtime import selected_environment
     payload["wait_audit"] = wait_status(selected_environment().identity)
+    from scripts.entry_opportunities import public_status as opportunity_status
+    payload["entry_opportunities"] = opportunity_status(selected_environment().identity)
     from scripts.decision_reporting import execution_history
     payload["recent_execution_cycles"] = execution_history(selected_environment().identity)
     from scripts.scenario_shadow import public_status as shadow_status

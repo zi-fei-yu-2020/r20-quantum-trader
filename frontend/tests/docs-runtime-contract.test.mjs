@@ -105,7 +105,7 @@ test('docs promise neither profit, zero bugs nor live safety from demo or maskin
 })
 
 test('entry and exit documentation matches observed targets and unified preset protection', () => {
-  includesAll(section('entry_exit'), ['closed-candle-plans-v2','8 根 15M','1.5 ATR','12 根已收盘小时 K 线','target_observation',
+  includesAll(section('entry_exit'), ['closed-candle-plans-v3','8 根 15M','1.5 ATR','12 根已收盘小时 K 线','target_observation',
     '不使用“3 × 止损距离”','position-exits-v1','6 小时','4 小时','2.5 ATR','1.8 ATR','0.15 ATR','0.10 ATR',
     '估算往返成本 × 1.5','0.8R','UPDATE_SL','300 秒','已有更紧止损始终保留','last_verified','conservative_fallback',
     'position_trackers.json','不会静默把 small300 切成 standard','active_profile','exit_evidence','lastExitAttempt','不增加下单、撤单或平仓的盲目重试'])

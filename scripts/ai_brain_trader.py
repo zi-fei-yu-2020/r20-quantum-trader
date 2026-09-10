@@ -727,6 +727,13 @@ def execute_batch_ai_brain_cycle(pos_summary: str = "当前总持仓 0/6", activ
             {'status':'composition_rejected','contract_version':trading_prompt.VERSION,'reason':LAST_INFERENCE_ERROR})
         return None
 
+    # Same frozen data, shadow only. A research failure never blocks risk management.
+    try:
+        from scripts.entry_opportunities import record_cycle
+        record_cycle(market._selected().identity, packages, prompt_bundle.risk_contract, cycle_execution['signature'])
+    except Exception as exc:
+        print('[Entry Shadow] observation unavailable: ' + type(exc).__name__)
+
     # Save Realtime Prompt Snapshot for Web Transparent Inspection
     try:
         tmp_prompt = AI_LAST_PROMPT_FILE + ".tmp"
@@ -757,6 +764,7 @@ def execute_batch_ai_brain_cycle(pos_summary: str = "当前总持仓 0/6", activ
     except Exception:
         execute_llm_request = None
 
+    json_report = {}
     telemetry = ModelCallTelemetry(
         "trading_brain", model_name, str(effort), effective_system_prompt, prompt
     )
@@ -790,45 +798,67 @@ def execute_batch_ai_brain_cycle(pos_summary: str = "当前总持仓 0/6", activ
 
         if brain_output is None:
             print(f"[AI Brain Batch] 🚀 正在发起单次全市场大模型宏观决策推演 ({model_name} / {api_format})...")
-            if execute_llm_request:
-                content, _, usage_dict, _ = execute_llm_request(
-                    messages=[
-                        {"role": "system", "content": effective_system_prompt},
-                        {"role": "user", "content": prompt}
-                    ],
-                    model=model_name,
-                    base_url=base_url,
-                    api_key=api_key,
-                    api_format=api_format,
-                    reasoning_effort=effort,
-                    temperature=0.2,
-                    response_format={"type": "json_object"},
-                    timeout=50.0,
-                )
-                raw_res = {"usage": usage_dict} if isinstance(usage_dict, dict) else {}
-            else:
-                payload = {
-                    "model": model_name,
-                    "messages": [
-                        {"role": "system", "content": effective_system_prompt},
-                        {"role": "user", "content": prompt}
-                    ],
-                    "temperature": 0.2,
-                    "response_format": {"type": "json_object"}
-                }
-                if effort not in ("none", "auto"):
-                    payload["reasoning_effort"] = effort
-                req = urllib.request.Request(
-                    f"{base_url}/chat/completions",
-                    data=json.dumps(payload).encode("utf-8"),
-                    headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json", "User-Agent": "Mozilla/5.0"}
-                )
-                with urllib.request.urlopen(req, timeout=50) as resp:
-                    res = json.loads(resp.read().decode("utf-8"))
-                    content = res["choices"][0]["message"]["content"].strip()
-                    raw_res = res
-
-            brain_output = trading_prompt.parse_response(content)
+            from scripts.model_json import decode_with_regeneration
+            def initial_json():
+                nonlocal content, raw_res
+                if execute_llm_request:
+                    content, _, usage_dict, _ = execute_llm_request(
+                        messages=[
+                            {"role": "system", "content": effective_system_prompt},
+                            {"role": "user", "content": prompt}
+                        ],
+                        model=model_name,
+                        base_url=base_url,
+                        api_key=api_key,
+                        api_format=api_format,
+                        reasoning_effort=effort,
+                        temperature=0.2,
+                        response_format={"type": "json_object"},
+                        timeout=50.0,
+                        require_complete=True,
+                    )
+                    raw_res = {"usage": usage_dict} if isinstance(usage_dict, dict) else {}
+                else:
+                    payload = {
+                        "model": model_name,
+                        "messages": [
+                            {"role": "system", "content": effective_system_prompt},
+                            {"role": "user", "content": prompt}
+                        ],
+                        "temperature": 0.2,
+                        "response_format": {"type": "json_object"}
+                    }
+                    if effort not in ("none", "auto"):
+                        payload["reasoning_effort"] = effort
+                    req = urllib.request.Request(
+                        f"{base_url}/chat/completions",
+                        data=json.dumps(payload).encode("utf-8"),
+                        headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json", "User-Agent": "Mozilla/5.0"}
+                    )
+                    with urllib.request.urlopen(req, timeout=50) as resp:
+                        res = json.loads(resp.read().decode("utf-8"))
+                        from scripts.model_json import verify_completion, text_content
+                        verify_completion(res, "openai_chat")
+                        content = text_content(res["choices"][0]["message"]["content"])
+                        raw_res = res
+                return content
+            def regenerate_json(*, timeout, max_attempts):
+                nonlocal content
+                messages = [{"role":"system", "content":effective_system_prompt},
+                    {"role":"user", "content":prompt + "\n上一次响应不是完整合法JSON。请基于同一冻结输入重新输出完整JSON对象；不要输出代码围栏、解释、注释、尾逗号或省略字段。理由保持简洁，不改变风险契约。"}]
+                meter = ModelCallTelemetry('trading_json_regeneration', model_name, str(effort), messages[0]['content'], messages[1]['content'])
+                try:
+                    content, _, usage, _ = execute_llm_request(messages=messages, model=model_name,
+                        base_url=base_url, api_key=api_key, api_format=api_format, reasoning_effort=effort,
+                        temperature=0.2, response_format={'type':'json_object'}, timeout=timeout,
+                        max_attempts=max_attempts, require_complete=True)
+                    meter.finish('success', {'usage':usage}, output_chars=len(content))
+                    return content
+                except Exception as exc:
+                    meter.finish('failed', error=exc)
+                    raise
+            brain_output = decode_with_regeneration(initial_json,
+                regenerate_json if execute_llm_request else None, report=json_report)
         original_brain_output = brain_output
         # Shared boundary for single-model and council output, before any model-directed write.
         brain_output = trading_prompt.validate_response(brain_output, packages,
@@ -849,12 +879,15 @@ def execute_batch_ai_brain_cycle(pos_summary: str = "当前总持仓 0/6", activ
             meter.finish('success', {'usage':usage}, output_chars=len(repaired_text))
             return repaired_text
         brain_output, repair_report = wait_repair.attempt(original_brain_output, brain_output, packages,
-            request=request_wait_correction if execute_llm_request else None, positions=active_positions_detail,
+            request=request_wait_correction if execute_llm_request and not json_report.get("attempted") else None, positions=active_positions_detail,
             previous_wait_reviews=prompt_bundle.previous_wait_reviews, risk_contract=prompt_bundle.risk_contract)
         if repair_report['targets']:
             strategy_evidence.best_effort(market._selected().identity, 'wait_audit_repair',
                 {'frame_time':time_str, 'model':model_name, 'report':repair_report})
             print(f"[WAIT Audit] correction={repair_report['status']}; repaired={len(repair_report['corrected'])}/{len(repair_report['targets'])}; no trading actions authorized")
+        brain_output['validation']['json_response'] = json_report
+        if json_report.get('attempted'):
+            strategy_evidence.best_effort(market._selected().identity, 'model_json_response', json_report)
         brain_output['validation']['wait_repair'] = wait_repair.public_report(repair_report)
         output_chars = len(content) if content is not None else len(trading_prompt.canonical(original_brain_output))
         atomic_write_json(os.path.join(DATA_DIR, 'trading_output_validation.json'), brain_output['validation'])
@@ -1099,7 +1132,9 @@ def execute_batch_ai_brain_cycle(pos_summary: str = "当前总持仓 0/6", activ
         code = getattr(e, "status_code", None) or getattr(e, "code", None)
         attempts = getattr(e, "attempts", None)
         LAST_INFERENCE_ERROR = ("模型输出契约不合格：" + str(e)) if isinstance(e, trading_prompt.ContractError) else (f"模型接口 HTTP {code}" if code else type(e).__name__)
-        atomic_write_json(os.path.join(DATA_DIR, 'trading_output_validation.json'), {'status':'rejected','contract_version':trading_prompt.VERSION,'reason':LAST_INFERENCE_ERROR})
+        atomic_write_json(os.path.join(DATA_DIR, 'trading_output_validation.json'), {'status':'rejected','contract_version':trading_prompt.VERSION,'reason':LAST_INFERENCE_ERROR, 'json_response':json_report, 'updated_at':time.time()})
+        if json_report:
+            strategy_evidence.best_effort(market._selected().identity, 'model_json_response', json_report)
         provider_reason = getattr(e, "provider_reason", "")
         if provider_reason:
             LAST_INFERENCE_ERROR += f"（{provider_reason}）"

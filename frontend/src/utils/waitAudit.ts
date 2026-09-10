@@ -82,3 +82,9 @@ export function reviewLabel(row: WaitAuditRecord): string {
   if (!row.previous_check?.required) return ""
   return row.status === "audited_wait" && row.audit?.previous_review ? "\u524d\u8f6e\u6761\u4ef6\u5df2\u590d\u67e5" : "\u524d\u8f6e\u6761\u4ef6\u5f85\u590d\u67e5"
 }
+
+export interface OpportunityShadow {
+  mode: 'shadow'; updated_at?: number; stale?: boolean; status?: string
+  items: Array<{ instrument: string; ready_count?: number; baseline_plans?: number; error?: string
+    opportunities: Array<{ id: string; setup: string; side: string; state: string; reason: string; net_rr?: number }> }>
+}

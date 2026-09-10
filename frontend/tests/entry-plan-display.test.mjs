@@ -132,3 +132,26 @@ test('published memory disclosures have visible action styling and distinct cont
  assert.ok(css.includes('.action-disclosure > summary:focus-visible'))
  assert.ok(!memory.includes('v-html'))
 })
+
+test('historical wait summaries stay compact and full reasons only occur inside details',async()=>{
+ const reason='4H处于大级别区间震荡，1H动量速度处于负向承压状态，需要等待完整结构确认。'.repeat(5)
+ const direction={code:'confirmation_pending',reason,evidence:[],reconsider:{conditions:[],reason:'保留完整重审条件'}}
+ const state={status:'ok',items:[{instId:'BTC-USDT-SWAP',status:'audited_wait',audit:{long:direction,short:direction}}]}
+ const html=await renderToString(Vue.createSSRApp(exports.default,{audit:state,cycle:{unavailable_reason:'模型响应未完整结束',items:[]}}))
+ const summary=html.match(/<summary class="audit-row__summary">([\s\S]*?)<\/summary>/)[1]
+ assert.ok(summary.includes('等待条件确认'));assert.ok(summary.includes('历史等待 · 已审计'))
+ assert.ok(!summary.includes(reason));assert.ok(html.includes(reason));assert.ok(html.includes('不代表本轮决策成功'))
+ assert.ok(!summary.includes(' open'))
+})
+test('unknown audit codes are bounded in preview but retain their complete source',()=>{
+ const reason='unknown reason '.repeat(40)
+ const row=display.mergedAuditRows(undefined,{items:[{instId:'X',status:'audited_wait',audit:{long:{code:'future-code',reason}}}]})[0]
+ assert.ok(display.directionSummary(row,'long').text.length<=29)
+ assert.equal(row.record.audit.long.reason,reason)
+})
+test('opportunity comparison clearly distinguishes shadow candidates from active drafts',async()=>{
+ const html=await renderToString(Vue.createSSRApp(exports.default,{opportunities:{mode:'shadow',items:[{
+  instrument:'BTC-USDT-SWAP',baseline_plans:0,ready_count:1,opportunities:[{id:'shadow1',side:'long',setup:'breakout_retest',state:'ready',reason:'shadow_candidate'}]}]}}))
+ for(const text of ['影子运行 · 不下单','当前规则 0 个草案','新规则 1 个影子候选','突破后回踩','未经验证不会自动替换'])assert.ok(html.includes(text),text)
+ assert.ok(!html.includes('已成交'))
+})

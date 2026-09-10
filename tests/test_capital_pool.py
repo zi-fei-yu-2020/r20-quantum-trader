@@ -162,7 +162,7 @@ class PoolAdmissionTests(unittest.TestCase):
         self.assertEqual(pool.status(self.env)['status'],'error')
 
     def test_gateway_keeps_actual_3x_and_300_cap_without_exchange_writes(self):
-        identity=evidence.append(self.env.identity,'decision',{'instrument':self.meta['instId'],'decision':{
+        identity=evidence.append(self.env.identity,'decision',{'instrument':self.meta['instId'],'features':{'structure_1h':'1H_SWING_BULL'},'decision':{
             'action':'BUY_LONG','contract_version':'trading-evidence-v1','contract_valid':True,'valid_until':time.time()+300}})
         def private(method,path,params,env):
             self.assertEqual(method,'GET')
