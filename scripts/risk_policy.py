@@ -25,6 +25,7 @@ class Policy:
     single_asset_margin_usdt: float = 600
     available_margin_fraction: float = .8
     taker_fee: float = .0005
+    maker_fee: float = .0002
     slippage: float = .001
     minimum_net_rr: float = 2
     max_entry_distance_pct: float = .02
@@ -33,7 +34,7 @@ class Policy:
     def __post_init__(self):
         for name,value in vars(self).items():
             number(value,positive=True)
-            if ('pct' in name or name in {'available_margin_fraction','taker_fee','slippage'}) and value >= 1:
+            if ('pct' in name or name in {'available_margin_fraction','taker_fee','maker_fee','slippage'}) and value >= 1:
                 raise RiskRejected('Risk fractions must be below 1')
         if self.per_trade_equity_pct > self.portfolio_stop_pct:
             raise RiskRejected('Single trade budget exceeds portfolio budget')
@@ -78,7 +79,8 @@ def order_plan(*, metadata, side, entry, stop, take_profit, requested_size, budg
     if leverage>policy.max_leverage: raise RiskRejected('Actual exchange leverage exceeds policy')
     distance=abs(entry-stop)
     if distance >= entry/leverage*.8: raise RiskRejected('Stop exceeds conservative leverage buffer')
-    cost_per_contract=ct*((entry+max(stop,take_profit))*policy.taker_fee+entry*2*policy.slippage)
+    # Realistic cost: limit entry pays maker fee, OCO stop pays taker fee once, slippage on stop only.
+    cost_per_contract=ct*(entry*policy.maker_fee+max(stop,take_profit)*policy.taker_fee+entry*policy.slippage)
     unit_risk=ct*distance+cost_per_contract
     unit_reward=ct*abs(take_profit-entry)-cost_per_contract
     if unit_reward/unit_risk < policy.minimum_net_rr: raise RiskRejected('Net-of-cost R:R below policy')
@@ -115,7 +117,7 @@ def exposure(positions, pending, algos, metadata, policy=None):
         loss=max(0,mark-stop if side=='long' else stop-mark)
         liq=number(p.get('liqPx') or 0)
         if liq and ((side=='long' and stop<=liq) or (side=='short' and stop>=liq)): raise RiskRejected('Existing stop beyond liquidation boundary')
-        risk=size*ct*(loss+mark*(2*policy.taker_fee+2*policy.slippage))
+        risk=size*ct*(loss+mark*(policy.maker_fee+policy.taker_fee+policy.slippage))
         result[side]+=risk; result['total']+=risk
     for p in pending:
         if str(p.get('reduceOnly','false')).lower() in {'true','1'}: continue
@@ -126,7 +128,7 @@ def exposure(positions, pending, algos, metadata, policy=None):
         stops=[number(a.get('slTriggerPx') or 0) for a in attachments if number(a.get('slTriggerPx') or 0)>0]
         if not stops: raise RiskRejected('Pending order stop unavailable; reserve unknown risk by blocking')
         stop=min(stops) if side=='long' else max(stops)
-        risk=size*ct*(abs(entry-stop)+entry*(2*policy.taker_fee+2*policy.slippage))
+        risk=size*ct*(abs(entry-stop)+entry*(policy.maker_fee+policy.taker_fee+policy.slippage))
         result[side]+=risk; result['total']+=risk
     # Until measured groups are approved, treat all configured crypto swaps as one group.
     result['group']=result['total']

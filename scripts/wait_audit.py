@@ -148,7 +148,8 @@ def validate(raw, catalog, *, prior=None, policy=None):
             entry,stop,target=[numeric(geometry.get(k)) for k in ('entry_price','stop_loss_price','take_profit_price')]
             require(0<stop<entry<target if direction=='long' else 0<target<entry<stop,'WAIT计算方案价格几何无效')
             check_refs(geometry.get('evidence'),catalog)
-            cost=(entry+max(stop,target))*policy['taker_fee']+entry*2*policy['slippage']
+            # Realistic cost: limit entry pays maker fee, OCO stop pays taker fee once, slippage on stop.
+            cost=entry*policy['maker_fee']+max(stop,target)*policy['taker_fee']+entry*policy['slippage']
             net_rr=(abs(target-entry)-cost)/(abs(entry-stop)+cost)
             require(math.isfinite(net_rr) and net_rr<policy['minimum_net_rr'],'WAIT声称盈亏比不足但计算已满足门槛')
             item['net_rr_check']={'net_rr':net_rr,'minimum':policy['minimum_net_rr'],'cost_per_unit':cost,'scope':'this_geometry_only'}

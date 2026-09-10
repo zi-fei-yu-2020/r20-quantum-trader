@@ -130,7 +130,8 @@ def scan(package, policy=None):
                 elif not (0<stop<entry<target['price'] if sign==1 else 0<target['price']<entry<stop):
                     op.update(state='blocked',reason='invalid_geometry')
                 else:
-                    cost=(entry+max(stop,target['price']))*policy['taker_fee']+entry*2*policy['slippage']
+                    # Realistic cost: limit entry pays maker fee, OCO stop pays taker fee once, slippage on stop.
+                    cost=entry*policy['maker_fee']+max(stop,target['price'])*policy['taker_fee']+entry*policy['slippage']
                     rr=(abs(target['price']-entry)-cost)/(abs(entry-stop)+cost)
                     op.update(net_rr=rr,take_profit_price=target['price'],state='ready' if rr>=policy['minimum_net_rr'] else 'blocked',
                               reason='shadow_candidate' if rr>=policy['minimum_net_rr'] else 'net_rr_below_policy')

@@ -129,18 +129,22 @@ def catalog(package, policy=None):
                 # so net RR can clear 2 against the same observed channel target without
                 # manufacturing space. A breakout-chase entry anchors to the 1.5xATR
                 # volatility floor (wide), since post-breakout dispersion is larger.
-                structural_stop=(min(b['low'] for b in f[-3:])-atr*.1) if side=='long' else (max(b['high'] for b in f[-3:])+atr*.1)
                 if setup=='pullback_reclaim':
-                    stop=structural_stop
-                    stop_basis='retest_structure_3bar_extreme_plus_0.1_atr'
+                    # Anchor to the level being tested (prev extreme), not the 3-bar
+                    # extreme which may include an unrelated earlier swing. This is the
+                    # true retest invalidation point.
+                    stop=(prev['low']-atr*.1) if side=='long' else (prev['high']+atr*.1)
+                    stop_basis='retest_structure_prev_extreme_plus_0.1_atr'
                 else:
+                    structural_stop=(min(b['low'] for b in f[-3:])-atr*.1) if side=='long' else (max(b['high'] for b in f[-3:])+atr*.1)
                     volatility_stop=(entry-atr*1.5) if side=='long' else (entry+atr*1.5)
                     stop=min(structural_stop,volatility_stop) if side=='long' else max(structural_stop,volatility_stop)
                     stop_basis='max_structural_3bar_extreme_and_1.5x_atr'
                 target=channel_target
                 if not (0<stop<entry<target if side=='long' else 0<target<entry<stop):
                     rejected(setup,side,'invalid_geometry');continue
-                cost=(entry+max(stop,target))*policy['taker_fee']+entry*2*policy['slippage']
+                # Realistic cost: limit entry pays maker fee, OCO stop pays taker fee once, slippage on stop.
+                cost=entry*policy['maker_fee']+max(stop,target)*policy['taker_fee']+entry*policy['slippage']
                 rr=(abs(target-entry)-cost)/(abs(entry-stop)+cost)
                 geometry={'entry_price':entry,'stop_loss_price':stop,'take_profit_price':target}
                 if rr<policy['minimum_net_rr']:
