@@ -4,9 +4,9 @@ import AppCard from './ui/AppCard.vue'
 import AppBadge from './ui/AppBadge.vue'
 import { checkLabel, setupLabel, sideLabel, mergedAuditRows, compactAuditStatus, directionSummary } from '../utils/entryPlanDisplay'
 import { conditionText, reviewLabel, waitStreakBadges } from '../utils/waitAudit'
-import type { WaitAuditState, DecisionCycle, OpportunityShadow } from '../utils/waitAudit'
+import type { WaitAuditState, DecisionCycle } from '../utils/waitAudit'
 
-const props = defineProps<{ audit?: WaitAuditState; cycle?: DecisionCycle; opportunities?: OpportunityShadow }>()
+const props = defineProps<{ audit?: WaitAuditState; cycle?: DecisionCycle }>()
 const rows = computed(() => mergedAuditRows(props.cycle, props.audit).map(row => ({ ...row,
   directions: (['long', 'short'] as const).map(side => ({ side, ...directionSummary(row, side) })),
 })))
@@ -35,8 +35,6 @@ const stats = computed(() => {
 const timestamp = computed(() => props.audit?.updated_at
   ? new Date(props.audit.updated_at * 1000).toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai', hour12: false })
   : '尚无审计记录')
-const opportunitySetup = (value: string) => ({trend_pullback_reclaim:'趋势回踩恢复',closed_range_breakout:'区间突破',breakout_retest:'突破后回踩'} as Record<string,string>)[value] || value
-const opportunityState = (value: string) => ({observing:'观察触发',ready:'影子候选',blocked:'条件不足',awaiting_retest:'等待回踩',invalidated:'已失效',expired:'已过期'} as Record<string,string>)[value] || value
 const numberText = (value?: number) => Number.isFinite(value) ? value!.toFixed(2) : '—'
 </script>
 
@@ -149,17 +147,6 @@ const numberText = (value?: number) => Number.isFinite(value) ? value!.toFixed(2
     </div>
 
     <footer class="audit-footer">
-      <details v-if="opportunities" class="audit-footer-disclosure" data-opportunity-shadow>
-        <summary>入场机会对照 <span>影子运行 · 不下单{{ opportunities.stale ? ' · 数据延迟' : '' }}</span></summary>
-        <p>新识别机制跟踪趋势回踩、区间突破与突破后回踩，使用同一行情和风险预算；未经验证不会自动替换当前执行规则。</p>
-        <p v-if="!opportunities.items?.length">{{ opportunities.status === 'unavailable' ? '对照数据暂不可用' : '等待首轮机会采集' }}</p>
-        <ul><li v-for="item in opportunities.items" :key="item.instrument">
-          <strong>{{ item.instrument.split('-')[0] }}</strong>
-          <span v-if="item.error"> 数据待核验：{{ checkLabel(item.error) }}</span>
-          <span v-else> 当前规则 {{ item.baseline_plans ?? '—' }} 个草案 · 新规则 {{ item.ready_count ?? '—' }} 个影子候选</span>
-          <span v-for="op in item.opportunities" :key="op.id" class="audit-shadow-line">{{ sideLabel(op.side) }} · {{ opportunitySetup(op.setup) }}：{{ opportunityState(op.state) }}<span v-if="op.state === 'blocked'"> · {{ checkLabel(op.reason) }}</span></span>
-        </li></ul>
-      </details>
       <p v-if="cycle?.environment_notices?.length" class="audit-environment"><span>环境限制</span>{{ cycle.environment_notices.join('；') }}</p>
       <details v-if="cycle?.executed_actions?.length" class="audit-footer-disclosure" data-execution-records>
         <summary>执行记录 <span>{{ cycle.executed_actions.length }} 条</span></summary>

@@ -1008,12 +1008,6 @@ pip install -r requirements.txt
             <span class="docs-chapter">CHAPTER 10</span>
             <h2 class="text-xl sm:text-2xl font-semibold">入场候选与统一退出规则</h2>
           </div>
-          <div class="docs-feature-note" data-docs-entry-opportunities>
-            <h3>机会跟踪与新旧规则对照（影子运行）</h3>
-            <p><code>entry-opportunities-v1</code> 跟踪趋势回踩恢复、区间突破和突破后回踩。机会有观察、等待回踩、候选、失效与过期状态；有效期一小时。新结构替代旧结构，同一失效机会不会自动复活。</p>
-            <p>新机制使用同一冻结行情和风险预算，与当前执行规则并行记录，不调用额外模型、不下单、不会自动推广。对照入口位于决策审计底部；影子候选增加不代表已成交或已验证收益。</p>
-            <p>目标选择触发时已观察到的最近小时结构拐点，否则检查固定 12 小时通道边界；没有前方目标就记录缺失，不为了凑盈亏比挑更远目标。初始止损下限、费用和最终风控不放松。</p>
-          </div>
           <div class="docs-feature-note" data-docs-json-contract>
             <h3>模型 JSON 失败与历史审计展示</h3>
             <p>严格解析拒绝截断、重复键、非有限数及供应商声明未完成的响应，记录错误位置和内容指纹。契约格式失败最多追加一次完整重新生成，预算 20 秒且仅一次 HTTP 请求，不叠加 WAIT 纠错，也不增加交易写入重试。</p>

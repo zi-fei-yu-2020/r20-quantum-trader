@@ -66,7 +66,7 @@ function getActionLabel(action?: string, status?: string) {
   <div class="space-y-3">
     <CapitalPoolPanel :pool="store.data?.capital_pool" />
     <ScenarioShadowPanel :shadow="store.data?.scenario_shadow" />
-    <DecisionAuditPanel :audit="store.data?.wait_audit" :cycle="store.data?.decision_cycle" :opportunities="store.data?.entry_opportunities" />
+    <DecisionAuditPanel :audit="store.data?.wait_audit" :cycle="store.data?.decision_cycle" />
     <!-- Macro Summary Telemetry Strip -->
     <AppCard
       class="rounded-xl border p-3 sm:p-3.5 flex items-start space-x-2.5 transition-colors shadow-xs"

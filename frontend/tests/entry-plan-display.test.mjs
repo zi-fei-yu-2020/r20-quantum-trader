@@ -149,9 +149,3 @@ test('unknown audit codes are bounded in preview but retain their complete sourc
  assert.ok(display.directionSummary(row,'long').text.length<=29)
  assert.equal(row.record.audit.long.reason,reason)
 })
-test('opportunity comparison clearly distinguishes shadow candidates from active drafts',async()=>{
- const html=await renderToString(Vue.createSSRApp(exports.default,{opportunities:{mode:'shadow',items:[{
-  instrument:'BTC-USDT-SWAP',baseline_plans:0,ready_count:1,opportunities:[{id:'shadow1',side:'long',setup:'breakout_retest',state:'ready',reason:'shadow_candidate'}]}]}}))
- for(const text of ['影子运行 · 不下单','当前规则 0 个草案','新规则 1 个影子候选','突破后回踩','未经验证不会自动替换'])assert.ok(html.includes(text),text)
- assert.ok(!html.includes('已成交'))
-})
