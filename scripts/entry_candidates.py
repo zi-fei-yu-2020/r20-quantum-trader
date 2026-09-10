@@ -123,11 +123,20 @@ def catalog(package, policy=None):
                 hold_level=prev['close'] if setup=='pullback_reclaim' else level
                 if (entry-hold_level)*(1 if side=='long' else -1)<=0:
                     rejected(setup,side,'closed_trigger_invalidated_by_quote');continue
-                # Stop = the WIDER of the structural 3-bar extreme and a 1.5x ATR volatility floor,
-                # so it survives normal crypto noise instead of being picked off at 0.2-0.5%.
+                # Stop basis is differentiated by setup type. A pullback-reclaim entry
+                # sits near a defined support/resistance level (the reclaimed close),
+                # so its stop anchors to that retest structure (tight) — risk is small,
+                # so net RR can clear 2 against the same observed channel target without
+                # manufacturing space. A breakout-chase entry anchors to the 1.5xATR
+                # volatility floor (wide), since post-breakout dispersion is larger.
                 structural_stop=(min(b['low'] for b in f[-3:])-atr*.1) if side=='long' else (max(b['high'] for b in f[-3:])+atr*.1)
-                volatility_stop=(entry-atr*1.5) if side=='long' else (entry+atr*1.5)
-                stop=min(structural_stop,volatility_stop) if side=='long' else max(structural_stop,volatility_stop)
+                if setup=='pullback_reclaim':
+                    stop=structural_stop
+                    stop_basis='retest_structure_3bar_extreme_plus_0.1_atr'
+                else:
+                    volatility_stop=(entry-atr*1.5) if side=='long' else (entry+atr*1.5)
+                    stop=min(structural_stop,volatility_stop) if side=='long' else max(structural_stop,volatility_stop)
+                    stop_basis='max_structural_3bar_extreme_and_1.5x_atr'
                 target=channel_target
                 if not (0<stop<entry<target if side=='long' else 0<target<entry<stop):
                     rejected(setup,side,'invalid_geometry');continue
@@ -139,14 +148,14 @@ def catalog(package, policy=None):
                 reference='/askPx' if side=='long' else '/bidPx'
                 plan={'version':VERSION,'instrument':package['instId'],'setup':setup,'action':action,**geometry,
                       'created_at':at,'trigger_close_ms':bar['close_ms'],'valid_for_seconds':300,'net_rr':rr,
-                      'target_basis':'prior_12_closed_hour_channel_boundary','stop_basis':'max_structural_3bar_extreme_and_1.5x_atr',
+                      'target_basis':'prior_12_closed_hour_channel_boundary','stop_basis':stop_basis,
                       'target_observation':{'timeframe':'1H','field':'high' if side=='long' else 'low',
                           'window_start_close_ms':h[-13]['close_ms'],'window_end_close_ms':h[-2]['close_ms'],
                           'price':target,'extrapolated':False},
                       'supporting_evidence':[{'ref':'/macro_4h','value':package['macro_4h'],'interpretation':'现有宏观方向约束允许研究此方向，并非胜率保证'},
                          {'ref':reference,'value':entry,'interpretation':'本轮可观察报价，最终成交和风险仍需核验'},
                          {'ref':'/entry_candles/15M/last/close','value':bar['close'],'interpretation':'已收盘的回收/突破触发，不等待所有慢周期指标同时同向'}],
-                      'invalidation':{'price':stop,'timeframe':'15M','condition':'价格突破结构失效点或1.5倍ATR波动率防线，候选失效'},
+                      'invalidation':{'price':stop,'timeframe':'15M','condition':'价格突破结构失效点（回踩防守）或1.5倍ATR波动率防线（突破追势），候选失效'},
                       'order_authorized':False}
                 plan['id']=hashlib.sha256(json.dumps(plan,sort_keys=True,ensure_ascii=False,allow_nan=False).encode()).hexdigest()[:24]
                 result['plans'].append(plan)

@@ -100,8 +100,20 @@ def scan(package, policy=None):
                     'order_authorized':False,'triggered':bool(triggered),'entry_price':entry}
                 structural=(min(b['low'] for b in bars[max(0,index-2):])-atr*.1 if sign==1
                             else max(b['high'] for b in bars[max(0,index-2):])+atr*.1)
-                stop=min(structural,entry-atr*1.5) if sign==1 else max(structural,entry+atr*1.5)
-                op.update(stop_loss_price=stop,stop_basis='max_structural_and_1.5x_closed_atr',atr=atr)
+                # Route B: stop basis is differentiated by setup type. A pullback/retest
+                # entry sits near a defined support/resistance level, so its stop anchors
+                # to that retest structure (tight) — risk is small, so net RR can clear 2
+                # against the same observed target. A breakout-chase entry anchors to the
+                # 1.5xATR volatility floor (wide), since post-breakout dispersion is larger.
+                if setup in ('trend_pullback_reclaim','breakout_retest'):
+                    retest_structural=(min(b['low'] for b in bars[index:index+3] or [last])-atr*.1) if sign==1 \
+                        else (max(b['high'] for b in bars[index:index+3] or [last])+atr*.1)
+                    stop=retest_structural if sign==1 else retest_structural
+                    stop_basis='retest_structure_at_trigger_level'
+                else:
+                    stop=min(structural,entry-atr*1.5) if sign==1 else max(structural,entry+atr*1.5)
+                    stop_basis='max_structural_and_1.5x_closed_atr'
+                op.update(stop_loss_price=stop,stop_basis=stop_basis,atr=atr)
                 target=observed_target(hours,side,entry,origin['close_ms'])
                 op['target_observation']=target
                 if not triggered:

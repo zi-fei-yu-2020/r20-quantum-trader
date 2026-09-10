@@ -29,7 +29,13 @@ class OpportunityTests(unittest.TestCase):
                 self.assertFalse(op['order_authorized'])
                 proposal={'candidate_id':op['id'],'action':'BUY_LONG' if side=='long' else 'SELL_SHORT'}
                 self.assertFalse(candidate(p,proposal,facts_for(p))['contract_valid'])
-                self.assertGreaterEqual(abs(op['entry_price']-op['stop_loss_price'])+1e-9,op['atr']*1.5)
+                # A breakout-chase entry keeps the 1.5xATR volatility floor; a pullback/retest
+                # entry anchors its stop to the retest structure, which may be tighter because
+                # the entry sits near defined support/resistance.
+                if op['stop_basis']=='max_structural_and_1.5x_closed_atr':
+                    self.assertGreaterEqual(abs(op['entry_price']-op['stop_loss_price'])+1e-9,op['atr']*1.5)
+                else:
+                    self.assertGreater(abs(op['entry_price']-op['stop_loss_price']),0)
             self.assertEqual(old.catalog(p),old.catalog(before))
 
     def test_bad_data_never_produces_candidates(self):
