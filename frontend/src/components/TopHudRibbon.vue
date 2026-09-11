@@ -110,11 +110,11 @@ const formatPct = (value: unknown) => value == null ? '?' : `${(Number(value) * 
     >
     <AppCard class="metric-card">
       <div class="metric-card__label">
-        <span>Execution profile</span><Gauge class="size-4 text-[var(--text-faint)]" />
+        <span>&#x6267;&#x884C;&#x6A21;&#x5F0F;</span><Gauge class="size-4 text-[var(--text-faint)]" />
       </div>
       <div class="metric-card__value text-base" style="color: var(--color-brand)">{{ profileLabel }}</div>
-      <div class="metric-card__footer">Risk/trade {{ execution ? formatPct(execution.per_trade_equity_pct) : '--' }}<span class="ml-auto">Leverage {{ execution?.max_leverage ?? '--' }}x</span></div>
-      <div class="metric-card__footer mt-1">Positions {{ execution?.max_active_instruments ?? '--' }} - Margin cap {{ execution?.total_margin_usdt ?? '--' }}U</div>
+      <div class="metric-card__footer">&#x5355;&#x7B14;&#x98CE;&#x9669; {{ execution ? formatPct(execution.per_trade_equity_pct) : '--' }}<span class="ml-auto">&#x6700;&#x5927;&#x6760;&#x6746; {{ execution?.max_leverage ?? '--' }}x</span></div>
+      <div class="metric-card__footer mt-1">&#x6301;&#x4ED3;&#x4E0A;&#x9650; {{ execution?.max_active_instruments ?? '--' }} ? &#x4FDD;&#x8BC1;&#x91D1;&#x4E0A;&#x9650; {{ execution?.total_margin_usdt ?? '--' }}U</div>
     </AppCard>
   </div>
 </template>

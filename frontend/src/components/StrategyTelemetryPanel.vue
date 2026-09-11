@@ -3,7 +3,6 @@ import { computed } from 'vue'
 import AppCard from './ui/AppCard.vue'
 import AppBadge from './ui/AppBadge.vue'
 import { useDashboardStore } from '../stores/dashboard'
-
 const store = useDashboardStore()
 const stats = computed(() => store.data?.horizon_stats || {})
 const profile = computed(() => store.data?.execution_profile)
@@ -12,32 +11,21 @@ const waitState = computed(() => store.data?.wait_state)
 const stat = (key: string) => stats.value[key] || {}
 const pct = (v: unknown) => v == null ? '--' : `${(Number(v) * 100).toFixed(1)}%`
 const money = (v: unknown) => v == null ? '--' : `${Number(v).toFixed(2)} U`
-const waitLabel = computed(() => {
-  if (waitState.value?.detail) return waitState.value.detail
-  if (wait.value?.unavailable_reason) return wait.value.unavailable_reason
-  const counts = wait.value?.counts || {}
-  if (Number(counts.entry_candidate || 0) > 0) return 'Executable candidates are being reviewed'
-  if (Number(counts.incomplete || 0) > 0) return 'Some decisions need completion'
-  return 'No executable candidate in the latest closed-candle frame'
-})
+const waitLabel = computed(() => waitState.value?.detail || wait.value?.unavailable_reason || '等待新的短线或波段候选')
 </script>
-
 <template>
   <div class="grid gap-3 md:grid-cols-2" data-strategy-telemetry>
     <AppCard class="p-4 min-w-0">
-      <div class="flex items-center justify-between gap-3 mb-3">
-        <div><p class="text-xs uppercase tracking-wider" style="color:var(--text-faint)">Strategy telemetry</p><h3 class="font-semibold mt-1">SCALP / SWING</h3></div>
-        <AppBadge tone="brand">{{ profile?.execution?.id || '--' }}</AppBadge>
-      </div>
+      <div class="flex items-center justify-between gap-3 mb-3"><div><p class="text-xs uppercase tracking-wider" style="color:var(--text-faint)">&#x7B56;&#x7565;&#x7EDF;&#x8BA1;</p><h3 class="font-semibold mt-1">&#x77ED;&#x7EBF; / &#x6CE2;&#x6BB5;</h3></div><AppBadge tone="brand">{{ profile?.execution?.id || '--' }}</AppBadge></div>
       <div class="grid grid-cols-2 gap-3">
-        <div class="rounded-lg p-3" style="background:var(--bg-card-subtle)"><p class="text-xs" style="color:var(--text-muted)">SCALP net</p><p class="text-lg font-bold num-tabular" :style="{color:Number(stat('scalp').net_pnl || 0)>=0?'var(--color-up)':'var(--color-down)'}">{{ money(stat('scalp').net_pnl) }}</p><p class="text-xs" style="color:var(--text-faint)">{{ stat('scalp').closed || 0 }} trades - {{ stat('scalp').wins || 0 }} wins</p></div>
-        <div class="rounded-lg p-3" style="background:var(--bg-card-subtle)"><p class="text-xs" style="color:var(--text-muted)">SWING net</p><p class="text-lg font-bold num-tabular" :style="{color:Number(stat('swing').net_pnl || 0)>=0?'var(--color-up)':'var(--color-down)'}">{{ money(stat('swing').net_pnl) }}</p><p class="text-xs" style="color:var(--text-faint)">{{ stat('swing').closed || 0 }} trades - {{ stat('swing').wins || 0 }} wins</p></div>
+        <div class="rounded-lg p-3" style="background:var(--bg-card-subtle)"><p class="text-xs" style="color:var(--text-muted)">&#x77ED;&#x7EBF; &#x51C0;&#x76C8;&#x4E8F;</p><p class="text-lg font-bold num-tabular" :style="{color:Number(stat('scalp').net_pnl || 0)>=0?'var(--color-up)':'var(--color-down)'}">{{ money(stat('scalp').net_pnl) }}</p><p class="text-xs" style="color:var(--text-faint)">{{ stat('scalp').closed || 0 }} &#x7B14;&#x4EA4;&#x6613; ? {{ stat('scalp').wins || 0 }} &#x80DC;&#x51FA</p></div>
+        <div class="rounded-lg p-3" style="background:var(--bg-card-subtle)"><p class="text-xs" style="color:var(--text-muted)">&#x6CE2;&#x6BB5; &#x51C0;&#x76C8;&#x4E8F;</p><p class="text-lg font-bold num-tabular" :style="{color:Number(stat('swing').net_pnl || 0)>=0?'var(--color-up)':'var(--color-down)'}">{{ money(stat('swing').net_pnl) }}</p><p class="text-xs" style="color:var(--text-faint)">{{ stat('swing').closed || 0 }} &#x7B14;&#x4EA4;&#x6613; ? {{ stat('swing').wins || 0 }} &#x80DC;&#x51FA</p></div>
       </div>
     </AppCard>
     <AppCard class="p-4 min-w-0">
-      <div class="flex items-center justify-between gap-3 mb-3"><div><p class="text-xs uppercase tracking-wider" style="color:var(--text-faint)">Decision state</p><h3 class="font-semibold mt-1">WAIT is diagnostic, not a lock</h3></div><AppBadge :tone="waitState?.code === 'AI_UNAVAILABLE' || waitState?.code === 'DATA_UNAVAILABLE' ? 'warning' : 'neutral'">{{ wait?.status || 'WAIT' }}</AppBadge></div>
-      <p class="text-sm leading-6" style="color:var(--text-muted)">{{ waitLabel }}</p><p class="text-xs mt-2" style="color:var(--text-faint)">Next: {{ waitState?.next_trigger || 'Next closed-candle evaluation' }}</p>
-      <div class="mt-3 text-xs grid grid-cols-2 gap-2" style="color:var(--text-faint)"><span>Evaluated {{ wait?.evaluated_count ?? '--' }}</span><span>Candidates {{ wait?.counts?.entry_candidate ?? 0 }}</span><span>Risk/trade {{ profile?.execution?.per_trade_equity_pct == null ? '--' : pct(profile.execution.per_trade_equity_pct) }}</span><span>Daily stop {{ profile?.execution?.daily_drawdown_pct == null ? '--' : pct(profile.execution.daily_drawdown_pct) }}</span></div>
+      <div class="flex items-center justify-between gap-3 mb-3"><div><p class="text-xs uppercase tracking-wider" style="color:var(--text-faint)">&#x51B3;&#x7B56;&#x72B6;&#x6001;</p><h3 class="font-semibold mt-1">WAIT &#x662F;&#x5F53;&#x524D;&#x72B6;&#x6001;&#xFF0C;&#x4E0D;&#x662F;&#x9501;&#x4ED3;</h3></div><AppBadge :tone="waitState?.code === 'AI_UNAVAILABLE' || waitState?.code === 'DATA_UNAVAILABLE' ? 'warning' : 'neutral'">{{ wait?.status || 'WAIT' }}</AppBadge></div>
+      <p class="text-sm leading-6" style="color:var(--text-muted)">{{ waitLabel }}</p><p class="text-xs mt-2" style="color:var(--text-faint)">&#x4E0B;&#x4E00;&#x6B65;&#xFF1A;{{ waitState?.next_trigger || '&#x7B49;&#x5F85;&#x65B0;&#x7684;&#x5019;&#x9009;' }}</p>
+      <div class="mt-3 text-xs grid grid-cols-2 gap-2" style="color:var(--text-faint)"><span>&#x5DF2;&#x5BA1;&#x67E5; {{ wait?.evaluated_count ?? '--' }}</span><span>&#x5019;&#x9009; {{ wait?.counts?.entry_candidate ?? 0 }}</span><span>&#x5355;&#x7B14;&#x98CE;&#x9669; {{ profile?.execution?.per_trade_equity_pct == null ? '--' : pct(profile.execution.per_trade_equity_pct) }}</span><span>&#x65E5;&#x5185;&#x7194;&#x65AD; {{ profile?.execution?.daily_drawdown_pct == null ? '--' : pct(profile.execution.daily_drawdown_pct) }}</span></div>
     </AppCard>
   </div>
 </template>

@@ -5,7 +5,6 @@ import { useDashboardStore } from '../stores/dashboard'
 import { observedNumber } from '../utils/observationDisplay'
 import HeaderBar from '../components/HeaderBar.vue'
 import TopHudRibbon from '../components/TopHudRibbon.vue'
-import StrategyTelemetryPanel from '../components/StrategyTelemetryPanel.vue'
 import TacticalDesk from '../components/TacticalDesk.vue'
 import MarketCandles from '../components/MarketCandles.vue'
 import InstrumentMatrix from '../components/InstrumentMatrix.vue'
@@ -22,7 +21,7 @@ import { Columns2, Rows2, RefreshCw } from 'lucide-vue-next'
 const router = useRouter()
 const route = useRoute()
 const store = useDashboardStore()
-const layoutMode = ref<'dual' | 'stacked'>('stacked')
+const layoutMode = ref<'dual' | 'stacked'>('dual')
 const descriptions = {
   trading: ['交易概览', '账户、持仓与市场信号，在一个视图中保持同步。'],
   factors: ['AI 决策', '回溯模型判断与投委会讨论，了解每一轮策略的依据。'],
@@ -51,7 +50,7 @@ onMounted(() => {
   syncTabFromRoute()
   store.startPolling(3000)
   try {
-    if (localStorage.getItem('r20_dashboard_layout_v2') === 'dual') layoutMode.value = 'dual'
+    if (localStorage.getItem('r20_dashboard_layout_v2') !== 'stacked') layoutMode.value = 'dual'
   } catch {
     /* optional preference */
   }
@@ -116,7 +115,7 @@ function setLayout(mode: 'dual' | 'stacked') {
         class="terminal-overview"
         :class="{ 'terminal-overview--dual': layoutMode === 'dual' }"
       >
-        <div class="terminal-overview__left"><TopHudRibbon /><StrategyTelemetryPanel /><MarketCandles :active="store.activeTab === 'trading' && (route.path === '/' || route.path === '/trading')" /><TacticalDesk /></div>
+        <div class="terminal-overview__left"><TopHudRibbon /><MarketCandles :active="store.activeTab === 'trading' && (route.path === '/' || route.path === '/trading')" /><TacticalDesk /></div>
         <InstrumentMatrix />
       </div>
       <div v-show="store.activeTab === 'factors'" class="terminal-grid"><AiBrainHistory /></div>

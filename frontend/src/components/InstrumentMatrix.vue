@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import AppCard from './ui/AppCard.vue'
-import DecisionAuditPanel from './DecisionAuditPanel.vue'
+import StrategyTelemetryPanel from './StrategyTelemetryPanel.vue'
 import CapitalPoolPanel from './CapitalPoolPanel.vue'
 import ScenarioShadowPanel from './ScenarioShadowPanel.vue'
 import { auditLabel } from '../utils/waitAudit'
@@ -66,7 +66,7 @@ function getActionLabel(action?: string, status?: string) {
   <div class="space-y-3">
     <CapitalPoolPanel :pool="store.data?.capital_pool" />
     <ScenarioShadowPanel :shadow="store.data?.scenario_shadow" />
-    <DecisionAuditPanel :audit="store.data?.wait_audit" :cycle="store.data?.decision_cycle" />
+    <StrategyTelemetryPanel />
     <!-- Macro Summary Telemetry Strip -->
     <AppCard
       class="rounded-xl border p-3 sm:p-3.5 flex items-start space-x-2.5 transition-colors shadow-xs"

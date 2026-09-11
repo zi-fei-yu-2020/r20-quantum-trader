@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import PublishedMemoryPanel from './PublishedMemoryPanel.vue'
 import EvolutionReviewPanel from './EvolutionReviewPanel.vue'
+import DecisionAuditPanel from './DecisionAuditPanel.vue'
 import { useDashboardStore } from '../stores/dashboard'
 import { Sparkles } from 'lucide-vue-next'
 const store = useDashboardStore()
@@ -15,6 +16,7 @@ const store = useDashboardStore()
       <EvolutionReviewPanel :review="store.data?.evolution_review" />
       <PublishedMemoryPanel :publication="store.data?.memory_publication" />
     </div>
+    <section class="evolution-audit"><DecisionAuditPanel :audit="store.data?.wait_audit" :cycle="store.data?.decision_cycle" /></section>
   </div>
 </template>
 <style scoped>
@@ -23,6 +25,7 @@ const store = useDashboardStore()
 .evolution-toolbar__scope { display: flex; align-items: center; gap: .5rem; }
 .evolution-toolbar__model { display: flex; flex-wrap: wrap; gap: .375rem; min-width: 0; overflow-wrap: anywhere; font-size: .75rem; }
 .evolution-toolbar__model strong { color: var(--text-main); font-weight: 500; }
+.evolution-audit { margin-top: 1rem; }
 .evolution-layout { display: grid; grid-template-columns: minmax(0,1fr); gap: 1rem; align-items: start; }
 @container (min-width: 1040px) { .evolution-layout { grid-template-columns: minmax(0,1.6fr) minmax(0,1fr); } }
 </style>
