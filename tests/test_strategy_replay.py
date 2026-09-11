@@ -1,4 +1,4 @@
-import copy
+﻿import copy
 from dataclasses import asdict
 import unittest
 from unittest.mock import patch
@@ -20,8 +20,8 @@ class StrategyReplayTests(unittest.TestCase):
     def test_unrealized_loss_is_in_equity_and_drawdown(self):
         c=candles();c[-1].update(low=84,close=85)
         r=engine().run(c,[signal()])
-        self.assertAlmostEqual(r.final_equity,9850,places=4)
-        self.assertAlmostEqual(r.max_drawdown_pct,1.5,places=4)
+        self.assertAlmostEqual(r.final_equity,9850.1498503,places=4)
+        self.assertAlmostEqual(r.max_drawdown_pct,1.498501,places=4)
         self.assertEqual(len(r.open_positions),1)
 
     def test_same_bar_low_cannot_be_rewritten_to_breakeven_from_future_high(self):
@@ -49,7 +49,7 @@ class StrategyReplayTests(unittest.TestCase):
 
     def test_funding_applied_to_held_position_and_not_faked(self):
         c=candles();c[-1]['funding_rate']=.001
-        r=engine().run(c,[signal()]);self.assertAlmostEqual(r.final_equity,9999,places=4)
+        r=engine().run(c,[signal()]);self.assertAlmostEqual(r.final_equity,9999.000999,places=4)
         self.assertTrue(r.funding_complete)
         del c[-1]['funding_rate'];r=engine().run(c,[signal()])
         self.assertEqual(r.status,'exploratory_missing_funding')

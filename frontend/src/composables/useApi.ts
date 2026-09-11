@@ -30,10 +30,24 @@ export function useApi() {
         try { data = await resp.json() } catch { /* empty response */ }
         auth.checkResponse(resp, session)
         if (!resp.ok) {
-          const detail = Array.isArray(data.detail)
+          const error = data?.error
+          const detail = Array.isArray(data)
+            ? data.map((x: any) => typeof x === 'string' ? x : x?.msg || x?.detail || JSON.stringify(x)).join('；')
+            : Array.isArray(data.detail)
             ? data.detail.map((x: any) => `${(x.loc || []).slice(1).join('.') || '请求'}：${x.msg}`).join('；')
-            : data.detail
-          throw new Error(detail || `HTTP ${resp.status}`)
+            : typeof data.detail === 'string'
+              ? data.detail
+              : typeof error?.message === 'string'
+                ? error.message
+                : typeof data.message === 'string'
+                  ? data.message
+                  : `HTTP ${resp.status}`
+          const requestId = resp.headers.get('x-request-id') || data?.request_id || error?.request_id
+          const suffix = requestId ? `（request_id: ${requestId}）` : ''
+          const failure = new Error(`${detail}${suffix}`)
+          ;(failure as any).code = error?.code || data?.code
+          ;(failure as any).requestId = requestId
+          throw failure
         }
         return data
       }

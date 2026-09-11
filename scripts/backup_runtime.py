@@ -137,6 +137,7 @@ def decrypt_archive(source: Path, key_env: str, destination: Path) -> Path:
 
 
 def verify_archive(path: Path, expected_sha256: str = "", key_env: str = "") -> dict[str, Any]:
+    BACKUPS.mkdir(parents=True, exist_ok=True)
     if not path.exists(): raise RuntimeError("归档文件不存在")
     checksum = calculate_sha256(path)
     if expected_sha256 and checksum != expected_sha256: raise RuntimeError("SHA256 校验失败")

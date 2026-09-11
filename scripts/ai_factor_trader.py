@@ -386,22 +386,19 @@ def is_circuit_breaker_active():
         except Exception as e:
             return True, f"熔断状态文件损坏，安全暂停开仓: {e}"
 
-    # 3. Daily Max Loss Limit Check from lifecycle ledger using Beijing close_time.
-    if os.path.exists(LEDGER_JSON_FILE):
-        try:
-            with open(LEDGER_JSON_FILE, "r", encoding="utf-8") as f:
-                ledger = json.load(f)
-            tz_bj = datetime.timezone(datetime.timedelta(hours=8))
-            today_str = datetime.datetime.now(tz_bj).strftime("%Y-%m-%d")
-            today_pnl = sum(
-                float(t.get("pnl", 0) or 0)
-                for t in ledger
-                if t.get("status") == "closed" and str(t.get("close_time", "")).startswith(today_str)
-            )
-            if today_pnl < -MAX_DAILY_LOSS_USDT:
-                return True, f"今日累计回撤 ({today_pnl:.2f}U) 触及单日最大风控熔断限额 ({MAX_DAILY_LOSS_USDT}U)"
-        except Exception as e:
-            return True, f"日亏损风控数据读取失败，安全暂停开仓: {e}"
+    # 3. Daily/peak loss gate uses the authoritative reconciled equity state.
+    try:
+        from scripts import strategy_evidence
+        from scripts.okx_runtime import selected_environment
+        env = selected_environment()
+        with strategy_evidence.connection() as db:
+            row = db.execute('SELECT payload FROM equity_state WHERE scope=?', (env.identity,)).fetchone()
+        if row:
+            state = json.loads(row[0])
+            if state.get('blocked'):
+                return True, f"权威权益状态触发亏损熔断: daily={float(state.get('daily_drawdown', 0)):.2%}, peak={float(state.get('peak_drawdown', 0)):.2%}"
+    except Exception as e:
+        return True, f"权威权益风控数据读取失败，安全暂停开仓: {e}"
 
     return False, ""
 
@@ -473,6 +470,57 @@ def close_position_confirmed(inst_id: str, pos_side: str, before_size: float, *,
     if not saw_successful_query:
         return False, "position verification failed: no successful exchange response; no write retry"
     return False, f"exchange still reports an open position after one close request (before={before_size}); no write retry"
+
+
+def reconcile_scale_trackers(trackers: Dict[str, Any], real_pos_dict: Dict[str, Any]) -> None:
+    """Reconcile scale reservations from exchange order fills, once per fill delta.
+
+    ACKs are not fills: unresolved reads leave the reservation in place and block
+    another scale attempt rather than guessing or incrementing local state.
+    """
+    result = run_cmd_result(okx_private_command("okx swap orders --history --limit 100 --json"), timeout=20)
+    if not result.get("ok") or not isinstance(result.get("data"), list):
+        return
+    for key, tracker in trackers.items():
+        if not isinstance(tracker, dict):
+            continue
+        pending = tracker.get("pending_scale_orders") or []
+        if not isinstance(pending, list):
+            continue
+        side = key.rsplit("_", 1)[-1]
+        inst_id = key.rsplit("_", 1)[0]
+        position = real_pos_dict.get(inst_id)
+        if not position or str(position.get("side", position.get("posSide", ""))).lower() != side:
+            continue
+        position_binding = {str(position.get(field) or "") for field in ("posId", "cTime")}
+        remaining = []
+        changed = False
+        for item in pending:
+            if not isinstance(item, dict) or not item.get("order_id"):
+                remaining.append(item); continue
+            row = next((o for o in result["data"] if str(o.get("ordId")) == str(item["order_id"])), None)
+            if row is None:
+                remaining.append(item); continue
+            state = str(row.get("state") or "").lower()
+            if state in {"live", "partially_filled"}:
+                remaining.append(item); continue
+            if state not in {"filled", "canceled", "mmp_canceled"}:
+                remaining.append(item); continue
+            filled = abs(float(row.get("accFillSz") or 0))
+            counted = abs(float(item.get("counted_fill") or 0))
+            delta = max(0.0, filled - counted)
+            if delta > 0 and position_binding:
+                tracker["scale_count"] = int(tracker.get("scale_count", 0)) + 1
+                item["counted_fill"] = filled
+                item["position_binding"] = sorted(position_binding)
+                changed = True
+            if filled < abs(float(item.get("requested_size") or 0)) and state not in {"canceled", "mmp_canceled"}:
+                remaining.append(item)
+            elif delta <= 0 and state == "filled":
+                remaining.append(item)
+        tracker["pending_scale_orders"] = remaining
+        if changed:
+            tracker["last_scale_reconciled_at"] = time.time()
 
 
 def prune_trackers(trackers: Dict[str, Any], real_pos_dict: Dict[str, Any]) -> int:
@@ -1938,6 +1986,7 @@ def execute_portfolio():
     environment_notices = []
     trackers = load_trackers()
     stale_tracker_count = prune_trackers(trackers, real_pos_dict)
+    reconcile_scale_trackers(trackers, real_pos_dict)
     if stale_tracker_count:
         executed_actions.append(f"清理 {stale_tracker_count} 条已失效持仓追踪记录")
     for f in all_factors:
@@ -2121,14 +2170,16 @@ def execute_portfolio():
                     tp_px = float(ai_decision.get("take_profit_price") or (limit_px + tp_dist))
                     sl_px = float(ai_decision.get("stop_loss_price") or (limit_px - sl_dist))
 
+                    candidate_id = ai_decision.get('candidate_id')
                     # Program-selected plans may be rounded to ticks, never silently repaired into another setup.
-                    if ai_decision.get('candidate_id') and not 0 < sl_px < limit_px < tp_px:
+                    if candidate_id and not 0 < sl_px < limit_px < tp_px:
                         executed_actions.append(f"[{f['name']}] 程序候选取整后价格结构失效，拒绝重写止损或目标")
                         continue
-                    # Hard check: For BUY LONG, OKX strictly requires sl_px < limit_px < tp_px
-                    if sl_px >= limit_px:
+                    # Model-independent proposals may be repaired to a valid
+                    # side geometry; immutable program candidates may not.
+                    if not candidate_id and sl_px >= limit_px:
                         sl_px = round(limit_px - max(sl_dist, f["price"] * 0.012), prec)
-                    if tp_px <= limit_px:
+                    if not candidate_id and tp_px <= limit_px:
                         tp_px = round(limit_px + max(tp_dist, f["price"] * 0.024), prec)
 
                     accepted, order_ref = submit_protected_limit_order(inst_id, "buy", "long", actual_sz, limit_px, tp_px, sl_px, risk_budget_usdt=f["risk_per_trade_usd"], decision_id=ai_info.get("decision_id"), decision_at=ai_info.get("data_as_of"), allow_demo_translation=not bool(ai_decision.get('candidate_id')), horizon=horizon)
@@ -2137,9 +2188,11 @@ def execute_portfolio():
                         limit_px, sl_px, tp_px = LAST_ENTRY_PLAN['entry'], LAST_ENTRY_PLAN['stop'], LAST_ENTRY_PLAN['take_profit']
                         if is_scale_in:
                             tracker = trackers.get(f"{inst_id}_long", {})
-                            tracker["scale_count"] = tracker.get("scale_count", 0) + 1
+                            pending = tracker.setdefault("pending_scale_orders", [])
+                            if str(order_ref) not in {str(item.get("order_id")) for item in pending if isinstance(item, dict)}:
+                                pending.append({"order_id": str(order_ref), "requested_size": actual_sz, "submitted_at": time.time()})
                             save_trackers(trackers)
-                            executed_actions.append(f"[{f['name']}] 🚀 AI顺势浮盈金字塔加多挂单已提交（数量经最终风险预算裁剪）@{limit_px} (order={order_ref}, TP={tp_px}, SL={sl_px})")
+                            executed_actions.append(f"[{f['name']}] 🚀 AI顺势浮盈金字塔加多委托已提交，等待成交确认后计入加仓次数（数量经最终风险预算裁剪）@{limit_px} (order={order_ref}, TP={tp_px}, SL={sl_px})")
                             if notify_trade_open:
                                 notify_trade_open(
                                     inst=f["name"],
@@ -2216,13 +2269,16 @@ def execute_portfolio():
                     tp_px = float(ai_decision.get("take_profit_price") or (limit_px - tp_dist))
                     sl_px = float(ai_decision.get("stop_loss_price") or (limit_px + sl_dist))
 
+                    candidate_id = ai_decision.get("candidate_id")
                     # Hard check: For SELL SHORT, OKX strictly requires tp_px < limit_px < sl_px
-                    if ai_decision.get('candidate_id') and not 0 < tp_px < limit_px < sl_px:
+                    if candidate_id and not 0 < tp_px < limit_px < sl_px:
                         executed_actions.append(f"[{f['name']}] 程序候选取整后价格结构失效，拒绝重写止损或目标")
                         continue
-                    if sl_px <= limit_px:
+                    # Model-independent proposals may be repaired to a valid
+                    # side geometry; immutable program candidates may not.
+                    if not candidate_id and sl_px <= limit_px:
                         sl_px = round(limit_px + max(sl_dist, f["price"] * 0.012), prec)
-                    if tp_px >= limit_px:
+                    if not candidate_id and tp_px >= limit_px:
                         tp_px = round(limit_px - max(tp_dist, f["price"] * 0.024), prec)
 
                     accepted, order_ref = submit_protected_limit_order(inst_id, "sell", "short", actual_sz, limit_px, tp_px, sl_px, risk_budget_usdt=f["risk_per_trade_usd"], decision_id=ai_info.get("decision_id"), decision_at=ai_info.get("data_as_of"), allow_demo_translation=not bool(ai_decision.get("candidate_id")), horizon=horizon)
@@ -2231,9 +2287,11 @@ def execute_portfolio():
                         limit_px, sl_px, tp_px = LAST_ENTRY_PLAN['entry'], LAST_ENTRY_PLAN['stop'], LAST_ENTRY_PLAN['take_profit']
                         if is_scale_in:
                             tracker = trackers.get(f"{inst_id}_short", {})
-                            tracker["scale_count"] = tracker.get("scale_count", 0) + 1
+                            pending = tracker.setdefault("pending_scale_orders", [])
+                            if str(order_ref) not in {str(item.get("order_id")) for item in pending if isinstance(item, dict)}:
+                                pending.append({"order_id": str(order_ref), "requested_size": actual_sz, "submitted_at": time.time()})
                             save_trackers(trackers)
-                            executed_actions.append(f"[{f['name']}] 🌪️ AI顺势浮盈金字塔加空挂单已提交（数量经最终风险预算裁剪）@{limit_px} (order={order_ref}, TP={tp_px}, SL={sl_px})")
+                            executed_actions.append(f"[{f['name']}] 🌪️ AI顺势浮盈金字塔加空委托已提交，等待成交确认后计入加仓次数（数量经最终风险预算裁剪）@{limit_px} (order={order_ref}, TP={tp_px}, SL={sl_px})")
                             if notify_trade_open:
                                 notify_trade_open(
                                     inst=f["name"],

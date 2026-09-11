@@ -71,6 +71,12 @@ def equity_guard(env, balance, policy):
 
 
 def prepare(env, *, inst_id, side, entry, stop, take_profit, requested_size, budget, decision_id, decision_at, horizon='swing'):
+    from scripts.trade_lock import writer
+    with writer(account=env.identity, inst_id=inst_id, side=side):
+        return _prepare(env, inst_id=inst_id, side=side, entry=entry, stop=stop, take_profit=take_profit, requested_size=requested_size, budget=budget, decision_id=decision_id, decision_at=decision_at, horizon=horizon)
+
+
+def _prepare(env, *, inst_id, side, entry, stop, take_profit, requested_size, budget, decision_id, decision_at, horizon='swing'):
     from r20_backend.account_connections import assert_current
     assert_current(env)
     if not env.configured: raise risk.RiskRejected('Final risk preflight requires current account static credentials')
@@ -94,10 +100,16 @@ def prepare(env, *, inst_id, side, entry, stop, take_profit, requested_size, bud
         current_memory=memory_view(scope=env.identity)
         if memory_basis.get('scope')!=env.identity or current_memory['prompt_hash']!=memory_basis['prompt_hash']:
             raise risk.RiskRejected('Published memory changed after inference; fresh decision required')
-    if not decision.get('candidate_id'):
+    candidate_id = decision.get('candidate_id')
+    if not candidate_id:
+        # Compatibility path for validated model-independent proposals. They
+        # still go through independent direction, quote, geometry, account and
+        # risk checks below; candidate_id is required only for immutable plans.
         from scripts.entry_candidates import validate_independent_direction
-        try:validate_independent_direction(record.get('features',{}),decision.get('action'))
-        except (ValueError,TypeError,KeyError) as exc:raise risk.RiskRejected('Final entry direction rejected: '+str(exc)) from None
+        try:
+            validate_independent_direction(record.get('features',{}), decision.get('action'))
+        except (ValueError,TypeError,KeyError) as exc:
+            raise risk.RiskRejected('Final entry direction rejected: '+str(exc)) from None
     expected='BUY_LONG' if side=='long' else 'SELL_SHORT'
     if record.get('instrument')!=inst_id or record.get('decision',{}).get('action')!=expected:
         raise risk.RiskRejected('Decision evidence does not authorize this instrument/direction')

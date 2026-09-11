@@ -137,6 +137,10 @@ class GatewayScheduler:
         return not last or last.date() != now.date() or last.strftime("%H:%M") != minute
 
     def _execute(self, spec: JobSpec) -> None:
+        # Advance the schedule only when the worker actually starts.  The
+        # running map prevents duplicate ticks while this process is active;
+        # persisting here also keeps failed launches from looking successful.
+        self.store.set_state(f"job.last.{spec.name}", datetime.now(BJ_TZ).isoformat())
         run_id = self.store.begin_job(spec.name)
         try:
             command = [sys.executable, str(SCRIPTS / spec.script)]
@@ -165,7 +169,6 @@ class GatewayScheduler:
         for spec in current_jobs():
             if spec.name in self.running or not self.due(spec, now, schedule):
                 continue
-            self.store.set_state(f"job.last.{spec.name}", now.isoformat())
             executor = self.guard_executor if spec.name == "position_guard" else self.ledger_executor if spec.name == "ledger_sync" else self.executor
             self.running[spec.name] = executor.submit(self._execute, spec)
             launched.append(spec.name)

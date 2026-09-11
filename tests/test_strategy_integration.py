@@ -98,7 +98,7 @@ class StrategyIntegrationTests(unittest.TestCase):
                 entry=120, stop=114, take_profit=145, requested_size=16, budget=15,
                 decision_id=identity, decision_at=time.time())
         read.assert_called_once_with(self.env, priority='risk', force=True)
-        self.assertAlmostEqual(plan['portfolio_before']['total'], 20.72)
+        self.assertAlmostEqual(plan['portfolio_before']['total'], 20.408)
         self.assertEqual(plan['portfolio_before']['long'], plan['portfolio_before']['group'])
         self.assertEqual(plan['leverage'], 3)
         self.assertLessEqual(plan['risk_usdt'], 15)

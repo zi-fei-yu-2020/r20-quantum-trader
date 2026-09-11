@@ -1,4 +1,4 @@
-import test from 'node:test'
+﻿import test from 'node:test'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 const css=readFileSync(new URL('../src/style.css',import.meta.url),'utf8')
@@ -13,7 +13,7 @@ test('single-column terminal grids have zero minimum tracks, not implicit min-co
 test('trade history remains a complete keyboard-scrollable table, with an explicit phone hint',()=>{
  assert.match(ledger,/<AppTable\s+label="交易记录明细"[^>]*aria-describedby="trade-ledger-scroll-hint"/)
  assert.match(ledger,/id="trade-ledger-scroll-hint"/)
- assert.equal((ledger.match(/<th\s/g)||[]).length,9)
+ assert.equal((ledger.match(/<th\s/g)||[]).length,10)
  assert.match(appTable,/role="region"/)
  assert.match(appTable,/tabindex="0"/)
  assert.match(css,/\.table-scroll-container:focus-visible\s*\{[^}]*outline-offset:\s*-3px/)

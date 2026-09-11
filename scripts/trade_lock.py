@@ -1,6 +1,7 @@
 """One reentrant process/thread-safe writer gate, independent of HTTP read admission."""
 from contextlib import contextmanager
 from pathlib import Path
+import hashlib
 import threading
 import time
 
@@ -9,8 +10,10 @@ _local = threading.local()
 _thread_lock = threading.RLock()
 
 @contextmanager
-def writer(timeout=60):
+def writer(timeout=60, *, account=None, inst_id=None, side=None):
     import fcntl
+    key = '|'.join(str(v or '') for v in (account, inst_id, side))
+    lock_path = PATH if not key else PATH.with_name(PATH.name + '.' + hashlib.sha256(key.encode()).hexdigest()[:20])
     if not _thread_lock.acquire(timeout=timeout):
         raise TimeoutError('Position writer busy; no order sent')
     handle = None
@@ -18,7 +21,7 @@ def writer(timeout=60):
         depth = getattr(_local, 'depth', 0)
         if not depth:
             PATH.parent.mkdir(parents=True, exist_ok=True)
-            handle = PATH.open('a+')
+            handle = lock_path.open('a+')
             deadline = time.monotonic() + timeout
             while True:
                 try:

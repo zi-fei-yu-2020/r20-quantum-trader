@@ -1,4 +1,4 @@
-import test from 'node:test'
+﻿import test from 'node:test'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import * as Vue from 'vue'
@@ -74,11 +74,11 @@ test('fee actions occupy a dedicated centered column inside the scroll region', 
   const html=await render({...verified,net_pnl:1})
   const headers=html.match(/<th\b[^>]*>[\s\S]*?<\/th>/g)
   const cells=html.match(/<td\b[^>]*>[\s\S]*?<\/td>/g)
-  assert.equal(headers.length,9);assert.equal(cells.length,9)
-  assert.ok(headers[8].includes('text-center'))
-  assert.ok(cells[8].includes('trade-ledger__fee-button'))
-  assert.ok(!cells[7].includes('trade-ledger__fee-button'))
-  assert.ok(cells[8].includes('text-center'))
+  assert.equal(headers.length,10);assert.equal(cells.length,10)
+  assert.ok(headers[9].includes('text-center'))
+  assert.ok(cells[9].includes('trade-ledger__fee-button'))
+  assert.ok(!cells[8].includes('trade-ledger__fee-button'))
+  assert.ok(cells[9].includes('text-center'))
   assert.ok(source.includes('variant="ghost"'))
   assert.ok(source.includes('min-height: 2.75rem'))
   assert.ok(source.includes('aria-haspopup="dialog"'))

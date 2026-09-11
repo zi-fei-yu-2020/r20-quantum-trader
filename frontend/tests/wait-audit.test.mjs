@@ -22,7 +22,7 @@ test('audit details remain keyboard accessible and constrain mobile widths', () 
   assert.ok(!source.includes('v-html'))
 })
 test('monitor and administrator reuse the same audit component', () => {
-  for (const path of ['../src/components/InstrumentMatrix.vue','../src/views/admin/DecisionsPage.vue']) {
+  for (const path of ['../src/components/SelfEvolutionLab.vue','../src/views/admin/DecisionsPage.vue']) {
     assert.ok(readFileSync(new URL(path, import.meta.url),'utf8').includes('<DecisionAuditPanel'))
   }
 })

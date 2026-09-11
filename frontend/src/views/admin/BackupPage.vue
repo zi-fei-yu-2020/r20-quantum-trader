@@ -59,20 +59,26 @@ const credentialFields = computed(() => {
 async function load() {
   loading.value = true
   try {
-    const [s, t, st] = await Promise.all([
+    const results = await Promise.allSettled([
       api('/api/v1/admin/backups/simple'),
       api('/api/v1/admin/backup-target-types'),
       api('/api/v1/admin/backups'),
     ])
-    simple.value = s
-    targetTypes.value = t.target_types || []
-    status.value = st
-    enabled.value = s.enabled
-    destination.value = s.destination
-    scheduleTime.value = s.schedule_time || '02:00'
-    retention.value = s.retention || 3
-    endpoint.value = s.target?.endpoint || ''
-    bucket.value = s.target?.bucket || ''
+    const [simpleResult, targetsResult, statusResult] = results
+    if (simpleResult.status === 'fulfilled') {
+      const s: any = simpleResult.value
+      simple.value = s
+      enabled.value = s.enabled
+      destination.value = s.destination
+      scheduleTime.value = s.schedule_time || '02:00'
+      retention.value = s.retention || 3
+      endpoint.value = s.target?.endpoint || ''
+      bucket.value = s.target?.bucket || ''
+    }
+    if (targetsResult.status === 'fulfilled') targetTypes.value = (targetsResult.value as any).target_types || []
+    if (statusResult.status === 'fulfilled') status.value = statusResult.value
+    const firstFailure = results.find((item) => item.status === 'rejected') as PromiseRejectedResult | undefined
+    if (firstFailure) throw firstFailure.reason
   } catch (e: any) {
     if (e?.silent) return
     bannerMsg.value = { text: `加载失败：${e.message}`, type: 'err' }

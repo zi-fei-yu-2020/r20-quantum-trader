@@ -78,20 +78,29 @@ export const useAuthStore = defineStore('auth', () => {
     }
   }
 
-  function restoreSession() {
-    // Router and App initialization can both call this during the first render.
-    if (token.value) return
-    const savedToken = localStorage.getItem(SESSION_TOKEN_KEY)
-    const savedUser = localStorage.getItem(SESSION_USER_KEY)
-    if (savedToken && savedUser) {
-      token.value = savedToken
-      try {
-        user.value = JSON.parse(savedUser)
-      } catch {
-        user.value = null
+  let restorePromise: Promise<boolean> | null = null
+
+  async function restoreSession(): Promise<boolean> {
+    if (restorePromise) return restorePromise
+    restorePromise = (async () => {
+      if (!token.value) {
+        const savedToken = localStorage.getItem(SESSION_TOKEN_KEY)
+        const savedUser = localStorage.getItem(SESSION_USER_KEY)
+        if (savedToken) {
+          token.value = savedToken
+          try {
+            user.value = savedUser ? JSON.parse(savedUser) : null
+          } catch {
+            user.value = null
+          }
+        }
       }
-      validateSession()
-    }
+      if (!token.value) return false
+      return validateSession()
+    })().finally(() => {
+      restorePromise = null
+    })
+    return restorePromise
   }
 
   function logout(revoke = true) {

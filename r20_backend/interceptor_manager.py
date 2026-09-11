@@ -318,13 +318,14 @@ def run_interceptor_pipeline(package: dict[str, Any], decision: dict[str, Any], 
         filename = p_info["filename"]
         file_path = PLUGINS_DIR / filename
         if not file_path.exists():
-            continue
+            logger.error("Enabled interceptor plugin is missing: %s", filename)
+            return "WAIT", f"启用的风控插件 [{filename}] 不存在，拒绝开仓", rr
 
         try:
             mod = _load_module_from_file(file_path)
             if not hasattr(mod, "check_risk"):
-                logger.warning("Plugin %s missing check_risk function, skipped", filename)
-                continue
+                logger.error("Enabled interceptor plugin %s missing check_risk", filename)
+                return "WAIT", f"启用的风控插件 [{filename}] 缺少 check_risk，拒绝开仓", rr
 
             passed, reason = mod.check_risk(package, decision, context)
             if not passed:

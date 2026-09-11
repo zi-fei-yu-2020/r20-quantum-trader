@@ -458,6 +458,8 @@ def current_admin(x_r20_session: str | None = None, x_r20_admin_token: str | Non
 
 
 def require_admin_header(x_r20_admin_token: str | None = None, x_r20_session: str | None = None) -> dict[str, Any]:
+    # All browser/admin routes resolve the session from the same context.  The
+    # legacy token remains only for headless bootstrap compatibility.
     return current_admin(x_r20_session or REQUEST_SESSION.get(), x_r20_admin_token)
 
 
@@ -1427,8 +1429,8 @@ def admin_test_interceptors(payload: InterceptorTestRequest, x_r20_session: str 
 
 
 @app.get("/api/v1/admin/strategy/status")
-def admin_strategy_status(x_r20_admin_token: str | None = Header(default=None)) -> dict[str, Any]:
-    require_admin_header(x_r20_admin_token)
+def admin_strategy_status(x_r20_admin_token: str | None = Header(default=None), x_r20_session: str | None = Header(default=None, alias="X-R20-Session")) -> dict[str, Any]:
+    require_admin_header(x_r20_admin_token, x_r20_session)
     from r20_backend.strategy_status import strategy_status
     try:
         return strategy_status()
@@ -1437,8 +1439,8 @@ def admin_strategy_status(x_r20_admin_token: str | None = Header(default=None)) 
 
 
 @app.get("/api/v1/admin/okx/account-snapshot")
-def admin_okx_account_snapshot(x_r20_admin_token: str | None = Header(default=None)) -> dict[str, Any]:
-    require_admin_header(x_r20_admin_token)
+def admin_okx_account_snapshot(x_r20_admin_token: str | None = Header(default=None), x_r20_session: str | None = Header(default=None, alias="X-R20-Session")) -> dict[str, Any]:
+    require_admin_header(x_r20_admin_token, x_r20_session)
     try: return okx_account_snapshot()
     except Exception as exc: raise HTTPException(status_code=502, detail=f"获取 OKX 当前订单失败：{exc}") from exc
 
@@ -1486,8 +1488,8 @@ def admin_instruments(x_r20_admin_token: str | None = Header(default=None)) -> d
 
 
 @app.get("/api/v1/admin/instruments/support")
-def admin_instrument_support(environment: str | None = None, x_r20_admin_token: str | None = Header(default=None)) -> dict[str, Any]:
-    require_admin_header(x_r20_admin_token)
+def admin_instrument_support(environment: str | None = None, x_r20_admin_token: str | None = Header(default=None), x_r20_session: str | None = Header(default=None, alias="X-R20-Session")) -> dict[str, Any]:
+    require_admin_header(x_r20_admin_token, x_r20_session)
     refresh_settings()
     mode = environment or settings.okx_environment
     if mode not in {"demo", "live"}:
@@ -1546,8 +1548,8 @@ def delete_admin_instrument(inst_id: str, payload: InstrumentDeleteRequest, x_r2
 
 
 @app.get("/api/v1/admin/about")
-def admin_about(x_r20_admin_token: str | None = Header(default=None)) -> dict[str, Any]:
-    require_admin_header(x_r20_admin_token)
+def admin_about(x_r20_admin_token: str | None = Header(default=None), x_r20_session: str | None = Header(default=None, alias="X-R20-Session")) -> dict[str, Any]:
+    require_admin_header(x_r20_admin_token, x_r20_session)
     import platform
     version = update_status(fetch_remote=False)
     return {
@@ -1668,8 +1670,8 @@ def update_prompt_library(payload: PromptLibraryUpdate, x_r20_admin_token: str |
 
 
 @app.get("/api/v1/admin/prompt-profiles")
-def prompt_profiles(x_r20_admin_token: str | None = Header(default=None)) -> dict[str, Any]:
-    require_admin_header(x_r20_admin_token)
+def prompt_profiles(x_r20_admin_token: str | None = Header(default=None), x_r20_session: str | None = Header(default=None, alias="X-R20-Session")) -> dict[str, Any]:
+    require_admin_header(x_r20_admin_token, x_r20_session)
     library = load_library()
     prompts_mod = __import__("scripts.prompt_library", fromlist=["ALLOWED_VARIABLES", "TEMPLATE_VARIABLES_METADATA"])
     return {
@@ -1719,14 +1721,14 @@ def delete_prompt_profile_api(profile_id: str, x_r20_session: str | None = Heade
 
 
 @app.post("/api/v1/admin/prompt-profiles/validate")
-def validate_prompt_profile_api(payload: PromptProfileUpdateRequest, x_r20_admin_token: str | None = Header(default=None)) -> dict[str, Any]:
-    require_admin_header(x_r20_admin_token)
+def validate_prompt_profile_api(payload: PromptProfileUpdateRequest, x_r20_admin_token: str | None = Header(default=None), x_r20_session: str | None = Header(default=None, alias="X-R20-Session")) -> dict[str, Any]:
+    require_admin_header(x_r20_admin_token, x_r20_session)
     return validate_profile(payload.model_dump())
 
 
 @app.get("/api/v1/admin/prompt-profiles/{profile_id}/history")
-def prompt_profile_history_api(profile_id: str, x_r20_admin_token: str | None = Header(default=None)) -> dict[str, Any]:
-    require_admin_header(x_r20_admin_token)
+def prompt_profile_history_api(profile_id: str, x_r20_admin_token: str | None = Header(default=None), x_r20_session: str | None = Header(default=None, alias="X-R20-Session")) -> dict[str, Any]:
+    require_admin_header(x_r20_admin_token, x_r20_session)
     return {"history": profile_history(profile_id)}
 
 
@@ -1740,8 +1742,8 @@ def rollback_prompt_profile_api(profile_id: str, payload: PromptRollbackRequest,
 
 
 @app.get("/api/v1/admin/prompt-profiles/{profile_id}/export")
-def export_prompt_profile_api(profile_id: str, x_r20_admin_token: str | None = Header(default=None)) -> dict[str, Any]:
-    require_admin_header(x_r20_admin_token)
+def export_prompt_profile_api(profile_id: str, x_r20_admin_token: str | None = Header(default=None), x_r20_session: str | None = Header(default=None, alias="X-R20-Session")) -> dict[str, Any]:
+    require_admin_header(x_r20_admin_token, x_r20_session)
     try: return export_profile(profile_id)
     except ValueError as exc: raise HTTPException(status_code=404, detail=str(exc)) from exc
 
@@ -2084,8 +2086,8 @@ def update_notification_schedule(payload: NotificationScheduleUpdate, x_r20_admi
 
 
 @app.get("/api/v1/admin/backups/simple")
-def simple_backup_config(x_r20_admin_token: str | None = Header(default=None)) -> dict[str, Any]:
-    require_admin_header(x_r20_admin_token)
+def simple_backup_config(x_r20_admin_token: str | None = Header(default=None), x_r20_session: str | None = Header(default=None, alias="X-R20-Session")) -> dict[str, Any]:
+    require_admin_header(x_r20_admin_token, x_r20_session)
     jobs = list_backup_jobs()
     job = next((x for x in jobs if x.get("id") == "nightly-default"), jobs[0] if jobs else None)
     if not job:
@@ -2190,8 +2192,8 @@ def test_simple_backup(payload: SimpleBackupUpdateRequest, x_r20_session: str | 
 
 
 @app.get("/api/v1/admin/backup-target-types")
-def backup_target_types(x_r20_admin_token: str | None = Header(default=None)) -> dict[str, Any]:
-    require_admin_header(x_r20_admin_token)
+def backup_target_types(x_r20_admin_token: str | None = Header(default=None), x_r20_session: str | None = Header(default=None, alias="X-R20-Session")) -> dict[str, Any]:
+    require_admin_header(x_r20_admin_token, x_r20_session)
     return {"target_types": [
         {"type":"local","label":"本地归档","auth":"none","description":"项目 backups/ 内滚动保留"},
         {"type":"baidu","label":"百度网盘","auth":"oauth","description":"仅支持官方 OAuth，新配置不再提供 ByPy"},
@@ -2213,8 +2215,8 @@ def update_backup_credentials(payload: BackupCredentialUpdateRequest, x_r20_sess
 
 
 @app.get("/api/v1/admin/backup-jobs")
-def backup_jobs_api(x_r20_admin_token: str | None = Header(default=None)) -> dict[str, Any]:
-    require_admin_header(x_r20_admin_token)
+def backup_jobs_api(x_r20_admin_token: str | None = Header(default=None), x_r20_session: str | None = Header(default=None, alias="X-R20-Session")) -> dict[str, Any]:
+    require_admin_header(x_r20_admin_token, x_r20_session)
     manifests_dir = ROOT / "backups" / "manifests"
     manifests = []
     for path in sorted(manifests_dir.glob("*.json"), key=lambda p: p.stat().st_mtime, reverse=True)[:50] if manifests_dir.exists() else []:
@@ -2255,8 +2257,8 @@ def delete_backup_job_api(job_id: str, x_r20_session: str | None = Header(defaul
 
 
 @app.post("/api/v1/admin/backup-jobs/validate")
-def validate_backup_job_api(payload: BackupJobUpdateRequest, x_r20_admin_token: str | None = Header(default=None)) -> dict[str, Any]:
-    require_admin_header(x_r20_admin_token)
+def validate_backup_job_api(payload: BackupJobUpdateRequest, x_r20_admin_token: str | None = Header(default=None), x_r20_session: str | None = Header(default=None, alias="X-R20-Session")) -> dict[str, Any]:
+    require_admin_header(x_r20_admin_token, x_r20_session)
     return validate_backup_job(payload.job)
 
 
@@ -2276,8 +2278,8 @@ def run_backup_job_api(job_id: str, payload: BackupJobRunRequest, x_r20_session:
 
 
 @app.get("/api/v1/admin/backup-jobs/{job_id}/export")
-def export_backup_job_api(job_id: str, x_r20_admin_token: str | None = Header(default=None)) -> dict[str, Any]:
-    require_admin_header(x_r20_admin_token)
+def export_backup_job_api(job_id: str, x_r20_admin_token: str | None = Header(default=None), x_r20_session: str | None = Header(default=None, alias="X-R20-Session")) -> dict[str, Any]:
+    require_admin_header(x_r20_admin_token, x_r20_session)
     try: return export_backup_job(job_id)
     except ValueError as exc: raise HTTPException(status_code=404, detail=str(exc)) from exc
 
@@ -2601,8 +2603,8 @@ def market(inst_id: str) -> dict[str, Any]:
 
 
 @app.get("/api/v1/account/positions")
-def positions(x_r20_admin_token: str | None = Header(default=None)) -> dict[str, Any]:
-    require_admin_header(x_r20_admin_token)
+def positions(x_r20_admin_token: str | None = Header(default=None), x_r20_session: str | None = Header(default=None, alias="X-R20-Session")) -> dict[str, Any]:
+    require_admin_header(x_r20_admin_token, x_r20_session)
     if not settings.okx_api_key:
         raise HTTPException(status_code=503, detail="OKX credentials are not configured in .env")
     try:
