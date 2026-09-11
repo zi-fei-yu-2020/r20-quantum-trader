@@ -204,28 +204,36 @@ def _wait_state(state_data, factors, execution_profile):
     cycle=state_data if isinstance(state_data,dict) else {}
     counts=cycle.get("decision_cycle",{}).get("counts",{}) if isinstance(cycle.get("decision_cycle",{}),dict) else {}
     notices=cycle.get("environment_notices",[]) or []
-    if any("AI" in str(x) and ("unavailable" in str(x).lower() or "???" in str(x)) for x in notices):
-        return {"code":"AI_UNAVAILABLE","detail":"LLM did not produce a fresh executable decision","next_trigger":"Wait for the next successful model cycle"}
-    if any("??" in str(x) or "account" in str(x).lower() for x in notices):
-        return {"code":"DATA_UNAVAILABLE","detail":"Market or account evidence is incomplete","next_trigger":"Wait for a complete fresh market/account snapshot"}
+    if any("AI" in str(x) and ("unavailable" in str(x).lower() or "\u672a\u5c31\u7eea" in str(x)) for x in notices):
+        return {"code":"AI_UNAVAILABLE","detail":"\u6a21\u578b\u6682\u65f6\u4e0d\u53ef\u7528\uff0c\u672c\u8f6e\u6ca1\u6709\u65b0\u7684\u53ef\u6267\u884c\u51b3\u7b56","next_trigger":"\u7b49\u5f85\u4e0b\u4e00\u8f6e\u6a21\u578b\u63a8\u7406\u6210\u529f"}
+    if any("\u884c\u60c5" in str(x) or "account" in str(x).lower() for x in notices):
+        return {"code":"DATA_UNAVAILABLE","detail":"\u884c\u60c5\u6216\u8d26\u6237\u8bc1\u636e\u4e0d\u5b8c\u6574","next_trigger":"\u7b49\u5f85\u65b0\u7684\u5b8c\u6574\u884c\u60c5\u548c\u8d26\u6237\u5feb\u7167"}
     if counts.get("execution_rejected",0):
-        return {"code":"EXECUTION_REJECTED","detail":"A candidate existed but did not pass final execution checks","next_trigger":"Review the rejection reason; a new candidate may be considered next cycle"}
+        return {"code":"EXECUTION_REJECTED","detail":"\u5df2\u53d1\u73b0\u5019\u9009\uff0c\u4f46\u672a\u901a\u8fc7\u6700\u7ec8\u6267\u884c\u6838\u9a8c","next_trigger":"\u67e5\u770b\u62d2\u7edd\u539f\u56e0\uff0c\u4e0b\u4e00\u8f6e\u5c06\u91cd\u65b0\u8bc4\u4f30"}
     if counts.get("entry_candidate",0):
-        return {"code":"CANDIDATE_REVIEW","detail":"Executable candidates are under evidence and risk review","next_trigger":"Await final account/price preflight"}
+        return {"code":"CANDIDATE_REVIEW","detail":"\u5df2\u53d1\u73b0\u53ef\u6267\u884c\u5019\u9009\uff0c\u6b63\u5728\u8fdb\u884c\u8bc1\u636e\u548c\u98ce\u9669\u5ba1\u67e5","next_trigger":"\u7b49\u5f85\u8d26\u6237\u3001\u4ef7\u683c\u548c\u98ce\u9669\u9884\u68c0"}
     if counts.get("incomplete",0):
-        return {"code":"AUDIT_INCOMPLETE","detail":"The latest model output is incomplete and cannot authorize exposure","next_trigger":"Wait for a complete validated output"}
-    return {"code":"NO_PROGRAM_CANDIDATE","detail":"No executable setup in the latest closed-candle frame; this is normal WAIT, not an auto-trading lock","next_trigger":"Wait for a new closed-candle pullback, breakout, or reversal setup"}
-
+        return {"code":"AUDIT_INCOMPLETE","detail":"\u672c\u8f6e\u6a21\u578b\u8f93\u51fa\u4e0d\u5b8c\u6574\uff0c\u4e0d\u80fd\u6388\u6743\u65b0\u5efa\u4ed3\u4f4d","next_trigger":"\u7b49\u5f85\u5b8c\u6574\u4e14\u901a\u8fc7\u6821\u9a8c\u7684\u51b3\u7b56"}
+    return {"code":"NO_PROGRAM_CANDIDATE","detail":"\u672c\u8f6e\u6536\u76d8 K \u7ebf\u6ca1\u6709\u5f62\u6210\u53ef\u6267\u884c\u5019\u9009\uff0c\u8fd9\u662f\u6b63\u5e38 WAIT\uff0c\u4e0d\u662f\u81ea\u52a8\u4ea4\u6613\u9501\u5b9a","next_trigger":"\u7b49\u5f85\u65b0\u7684\u6536\u76d8 K \u7ebf\u56de\u8e29\u3001\u7a81\u7834\u6216\u53cd\u8f6c\u5019\u9009"}
 
 def _execution_profile_snapshot():
     try:
         from scripts.execution_profiles import runtime
-        value=runtime()
-        execution=value.get("execution", {})
+        value=runtime(); execution=dict(value.get("execution", {}))
+        # Standard keeps its original policy source; expose the effective values
+        # so the dashboard never renders missing profile fields as question marks.
+        from scripts.risk_policy import Policy
+        policy=Policy()
+        execution.setdefault("per_trade_equity_pct", policy.per_trade_equity_pct)
+        execution.setdefault("single_asset_margin_usdt", policy.single_asset_margin_usdt)
+        execution.setdefault("max_leverage", policy.max_leverage)
+        execution.setdefault("daily_drawdown_pct", policy.daily_drawdown_pct)
+        execution.setdefault("max_active_instruments", len(load_instruments()))
+        execution.setdefault("total_margin_usdt", round(policy.single_asset_margin_usdt * max(1, min(3, len(load_instruments()))), 2))
+        execution.setdefault("max_same_direction_positions", execution["max_active_instruments"])
         return {"profile_id": value.get("profile_id"), "execution": execution, "signature": value.get("signature")}
     except Exception as exc:
         return {"profile_id": "unknown", "execution": {}, "error": type(exc).__name__}
-
 
 def _build_factors_from_local_files(positions, timestamp_full):
     """Build factors_list from trading_state.json + ai_brain_decisions.json.

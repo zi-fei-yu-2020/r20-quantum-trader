@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed } from 'vue'
-import { Wallet, TrendingUp, CalendarDays, Layers, Gauge } from 'lucide-vue-next'
+import { Wallet, TrendingUp, CalendarDays, Layers } from 'lucide-vue-next'
 import { useDashboardStore } from '../stores/dashboard'
 import AppCard from './ui/AppCard.vue'
 const store = useDashboardStore()
@@ -23,9 +23,6 @@ const positionMargin = computed(() =>
   store.positions.reduce((sum, p) => sum + Number(p.margin_usdt ?? p.margin ?? 0), 0),
 )
 
-const execution = computed(() => store.data?.execution_profile?.execution || null)
-const profileLabel = computed(() => execution.value?.label || execution.value?.id || '?')
-const formatPct = (value: unknown) => value == null ? '?' : `${(Number(value) * 100).toFixed(2)}%`
 </script>
 <template>
   <div class="metric-grid">
@@ -108,13 +105,5 @@ const formatPct = (value: unknown) => value == null ? '?' : `${(Number(value) * 
         {{ store.positions.filter((p) => p.side === 'short').length }}
       </div></AppCard
     >
-    <AppCard class="metric-card">
-      <div class="metric-card__label">
-        <span>&#x6267;&#x884C;&#x6A21;&#x5F0F;</span><Gauge class="size-4 text-[var(--text-faint)]" />
-      </div>
-      <div class="metric-card__value text-base" style="color: var(--color-brand)">{{ profileLabel }}</div>
-      <div class="metric-card__footer">&#x5355;&#x7B14;&#x98CE;&#x9669; {{ execution ? formatPct(execution.per_trade_equity_pct) : '--' }}<span class="ml-auto">&#x6700;&#x5927;&#x6760;&#x6746; {{ execution?.max_leverage ?? '--' }}x</span></div>
-      <div class="metric-card__footer mt-1">&#x6301;&#x4ED3;&#x4E0A;&#x9650; {{ execution?.max_active_instruments ?? '--' }} ? &#x4FDD;&#x8BC1;&#x91D1;&#x4E0A;&#x9650; {{ execution?.total_margin_usdt ?? '--' }}U</div>
-    </AppCard>
   </div>
 </template>
