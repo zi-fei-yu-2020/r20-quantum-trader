@@ -131,31 +131,38 @@ def catalog(package, policy=None):
         extended_short = rsi_1h <= EXTENDED_RSI_SHORT or (rsi_15m <= 32.0 and vwap_bias <= -EXTENDED_VWAP)
         extended_long = rsi_1h >= EXTENDED_RSI_LONG or (rsi_15m >= 68.0 and vwap_bias >= EXTENDED_VWAP)
         # A partial rebound/rejection is a measurable event; slow 1H momentum need not already agree.
+        range_rows=h[-13:-1]
+        range_high=max(b['high'] for b in range_rows)
+        range_low=min(b['low'] for b in range_rows)
+        hourly_state=hourly_trend(package)
+        atr_1h=number(package.get('atr_1h', atr))
+        range_reclaim_long=(hourly_state=='range' and bar['close']>bar['open'] and bar['close']>prev['close'] and bar['low']<=range_low+atr_1h*.45)
+        range_reclaim_short=(hourly_state=='range' and bar['close']<bar['open'] and bar['close']<prev['close'] and bar['high']>=range_high-atr_1h*.45)
         for side in ('long','short'):
             action='BUY_LONG' if side=='long' else 'SELL_SHORT'
             if (side=='long' and '4H_MACRO_BEAR' in macro) or (side=='short' and '4H_MACRO_BULL' in macro):
                 rejected('all',side,'existing_macro_direction_veto');continue
-            if side=='short' and extended_short:
+            if side=='short' and extended_short and not (hourly_state=='range' and range_reclaim_short):
                 rejected('all',side,'trend_tail_overextended',rsi_1h=rsi_1h,rsi_15m=rsi_15m,vwap_bias=vwap_bias);continue
-            if side=='long' and extended_long:
+            if side=='long' and extended_long and not (hourly_state=='range' and range_reclaim_long):
                 rejected('all',side,'trend_tail_overextended',rsi_1h=rsi_1h,rsi_15m=rsi_15m,vwap_bias=vwap_bias);continue
             entry=ask if side=='long' else bid
+            channel_target=range_high if side=='long' else range_low
             if (entry-bar['close'])*(1 if side=='long' else -1)>atr*.25:
                 rejected('all',side,'quote_moved_beyond_closed_trigger');continue
             # A target must be supported by frozen observations. Extending it to a
             # multiple of stop distance cannot establish additional market space.
             # A separately validated extension setup can be added in a future version.
-            channel_target=max(b['high'] for b in h[-13:-1]) if side=='long' else min(b['low'] for b in h[-13:-1])
             window=f[-9:-1]   # 8 closed 15M bars (was 12): trigger surfaces earlier in chop
             reclaim=(bar['close']>bar['open'] and bar['close']>prev['close'] and bar['low']<=prev['low']+atr*.25) if side=='long' else (bar['close']<bar['open'] and bar['close']<prev['close'] and bar['high']>=prev['high']-atr*.25)
             level=max(b['high'] for b in window) if side=='long' else min(b['low'] for b in window)
             vol_ratio=float(package.get('vol_ratio') or 1.0)
             breakout=(bar['close']>level and bar['open']<=level and vol_ratio>=1.1) if side=='long' else (bar['close']<level and bar['open']>=level and vol_ratio>=1.1)
-            for setup,triggered in [('pullback_reclaim',reclaim),('closed_range_breakout',breakout)]:
+            for setup,triggered in [('pullback_reclaim',reclaim),('closed_range_breakout',breakout),('range_reversion',range_reclaim_long if side=='long' else range_reclaim_short)]:
                 if setup=='pullback_reclaim' and hourly_trend(package)!=side:
                     rejected(setup,side,'pullback_requires_established_trend');continue
                 if not triggered: rejected(setup,side,'closed_candle_trigger_not_met');continue
-                hold_level=prev['close'] if setup=='pullback_reclaim' else level
+                hold_level=prev['close'] if setup in {'pullback_reclaim','range_reversion'} else level
                 if (entry-hold_level)*(1 if side=='long' else -1)<=0:
                     rejected(setup,side,'closed_trigger_invalidated_by_quote');continue
                 # A retest stop must survive ordinary 15M noise. The previous
@@ -166,6 +173,10 @@ def catalog(package, policy=None):
                     buffer=max(atr*MIN_PULLBACK_ATR, atr_1h*0.20)
                     stop=(prev['low']-buffer) if side=='long' else (prev['high']+buffer)
                     stop_basis='retest_structure_plus_volatility_buffer'
+                elif setup=='range_reversion':
+                    buffer=max(atr*0.55, atr_1h*0.18)
+                    stop=(prev['low']-buffer) if side=='long' else (prev['high']+buffer)
+                    stop_basis='range_boundary_reclaim_plus_volatility_buffer'
                 else:
                     structural_stop=(min(b['low'] for b in f[-3:])-atr*.1) if side=='long' else (max(b['high'] for b in f[-3:])+atr*.1)
                     volatility_stop=(entry-atr*1.5) if side=='long' else (entry+atr*1.5)

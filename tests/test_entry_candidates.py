@@ -151,5 +151,19 @@ class ProgramPlanTests(unittest.TestCase):
         self.assertEqual(plan['stop_basis'],'retest_structure_plus_volatility_buffer')
         self.assertGreater(abs(plan['stop_loss_price']-plan['entry_price']), 0.25*3.0)
 
+    def test_range_boundary_reversion_creates_observable_candidate(self):
+        p=package('long')
+        # Convert the higher timeframe into a range and place the final closed
+        # candle at the lower boundary with a confirmed reclaim.
+        for i,r in enumerate(p['entry_candles']['1H']['rows']):
+            r.update(open=100, high=101, low=99, close=100)
+        rows=p['entry_candles']['15M']['rows']
+        for r in rows: r.update(open=99.5, high=99.8, low=99.2, close=99.5)
+        rows[-2].update(open=98.9, high=99.2, low=98.5, close=98.9)
+        rows[-1].update(open=98.9, high=99.6, low=98.8, close=99.5)
+        p.update(price=99.5,bidPx=99.49,askPx=99.51,macro_4h='4H_MACRO_RANGE',rsi_1h=45,rsi_15m=48,vwap_bias=-0.1,atr_1h=1.0)
+        result=plans.catalog(p, {**vars(__import__('scripts.risk_policy', fromlist=['Policy']).Policy()), 'minimum_net_rr': 0.8})
+        self.assertTrue(any(x['setup']=='range_reversion' for x in result['plans']), result)
+
 
 if __name__=='__main__':unittest.main()
