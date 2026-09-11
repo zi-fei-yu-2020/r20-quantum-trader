@@ -1,4 +1,4 @@
-import copy
+﻿import copy
 import json
 import unittest
 from scripts import entry_candidates as plans, trading_prompt as contract
@@ -89,10 +89,10 @@ class ProgramPlanTests(unittest.TestCase):
             self.assertEqual(plan['take_profit_price'],observed)
             self.assertEqual(plan['target_observation']['price'],observed)
             self.assertFalse(plan['target_observation']['extrapolated'])
-            self.assertEqual(plan['version'],'closed-candle-plans-v3')
+            self.assertEqual(plan['version'],'closed-candle-plans-v4')
             # Stop basis is setup-aware: pullback_reclaim anchors to the retest structure
             # (no 1.5xATR floor), closed_range_breakout keeps the 1.5xATR volatility floor.
-            self.assertIn(plan['stop_basis'],('retest_structure_prev_extreme_plus_0.1_atr','max_structural_3bar_extreme_and_1.5x_atr'))
+            self.assertIn(plan['stop_basis'],('retest_structure_plus_volatility_buffer','max_structural_3bar_extreme_and_1.5x_atr'))
             if side=='short':
                 for i,r in enumerate(p['entry_candles']['1H']['rows']):r.update(open=100,close=100.05-i*.01,low=99.8)
                 result=plans.catalog(p)
@@ -135,5 +135,21 @@ class ProgramPlanTests(unittest.TestCase):
         branches=contract.output_schema()['properties']['decisions']['additionalProperties']['oneOf']
         self.assertTrue(any('candidate_id' in b['required'] for b in branches))
         self.assertIn('/entry_candles/15M/last/close',payload['facts'][p['instId']])
+    def test_exhausted_trend_tail_does_not_create_short_plan(self):
+        p=package('short')
+        p.update(rsi_1h=22.0, rsi_15m=27.0, vwap_bias=-0.8)
+        result=plans.catalog(p)
+        self.assertFalse(result['plans'])
+        self.assertTrue(any(x['reason']=='trend_tail_overextended' for x in result['checks']))
+
+    def test_retest_stop_has_volatility_buffer(self):
+        p=package('short')
+        p.update(rsi_1h=42.0, rsi_15m=42.0, vwap_bias=-0.1, atr_1h=3.0)
+        result=plans.catalog(p)
+        self.assertTrue(result['plans'], result)
+        plan=result['plans'][0]
+        self.assertEqual(plan['stop_basis'],'retest_structure_plus_volatility_buffer')
+        self.assertGreater(abs(plan['stop_loss_price']-plan['entry_price']), 0.25*3.0)
+
 
 if __name__=='__main__':unittest.main()

@@ -70,7 +70,7 @@ def equity_guard(env, balance, policy):
     return state
 
 
-def prepare(env, *, inst_id, side, entry, stop, take_profit, requested_size, budget, decision_id, decision_at):
+def prepare(env, *, inst_id, side, entry, stop, take_profit, requested_size, budget, decision_id, decision_at, horizon='swing'):
     from r20_backend.account_connections import assert_current
     assert_current(env)
     if not env.configured: raise risk.RiskRejected('Final risk preflight requires current account static credentials')
@@ -113,8 +113,11 @@ def prepare(env, *, inst_id, side, entry, stop, take_profit, requested_size, bud
     if cooldown_file.exists():
         cooldowns=json.loads(cooldown_file.read_text(encoding='utf-8'))
         item=cooldowns.get(f'{inst_id}_{side}', {})
-        if isinstance(item,dict) and max(float(item.get('expires_at',item.get('expires_at_ts',0)) or 0),float(item.get('ts',0) or 0)+1800)>time.time():
-            raise risk.RiskRejected('Stop cooldown still active')
+        if isinstance(item,dict):
+            expires=float(item.get('expires_at',item.get('expires_at_ts',0)) or 0)
+            if not expires:
+                expires=float(item.get('ts',0) or 0)+int(item.get('cooldown_seconds',1800) or 1800)
+            if expires>time.time(): raise risk.RiskRejected('Stop cooldown still active')
     instruments=public_market.get_json('https://www.okx.com/api/v5/public/instruments?instType=SWAP',simulated=env.simulated)['data']
     metadata={i['instId']:i for i in instruments}
     if inst_id not in metadata: raise risk.RiskRejected('Missing exchange instrument metadata')
@@ -174,6 +177,10 @@ def prepare(env, *, inst_id, side, entry, stop, take_profit, requested_size, bud
     plan=risk.order_plan(metadata=metadata[inst_id],side=side,entry=entry,stop=stop,take_profit=take_profit,
                          requested_size=requested_size,budget_usdt=budget,equity=allocation.equity,available=allocation.available,
                          leverage=lev['lever'],policy=allocation.policy,existing_margin=sum(risk.number(p.get('imr') if p.get('imr') not in (None,'') else p.get('margin') or 0) for p in existing),portfolio=portfolio)
+    # Include the proposed order's realized risk in the correlated cluster check.
+    if active_execution['execution']['id']=='small300' and str(inst_id).split('-')[0].upper() in {'BTC','ETH','SOL','DOGE'}:
+        if portfolio.get('correlated',0.0) + plan['risk_usdt'] > allocation.equity*0.04:
+            raise risk.RiskRejected('Correlated BTC/ETH/SOL/DOGE cluster risk budget exhausted')
     if allocation.enabled:plan['capital_pool']=allocation.detail
     latest_positions=_request('GET','/api/v5/account/positions',{'instType':'SWAP'},env)
     def identities(rows):
@@ -189,6 +196,7 @@ def prepare(env, *, inst_id, side, entry, stop, take_profit, requested_size, bud
     if execution_runtime()['signature']!=active_execution['signature']:
         raise risk.RiskRejected('Execution preset changed during preflight')
     plan['execution_profile']=active_execution
+    plan['horizon'] = horizon if horizon in {'scalp','swing'} else 'swing'
     plan['portfolio_before']=portfolio
     plan['decision_id']=decision_id
     plan['scope']=env.identity

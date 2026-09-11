@@ -191,6 +191,42 @@ def _load_local_factor_library():
     return {}
 
 
+def _read_horizon_stats():
+    try:
+        with open(os.path.join(DATA_DIR, "horizon_stats.json"), encoding="utf-8") as handle:
+            value=json.load(handle)
+        return value if isinstance(value, dict) else {}
+    except (OSError, ValueError, TypeError):
+        return {}
+
+
+def _wait_state(state_data, factors, execution_profile):
+    cycle=state_data if isinstance(state_data,dict) else {}
+    counts=cycle.get("decision_cycle",{}).get("counts",{}) if isinstance(cycle.get("decision_cycle",{}),dict) else {}
+    notices=cycle.get("environment_notices",[]) or []
+    if any("AI" in str(x) and ("unavailable" in str(x).lower() or "???" in str(x)) for x in notices):
+        return {"code":"AI_UNAVAILABLE","detail":"LLM did not produce a fresh executable decision","next_trigger":"Wait for the next successful model cycle"}
+    if any("??" in str(x) or "account" in str(x).lower() for x in notices):
+        return {"code":"DATA_UNAVAILABLE","detail":"Market or account evidence is incomplete","next_trigger":"Wait for a complete fresh market/account snapshot"}
+    if counts.get("execution_rejected",0):
+        return {"code":"EXECUTION_REJECTED","detail":"A candidate existed but did not pass final execution checks","next_trigger":"Review the rejection reason; a new candidate may be considered next cycle"}
+    if counts.get("entry_candidate",0):
+        return {"code":"CANDIDATE_REVIEW","detail":"Executable candidates are under evidence and risk review","next_trigger":"Await final account/price preflight"}
+    if counts.get("incomplete",0):
+        return {"code":"AUDIT_INCOMPLETE","detail":"The latest model output is incomplete and cannot authorize exposure","next_trigger":"Wait for a complete validated output"}
+    return {"code":"NO_PROGRAM_CANDIDATE","detail":"No executable setup in the latest closed-candle frame; this is normal WAIT, not an auto-trading lock","next_trigger":"Wait for a new closed-candle pullback, breakout, or reversal setup"}
+
+
+def _execution_profile_snapshot():
+    try:
+        from scripts.execution_profiles import runtime
+        value=runtime()
+        execution=value.get("execution", {})
+        return {"profile_id": value.get("profile_id"), "execution": execution, "signature": value.get("signature")}
+    except Exception as exc:
+        return {"profile_id": "unknown", "execution": {}, "error": type(exc).__name__}
+
+
 def _build_factors_from_local_files(positions, timestamp_full):
     """Build factors_list from trading_state.json + ai_brain_decisions.json.
 
@@ -281,6 +317,10 @@ def _build_factors_from_local_files(positions, timestamp_full):
             "strategy_tag": strategy_val,
             "action": action_val,
             "decision_status": ai_dec.get("decision_status", "incomplete" if action_val == "WAIT" else "entry_candidate"),
+            "horizon": ai_dec.get("horizon") or ai_dec.get("strategy_horizon") or ins.get("horizon") or "unknown",
+            "strategy_type": ai_dec.get("strategy_type") or ai_dec.get("setup") or ins.get("strategy_tag") or "unknown",
+            "regime": ins.get("market_regime") or ai_info.get("macro_assessment") or "unknown",
+            "wait_reason": ai_dec.get("validation_reason") or ai_dec.get("summary_reason") or "",
             "confidence": confidence,
             "smart_money": sm_val,
             "adx_1h": adx_val,
@@ -724,7 +764,9 @@ def _update_cache_cycle():
             "okx_environment": environment.mode,
             "data_health": {"status": "OFFLINE", "partial": True, "errors": source_errors},
             "account": {}, "today_stats": {}, "performance": {},
-            "positions_summary": {"total": 0, "max_positions": len(load_instruments()), "items": []},
+            "execution_profile": _execution_profile_snapshot(), "horizon_stats": _read_horizon_stats(),
+            "wait_state": {"code": "DATA_UNAVAILABLE", "detail": "Market or account evidence is incomplete", "next_trigger": "Wait for a complete fresh snapshot"},
+            "positions_summary": {"total": 0, "max_positions": _execution_profile_snapshot().get("execution", {}).get("max_active_instruments", len(load_instruments())), "items": []},
             "factors": [], "trades": [], "logs": [], "snapshots": [],
         }
         LAST_CACHE_TIME = time.time()
@@ -1023,6 +1065,10 @@ def _update_cache_cycle():
             "strategy_tag": strategy_val,
             "action": action_val,
             "decision_status": ai_dec.get("decision_status", "incomplete" if action_val == "WAIT" else "entry_candidate"),
+            "horizon": ai_dec.get("horizon") or ai_dec.get("strategy_horizon") or ins.get("horizon") or "unknown",
+            "strategy_type": ai_dec.get("strategy_type") or ai_dec.get("setup") or ins.get("strategy_tag") or "unknown",
+            "regime": ins.get("market_regime") or ai_info.get("macro_assessment") or "unknown",
+            "wait_reason": ai_dec.get("validation_reason") or ai_dec.get("summary_reason") or "",
             "confidence": confidence,
             "smart_money": sm_val,
             "adx_1h": adx_val,
@@ -1187,6 +1233,9 @@ def _update_cache_cycle():
         "capital_pool": capital_pool.status(environment),
         "scenario_shadow": scenario_shadow.public_status(environment.identity),
         "decision_cycle": state_data.get("decision_cycle", {}),
+        "execution_profile": _execution_profile_snapshot(),
+        "horizon_stats": _read_horizon_stats(),
+        "wait_state": _wait_state(state_data, factors_list, _execution_profile_snapshot()),
         "timestamp": timestamp_full,
         "okx_environment": environment.mode,
         "account_source_id": environment.identity,
@@ -1245,8 +1294,8 @@ def _update_cache_cycle():
         "positions_summary": {
             "total": len(positions),
             "active_count": len(positions),
-            "max": len(load_instruments()),
-            "max_positions": len(load_instruments()),
+            "max": _execution_profile_snapshot().get("execution", {}).get("max_active_instruments", len(load_instruments())),
+            "max_positions": _execution_profile_snapshot().get("execution", {}).get("max_active_instruments", len(load_instruments())),
             "long_count": long_count,
             "short_count": short_count,
             "total_upl": round(total_pos_upl, 2),

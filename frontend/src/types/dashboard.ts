@@ -46,6 +46,8 @@ export interface PositionItem {
   displayStop?: number | null
   takeProfitPx?: number | null
   cloud_oco_verified?: boolean
+  horizon?: 'scalp' | 'swing' | 'unknown'
+  strategy_type?: string
 }
 
 export interface PendingOrderItem {
@@ -113,6 +115,10 @@ export interface InstrumentFactor {
     top_win_rate?: string
   }
   decision_status?: string
+  horizon?: 'scalp' | 'swing' | 'unknown'
+  strategy_type?: string
+  regime?: string
+  wait_reason?: string
   decision?: {
     decision_status?: string
     action: TradeAction
@@ -142,6 +148,41 @@ export interface LLMRuntime {
   api_format: string
 }
 
+export interface ExecutionProfileSnapshot {
+  profile_id?: string
+  signature?: string
+  execution?: {
+    id?: string
+    label?: string
+    equity_cap_usdt?: number
+    per_trade_equity_pct?: number
+    single_asset_margin_usdt?: number
+    total_margin_usdt?: number
+    max_active_instruments?: number
+    max_same_direction_positions?: number
+    max_leverage?: number
+    daily_drawdown_pct?: number
+  }
+  risk?: {
+    daily_drawdown?: number
+    correlated?: number
+    correlated_cap?: number
+    available?: number
+  }
+  error?: string
+}
+
+export interface HorizonStat {
+  closed?: number
+  wins?: number
+  losses?: number
+  net_pnl?: number
+  fees?: number
+  win_rate?: number
+  avg_pnl?: number
+  avg_hold_seconds?: number
+}
+
 export interface DashboardResponse {
   account_source_id?: string
   initializing?: boolean
@@ -150,6 +191,7 @@ export interface DashboardResponse {
   entry_opportunities?: import('../utils/waitAudit').OpportunityShadow
   wait_audit?: WaitAuditState
   decision_cycle?: DecisionCycle
+  wait_state?: { code?: string; detail?: string; next_trigger?: string }
   macro_analysis?: MacroAnalysis
   ledger_sync?: { status?: string; last_success?: number; pending_settlements?: number }
   instrument_support?: InstrumentSupportSummary
@@ -180,6 +222,8 @@ export interface DashboardResponse {
   memory_publication?: import('../utils/memory').MemoryPublication
   ai_trading_memory_md?: string
   factor_library?: any
+  execution_profile?: ExecutionProfileSnapshot
+  horizon_stats?: Record<string, HorizonStat>
 }
 
 export interface CouncilMemberResult {

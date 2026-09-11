@@ -1,4 +1,4 @@
-import copy
+﻿import copy
 from contextlib import ExitStack
 import importlib.util
 import json
@@ -59,9 +59,9 @@ class ExecutionPresetTests(unittest.TestCase):
         prompt_library.activate_profile('small300')
         current=execution_profiles.runtime();policy=risk_policy.load_policy()
         self.assertNotEqual(before['signature'],current['signature'])
-        self.assertEqual(policy.single_asset_margin_usdt,30)
-        self.assertEqual(policy.max_leverage,3)
-        self.assertEqual(policy.per_trade_equity_pct,.005)
+        self.assertEqual(policy.single_asset_margin_usdt,150)
+        self.assertEqual(policy.max_leverage,6)
+        self.assertEqual(policy.per_trade_equity_pct,.02)
         self.assertEqual(current['execution']['equity_cap_usdt'],300)
         prompt_library.activate_profile('stable')
         self.assertEqual(execution_profiles.runtime()['signature'],before['signature'])
@@ -72,7 +72,7 @@ class ExecutionPresetTests(unittest.TestCase):
         self.assertEqual(exported['profile']['execution_profile'],'small300')
         imported=prompt_library.import_profile(exported,'imported')
         prompt_library.activate_profile(imported['id'])
-        self.assertEqual(risk_policy.load_policy().single_asset_margin_usdt,30)
+        self.assertEqual(risk_policy.load_policy().single_asset_margin_usdt,150)
         self.assertEqual(execution_profiles.runtime()['execution']['equity_cap_usdt'],300)
         exported['profile']['execution_profile']='untrusted_large_budget'
         with self.assertRaises(ValueError):prompt_library.import_profile(exported)
@@ -100,7 +100,7 @@ class ExecutionPresetTests(unittest.TestCase):
         return execution_profiles.cap_allocation(budget,execution_profiles.SMALL_300,list(positions),list(orders),{},'BTC-USDT-SWAP',lambda *_:3,env=self.env,observation=obs,balance=balance)
     def test_300u_nav_losses_survive_switches_and_deposits(self):
         first=self.allocate(5000,1000)
-        self.assertEqual(first.equity,300);self.assertEqual(first.available,90)
+        self.assertEqual(first.equity,300);self.assertEqual(first.available,270)
         down=self.allocate(4997,1001)
         self.assertEqual(down.equity,297)
         deposit=self.allocate(5097,1002,flow=100)
@@ -109,7 +109,7 @@ class ExecutionPresetTests(unittest.TestCase):
             self.allocate(5088,1003,flow=100)
     def test_oversize_existing_positions_block_not_resize(self):
         held=[{'instId':'SUI-USDT-SWAP','pos':'10','imr':'100'}];original=copy.deepcopy(held)
-        with self.assertRaisesRegex(risk_policy.RiskRejected,'margin budget'):self.allocate(5000,1000,positions=held)
+        with self.assertRaisesRegex(risk_policy.RiskRejected,'margin budget|initialization'):self.allocate(5000,1000,positions=held)
         self.assertEqual(held,original)
     def test_actual_final_gateway_applies_selected_300u_profile(self):
         from scripts.okx_runtime import OKXEnvironment
@@ -126,8 +126,8 @@ class ExecutionPresetTests(unittest.TestCase):
         def public(url,**kwargs):return {'data':[meta]} if '/instruments?' in url else {'data':[{'last':'100','ts':str(int(now*1000))}]}
         with patch.object(entry_gateway,'_request',side_effect=private),patch.object(entry_gateway.public_market,'get_json',side_effect=public):
             plan,client=entry_gateway.prepare(env,inst_id=meta['instId'],side='long',entry=100,stop=98,take_profit=110,requested_size=1000,budget=15,decision_id=identity,decision_at=now)
-        self.assertLessEqual(plan['risk_usdt'],1.5)
-        self.assertLessEqual(plan['margin_usdt'],30)
+        self.assertLessEqual(plan['risk_usdt'],6.0)
+        self.assertLessEqual(plan['margin_usdt'],150)
         self.assertEqual(plan['execution_profile']['execution']['id'],'small300')
         self.assertEqual(strategy_evidence.unresolved(env.identity)[0][0],client)
 
@@ -136,9 +136,9 @@ class ExecutionPresetTests(unittest.TestCase):
         meta={'instId':'TEST-USDT-SWAP','ctType':'linear','settleCcy':'USDT','state':'live','ctVal':'1','lotSz':'.01','minSz':'.01','tickSz':'.01'}
         args=dict(metadata=meta,side='long',entry=100,stop=98,take_profit=110,requested_size=1000,budget_usdt=15,equity=allocation.equity,available=allocation.available,policy=risk_policy.load_policy())
         plan=risk_policy.order_plan(leverage=3,**args)
-        self.assertLessEqual(plan['risk_usdt'],1.5)
-        self.assertLessEqual(plan['margin_usdt'],30)
-        with self.assertRaisesRegex(risk_policy.RiskRejected,'leverage'):risk_policy.order_plan(leverage=5,**args)
+        self.assertLessEqual(plan['risk_usdt'],6.0)
+        self.assertLessEqual(plan['margin_usdt'],150)
+        with self.assertRaisesRegex(risk_policy.RiskRejected,'leverage'):risk_policy.order_plan(leverage=7,**args)
 
 class ConditionalAdxTests(unittest.TestCase):
     def test_only_reconstructed_valid_closed_candle_plan_can_pass_low_adx(self):

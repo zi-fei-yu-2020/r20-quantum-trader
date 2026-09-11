@@ -5,6 +5,7 @@ import { useDashboardStore } from '../stores/dashboard'
 import { observedNumber } from '../utils/observationDisplay'
 import HeaderBar from '../components/HeaderBar.vue'
 import TopHudRibbon from '../components/TopHudRibbon.vue'
+import StrategyTelemetryPanel from '../components/StrategyTelemetryPanel.vue'
 import TacticalDesk from '../components/TacticalDesk.vue'
 import MarketCandles from '../components/MarketCandles.vue'
 import InstrumentMatrix from '../components/InstrumentMatrix.vue'
@@ -115,7 +116,7 @@ function setLayout(mode: 'dual' | 'stacked') {
         class="terminal-overview"
         :class="{ 'terminal-overview--dual': layoutMode === 'dual' }"
       >
-        <div class="terminal-overview__left"><TopHudRibbon /><MarketCandles :active="store.activeTab === 'trading' && (route.path === '/' || route.path === '/trading')" /><TacticalDesk /></div>
+        <div class="terminal-overview__left"><TopHudRibbon /><StrategyTelemetryPanel /><MarketCandles :active="store.activeTab === 'trading' && (route.path === '/' || route.path === '/trading')" /><TacticalDesk /></div>
         <InstrumentMatrix />
       </div>
       <div v-show="store.activeTab === 'factors'" class="terminal-grid"><AiBrainHistory /></div>

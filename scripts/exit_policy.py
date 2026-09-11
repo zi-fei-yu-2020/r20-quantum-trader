@@ -8,6 +8,11 @@ from copy import deepcopy
 import math
 
 VERSION = 'position-exits-v1'
+HORIZON_PRESETS = {
+    'scalp': {'time_stop_seconds': 3600, 'time_stop_profit_atr': .05, 'tier1_breakeven_atr': 1.2, 'tier2_lock_atr': 2.0, 'tier1_floor_atr': .2, 'tier2_floor_atr': .7, 'kinetic_peak_atr': 1.2, 'kinetic_pullback_atr': .55},
+    'swing': {'time_stop_seconds': 14400, 'time_stop_profit_atr': .10, 'tier1_breakeven_atr': 1.8, 'tier2_lock_atr': 3.0, 'tier1_floor_atr': .3, 'tier2_floor_atr': 1.0, 'kinetic_peak_atr': 1.8, 'kinetic_pullback_atr': .8},
+}
+
 PRESETS = {
     'standard': {
         'time_stop_seconds': 21600,
@@ -65,7 +70,11 @@ def resolve(tracker, runtime_reader):
                   'source': 'last_verified' if known else 'conservative_fallback',
                   'error_type': type(exc).__name__}
     tracker['exitPolicyStatus'] = status
-    return thresholds(status['preset_id']), status
+    selected=thresholds(status['preset_id'])
+    if status['preset_id']=='small300':
+        horizon=str(tracker.get('horizon','swing')).lower()
+        selected=deepcopy(HORIZON_PRESETS.get(horizon,HORIZON_PRESETS['swing']))
+    return selected, status
 
 
 def volatility(factor):

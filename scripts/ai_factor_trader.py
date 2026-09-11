@@ -58,6 +58,9 @@ NEWS_SENTIMENT_FILE = os.path.join(DATA_DIR, "news_sentiment.json")
 AI_POSITION_MANAGEMENT_FILE = os.path.join(DATA_DIR, "ai_position_management.json")
 TRADER_LOCK_FILE = os.path.join(DATA_DIR, ".ai_factor_trader.lock")
 TRADER_SLOT_FILE = os.path.join(DATA_DIR, ".ai_factor_trader_slot.json")
+HORIZON_INTENTS_FILE = os.path.join(DATA_DIR, 'horizon_intents.json')
+HORIZON_STATS_FILE = os.path.join(DATA_DIR, 'horizon_stats.json')
+CURRENT_HORIZON = 'unknown'
 
 try:
     import sys
@@ -212,6 +215,24 @@ def fetch_signal_candles(inst_id, bar, limit):
     except Exception: return []
 
 
+def load_horizon_intents():
+    try:
+        with open(HORIZON_INTENTS_FILE, encoding='utf-8') as f: return json.load(f)
+    except Exception: return {}
+
+def save_horizon_intent(inst_id, side, horizon, decision_id=None):
+    data=load_horizon_intents(); data[f'{inst_id}_{side}']={'horizon': horizon if horizon in {'scalp','swing'} else 'swing','decision_id':decision_id,'ts':int(time.time())}
+    os.makedirs(DATA_DIR, exist_ok=True)
+    with open(HORIZON_INTENTS_FILE,'w',encoding='utf-8') as f: json.dump(data,f,ensure_ascii=False,indent=2)
+
+def consume_horizon_intent(inst_id, side):
+    data=load_horizon_intents(); key=f'{inst_id}_{side}'; item=data.pop(key,None)
+    if item:
+        try:
+            with open(HORIZON_INTENTS_FILE,'w',encoding='utf-8') as f: json.dump(data,f,ensure_ascii=False,indent=2)
+        except Exception: pass
+    return item.get('horizon','swing') if isinstance(item,dict) else 'swing'
+
 def load_trackers():
     if os.path.exists(POSITION_TRACKER_FILE):
         try:
@@ -245,11 +266,15 @@ def load_stop_cooldowns():
 def add_stop_cooldown(inst_id: str, side: str, reason: str = "止损冷却"):
     cooldowns = load_stop_cooldowns()
     key = f"{inst_id}_{side}"
+    previous = cooldowns.get(key) if isinstance(cooldowns.get(key), dict) else {}
+    count = int(previous.get('count', 0) or 0) + 1
     cooldowns[key] = {
         "instId": inst_id,
         "side": side,
         "ts": int(time.time()),
-        "reason": reason
+        "reason": reason,
+        "count": count,
+        "cooldown_seconds": 7200 if count >= 2 else 1800,
     }
     try:
         with open(STOP_COOLDOWN_FILE, "w", encoding="utf-8") as f:
@@ -261,7 +286,8 @@ def is_in_stop_cooldown(inst_id: str, side: str) -> bool:
     cooldowns = load_stop_cooldowns()
     key = f"{inst_id}_{side}"
     if key in cooldowns:
-        rem_sec = 1800 - (int(time.time()) - cooldowns[key].get("ts", 0))
+        seconds = int(cooldowns[key].get('cooldown_seconds', 1800) or 1800)
+        rem_sec = seconds - (int(time.time()) - int(cooldowns[key].get("ts", 0) or 0))
         if rem_sec > 0:
             return True
     return False
@@ -276,6 +302,23 @@ def clamp(value, lower, upper, default):
 def load_adaptive_config():
     """Fallback config reader maintaining compatibility."""
     return {}
+
+def execution_limits():
+    """Resolve portfolio limits from the active execution binding.
+
+    The old trader loop kept 6 slots/600U per asset even when the 300U
+    profile was active; the gateway later clipped the order, but the strategy
+    still over-traded. Keep planning and final authorization on one budget.
+    """
+    try:
+        cfg=execution_runtime()['execution']
+    except Exception:
+        cfg={}
+    return {
+        'max_positions': int(cfg.get('max_active_instruments', MAX_CONCURRENT_POSITIONS)),
+        'max_same_direction': int(cfg.get('max_same_direction_positions', cfg.get('max_active_instruments', MAX_SAME_DIRECTION_POSITIONS))),
+        'single_asset_margin': float(cfg.get('single_asset_margin_usdt', MAX_SINGLE_ASSET_MARGIN)),
+    }
 
 def clean_stale_open_orders() -> Tuple[bool, str]:
     """Cancel stale entry orders; any inability to verify/cancel blocks the trading cycle."""
@@ -448,7 +491,7 @@ def prune_trackers(trackers: Dict[str, Any], real_pos_dict: Dict[str, Any]) -> i
 
 
 @trade_lock.serialized
-def submit_protected_limit_order(inst_id: str, side: str, pos_side: str, size: float, price: float, tp_px: float, sl_px: float, *, risk_budget_usdt=15, decision_id=None, decision_at=None, allow_demo_translation=True) -> Tuple[bool, str]:
+def submit_protected_limit_order(inst_id: str, side: str, pos_side: str, size: float, price: float, tp_px: float, sl_px: float, *, risk_budget_usdt=15, decision_id=None, decision_at=None, allow_demo_translation=True, horizon='swing') -> Tuple[bool, str]:
     """Submit a protected limit order; acceptance is not treated as a fill."""
     # Check if we are running in simulated/demo mode and price diverged significantly from demo orderbook
     env = market._selected()
@@ -492,10 +535,11 @@ def submit_protected_limit_order(inst_id: str, side: str, pos_side: str, size: f
     try:
         plan, client_id = entry_gateway.prepare(market._selected(), inst_id=inst_id, side=pos_side,
             entry=effective_px, stop=effective_sl, take_profit=effective_tp, requested_size=size,
-            budget=risk_budget_usdt, decision_id=decision_id, decision_at=decision_at)
+            budget=risk_budget_usdt, decision_id=decision_id, decision_at=decision_at, horizon=horizon)
     except Exception as exc:
         return False, f"Final risk preflight rejected: {type(exc).__name__}: {exc}"
     LAST_ENTRY_PLAN.clear(); LAST_ENTRY_PLAN.update(plan)
+    save_horizon_intent(inst_id, pos_side, horizon, decision_id)
     size = plan['size']
     effective_px, effective_sl, effective_tp = plan['entry'], plan['stop'], plan['take_profit']
     command = okx_private_command(
@@ -616,6 +660,29 @@ def ensure_cloud_position_protection(inst_id: str, pos_side: str, size: float, t
 
 
 def record_trade(trade_data):
+    # Keep independent scalp/swing outcome statistics alongside the raw ledger.
+    # The ledger remains the source of truth; this is an additive read model.
+    horizon = str(trade_data.get('horizon') or '').lower()
+    if horizon not in {'scalp','swing'}:
+        inst=str(trade_data.get('inst') or trade_data.get('name') or '')
+        direction=str(trade_data.get('direction') or trade_data.get('side') or '').lower()
+        side='long' if '?' in direction or 'long' in direction else 'short' if '?' in direction or 'short' in direction else ''
+        tracked=load_trackers().get(f'{inst}-USDT-SWAP_{side}',{}) if inst and side else {}
+        horizon=str(tracked.get('horizon') or CURRENT_HORIZON or 'unknown').lower()
+    if horizon not in {'scalp','swing'}: horizon = 'unknown'
+    trade_data.setdefault('horizon', horizon)
+    try:
+        stats={}
+        if os.path.exists(HORIZON_STATS_FILE):
+            with open(HORIZON_STATS_FILE,encoding='utf-8') as f: stats=json.load(f)
+        bucket=stats.setdefault(horizon, {'closed':0,'wins':0,'losses':0,'net_pnl':0.0,'fees':0.0})
+        pnl=float(trade_data.get('net_pnl',trade_data.get('pnl',0.0)) or 0.0)
+        fee=float(trade_data.get('fee',0.0) or 0.0)
+        bucket['closed']+=1; bucket['wins']+=int(pnl>0); bucket['losses']+=int(pnl<=0)
+        bucket['net_pnl']=round(float(bucket.get('net_pnl',0.0))+pnl,8); bucket['fees']=round(float(bucket.get('fees',0.0))+fee,8)
+        with open(HORIZON_STATS_FILE,'w',encoding='utf-8') as f: json.dump(stats,f,ensure_ascii=False,indent=2)
+    except Exception as e:
+        print(f"Failed to record horizon stats: {e}")
     try:
         ledger = []
         if os.path.exists(LEDGER_JSON_FILE):
@@ -1142,6 +1209,7 @@ def manage_position_tp_and_trailing(f, curr_pos, trackers, timestamp_full, execu
             'adopted_stop':adopted_stop,'source':'trader','cloud_stop_changed':False})
         score, action, reasons, strat_tag, strat_desc = evaluate_asset_signal(f)
         trackers[pos_key] = {
+            "horizon": consume_horizon_intent(inst_id, side_name),
             "instId": inst_id,
             "name": name,
             "side": curr_pos["side"],
@@ -1162,6 +1230,8 @@ def manage_position_tp_and_trailing(f, curr_pos, trackers, timestamp_full, execu
         }
 
     t = trackers[pos_key]
+    global CURRENT_HORIZON
+    CURRENT_HORIZON = str(t.get('horizon','swing')).lower()
     ex = _exit_preset(t, executed_actions, name)
     volatility = exit_policy.volatility(f)
     exit_atr = volatility['value']
@@ -1818,6 +1888,10 @@ def execute_portfolio():
     active_pos_count = len(real_pos_dict)
     long_count = real_long_count
     short_count = real_short_count
+    limits = execution_limits()
+    max_active_positions = limits['max_positions']
+    max_same_direction = limits['max_same_direction']
+    single_asset_margin = limits['single_asset_margin']
 
     pending_result = run_cmd_result(okx_private_command("okx swap orders --json"), timeout=20)
     if not pending_result["ok"] or not isinstance(pending_result.get("data"), list):
@@ -1977,7 +2051,12 @@ def execute_portfolio():
             # Requested quantity only; final quantity is floored by the deterministic risk gateway.
             actual_sz = f["sz"]
             ai_margin = float(ai_decision.get("margin_usdt", 0.0) or 0.0)
-            ai_lever = float(ai_decision.get("leverage", 3) or 3)
+            horizon = str(ai_decision.get("horizon", "swing")).lower()
+            # The model may suggest a value, but the default is horizon-aware:
+            # short trades use capital more efficiently; swing trades leave more
+            # room for noise. Final risk is still calculated from stop distance.
+            default_leverage = 5.0 if horizon == "scalp" else 3.0
+            ai_lever = float(ai_decision.get("leverage", default_leverage) or default_leverage)
             
             # If AI planned margin & leverage, calculate custom contract size
             if ai_margin > 0 and ai_lever >= 1.0 and f["price"] > 0 and ct_val > 0:
@@ -1998,7 +2077,7 @@ def execute_portfolio():
                 allow_entry = False
 
                 # Case A: Standard Initial Entry (No existing position & slot available)
-                if not curr_pos and inst_id not in pending_inst_ids and reserved_slot_count < MAX_CONCURRENT_POSITIONS and reserved_long_count < MAX_SAME_DIRECTION_POSITIONS:
+                if not curr_pos and inst_id not in pending_inst_ids and reserved_slot_count < max_active_positions and reserved_long_count < max_same_direction:
                     allow_entry = True  # Evidence/geometry and account risk, never model score.
 
                 # Case B: Strict Pyramiding Scale-In (Existing long position in profit/breakeven)
@@ -2021,7 +2100,7 @@ def execute_portfolio():
 
                     is_profit_or_breakeven = (pos_upl > 0 and pos_upl_ratio >= MIN_SCALE_IN_PROFIT_RATIO) or (trailing_sl > 0 and trailing_sl >= pos_avg_px)
                     planned_margin = ai_margin if ai_margin > 0 else (actual_sz * ct_val * f["price"] / max(1.0, ai_lever))
-                    within_margin_cap = (curr_margin + planned_margin) <= MAX_SINGLE_ASSET_MARGIN
+                    within_margin_cap = (curr_margin + planned_margin) <= single_asset_margin
 
                     if is_profit_or_breakeven and scale_count < MAX_SCALE_IN_COUNT and within_margin_cap and calculus_accel_ok:
                         allow_entry = True
@@ -2033,7 +2112,7 @@ def execute_portfolio():
                         elif scale_count >= MAX_SCALE_IN_COUNT:
                             print(f"[Pyramiding 拦截] {f['name']} 已达最大加仓次数 ({scale_count}/{MAX_SCALE_IN_COUNT})")
                         elif not within_margin_cap:
-                            print(f"[Pyramiding 拦截] {f['name']} 加仓后总保证金将超限 ({curr_margin + planned_margin:.1f} > {MAX_SINGLE_ASSET_MARGIN}U)")
+                            print(f"[Pyramiding 拦截] {f['name']} 加仓后总保证金将超限 ({curr_margin + planned_margin:.1f} > {single_asset_margin}U)")
                         elif not calculus_accel_ok:
                             print(f"[Pyramiding 拦截] {f['name']} 数理数据无效、动能衰竭或延续概率偏低 (加速度={c_accel:+.2f}, 概率={p_cont:.1f}%)，禁止追多加仓")
 
@@ -2052,7 +2131,7 @@ def execute_portfolio():
                     if tp_px <= limit_px:
                         tp_px = round(limit_px + max(tp_dist, f["price"] * 0.024), prec)
 
-                    accepted, order_ref = submit_protected_limit_order(inst_id, "buy", "long", actual_sz, limit_px, tp_px, sl_px, risk_budget_usdt=f["risk_per_trade_usd"], decision_id=ai_info.get("decision_id"), decision_at=ai_info.get("data_as_of"), allow_demo_translation=not bool(ai_decision.get('candidate_id')))
+                    accepted, order_ref = submit_protected_limit_order(inst_id, "buy", "long", actual_sz, limit_px, tp_px, sl_px, risk_budget_usdt=f["risk_per_trade_usd"], decision_id=ai_info.get("decision_id"), decision_at=ai_info.get("data_as_of"), allow_demo_translation=not bool(ai_decision.get('candidate_id')), horizon=horizon)
                     if accepted:
                         actual_sz = LAST_ENTRY_PLAN['size']
                         limit_px, sl_px, tp_px = LAST_ENTRY_PLAN['entry'], LAST_ENTRY_PLAN['stop'], LAST_ENTRY_PLAN['take_profit']
@@ -2099,7 +2178,7 @@ def execute_portfolio():
                 allow_entry = False
 
                 # Case A: Standard Initial Entry
-                if not curr_pos and inst_id not in pending_inst_ids and reserved_slot_count < MAX_CONCURRENT_POSITIONS and reserved_short_count < MAX_SAME_DIRECTION_POSITIONS:
+                if not curr_pos and inst_id not in pending_inst_ids and reserved_slot_count < max_active_positions and reserved_short_count < max_same_direction:
                     allow_entry = True  # Evidence/geometry and account risk, never model score.
 
                 # Case B: Strict Pyramiding Scale-In (Existing short position in profit/breakeven)
@@ -2114,7 +2193,7 @@ def execute_portfolio():
 
                     is_profit_or_breakeven = (pos_upl > 0 and pos_upl_ratio >= MIN_SCALE_IN_PROFIT_RATIO) or (trailing_sl > 0 and trailing_sl <= pos_avg_px)
                     planned_margin = ai_margin if ai_margin > 0 else (actual_sz * ct_val * f["price"] / max(1.0, ai_lever))
-                    within_margin_cap = (curr_margin + planned_margin) <= MAX_SINGLE_ASSET_MARGIN
+                    within_margin_cap = (curr_margin + planned_margin) <= single_asset_margin
 
                     calculus_accel_ok, c_accel, p_break = _scale_in_calculus_gate(f.get("calculus"), "short")
 
@@ -2128,7 +2207,7 @@ def execute_portfolio():
                         elif scale_count >= MAX_SCALE_IN_COUNT:
                             print(f"[Pyramiding 拦截] {f['name']} 已达最大加仓次数 ({scale_count}/{MAX_SCALE_IN_COUNT})")
                         elif not within_margin_cap:
-                            print(f"[Pyramiding 拦截] {f['name']} 加仓后总保证金将超限 ({curr_margin + planned_margin:.1f} > {MAX_SINGLE_ASSET_MARGIN}U)")
+                            print(f"[Pyramiding 拦截] {f['name']} 加仓后总保证金将超限 ({curr_margin + planned_margin:.1f} > {single_asset_margin}U)")
                         elif not calculus_accel_ok:
                             print(f"[Pyramiding 拦截] {f['name']} 数理数据无效、动能失速企稳或击穿概率偏低 (加速度={c_accel:+.2f}, 概率={p_break:.1f}%)，禁止追空加仓")
 
@@ -2146,7 +2225,7 @@ def execute_portfolio():
                     if tp_px >= limit_px:
                         tp_px = round(limit_px - max(tp_dist, f["price"] * 0.024), prec)
 
-                    accepted, order_ref = submit_protected_limit_order(inst_id, "sell", "short", actual_sz, limit_px, tp_px, sl_px, risk_budget_usdt=f["risk_per_trade_usd"], decision_id=ai_info.get("decision_id"), decision_at=ai_info.get("data_as_of"), allow_demo_translation=not bool(ai_decision.get("candidate_id")))
+                    accepted, order_ref = submit_protected_limit_order(inst_id, "sell", "short", actual_sz, limit_px, tp_px, sl_px, risk_budget_usdt=f["risk_per_trade_usd"], decision_id=ai_info.get("decision_id"), decision_at=ai_info.get("data_as_of"), allow_demo_translation=not bool(ai_decision.get("candidate_id")), horizon=horizon)
                     if accepted:
                         actual_sz = LAST_ENTRY_PLAN['size']
                         limit_px, sl_px, tp_px = LAST_ENTRY_PLAN['entry'], LAST_ENTRY_PLAN['stop'], LAST_ENTRY_PLAN['take_profit']
@@ -2203,7 +2282,7 @@ def execute_portfolio():
     state_payload = {
         "timestamp": timestamp_full,
         "active_positions_count": active_pos_count,
-        "max_positions": MAX_CONCURRENT_POSITIONS,
+        "max_positions": max_active_positions,
         "long_count": long_count,
         "short_count": short_count,
         "circuit_breaker": {"active": cb_active, "reason": cb_reason},

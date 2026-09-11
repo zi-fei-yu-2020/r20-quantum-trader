@@ -2574,6 +2574,7 @@ def cache(resource: str, x_r20_admin_token: str | None = Header(default=None), x
         "ledger": "trading_ledger.json",
         "sentiment": "news_sentiment.json",
         "self-improvement": "self_improvement_report.json",
+        "horizon-stats": "horizon_stats.json",
     }
     filename = allowed.get(resource)
     if not filename:

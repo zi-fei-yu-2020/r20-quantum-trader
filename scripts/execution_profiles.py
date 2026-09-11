@@ -8,12 +8,19 @@ import json
 
 SMALL_300 = {
     'id':'small300', 'label':'300U 小资金 · 风险预算型', 'equity_cap_usdt':300.0,
-    'per_trade_equity_pct':0.005, 'single_asset_margin_usdt':30.0,
-    'total_margin_usdt':90.0, 'max_active_instruments':2, 'max_leverage':3.0,
+    'per_trade_equity_pct':0.02, 'single_asset_margin_usdt':150.0,
+    'total_margin_usdt':270.0, 'max_active_instruments':2, 'max_same_direction_positions':1,
+    'max_leverage':6.0, 'daily_drawdown_pct':0.08, 'portfolio_stop_pct':0.06,
+    'direction_stop_pct':0.04, 'group_stop_pct':0.04, 'peak_drawdown_pct':0.15,
+    'minimum_net_rr':2.2,
 }
 
 def settings_for(profile):
-    name = 'small300' if profile.get('id')=='small300' else profile.get('execution_profile','standard')
+    # Operators can bind a stable prompt profile to the capital-aware preset
+    # without rewriting prompt text. The exchange leverage remains an observed
+    # account setting and order_plan sizes from actual stop distance.
+    requested_mode = str(__import__('os').environ.get('R20_CAPITAL_MODE','')).strip().lower()
+    name = 'small300' if (profile.get('id')=='small300' or requested_mode in {'300','small300','small'}) else profile.get('execution_profile','standard')
     if name not in ('small300','standard'):
         raise ValueError('Unknown execution preset; new risk blocked')
     return dict(SMALL_300) if name=='small300' else {'id':'standard','label':'标准风控（独立配置）'}

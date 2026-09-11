@@ -48,7 +48,10 @@ def load_policy():
     from scripts.execution_profiles import runtime
     preset=runtime()['execution']
     if preset['id']=='small300':
-        raw.update({key:preset[key] for key in ('per_trade_equity_pct','single_asset_margin_usdt','max_leverage')})
+        raw.update({key:preset[key] for key in ('per_trade_equity_pct','single_asset_margin_usdt','max_leverage','daily_drawdown_pct','portfolio_stop_pct','direction_stop_pct','group_stop_pct','peak_drawdown_pct','minimum_net_rr')})
+        # small300 remains risk-budgeted: these are ceilings, while order_plan
+        # sizes from the actual stop distance and account equity.
+        raw['per_trade_equity_pct'] = min(float(raw.get('per_trade_equity_pct', .02)), .02)
     return Policy(**raw)
 
 def monotonic_stop(side, old, new, current):
@@ -96,7 +99,7 @@ def order_plan(*, metadata, side, entry, stop, take_profit, requested_size, budg
 
 def exposure(positions, pending, algos, metadata, policy=None):
     """Worst stop giveback from marked equity. Unknown coverage blocks new exposure."""
-    policy=policy or Policy(); result={'total':0.,'long':0.,'short':0.,'group':0.}
+    policy=policy or Policy(); result={'total':0.,'long':0.,'short':0.,'group':0.,'correlated':0.}
     for p in positions:
         size=abs(number(p.get('pos',0)))
         if not size: continue
@@ -119,6 +122,7 @@ def exposure(positions, pending, algos, metadata, policy=None):
         if liq and ((side=='long' and stop<=liq) or (side=='short' and stop>=liq)): raise RiskRejected('Existing stop beyond liquidation boundary')
         risk=size*ct*(loss+mark*(policy.maker_fee+policy.taker_fee+policy.slippage))
         result[side]+=risk; result['total']+=risk
+        if inst.split('-')[0].upper() in {'BTC','ETH','SOL','DOGE'}: result['correlated']+=risk
     for p in pending:
         if str(p.get('reduceOnly','false')).lower() in {'true','1'}: continue
         side=p.get('posSide'); inst=p['instId']; ct,*_=linear_metadata(metadata[inst])
@@ -130,6 +134,7 @@ def exposure(positions, pending, algos, metadata, policy=None):
         stop=min(stops) if side=='long' else max(stops)
         risk=size*ct*(abs(entry-stop)+entry*(policy.maker_fee+policy.taker_fee+policy.slippage))
         result[side]+=risk; result['total']+=risk
+        if inst.split('-')[0].upper() in {'BTC','ETH','SOL','DOGE'}: result['correlated']+=risk
     # Until measured groups are approved, treat all configured crypto swaps as one group.
     result['group']=result['total']
     return result

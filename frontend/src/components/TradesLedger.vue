@@ -64,6 +64,10 @@ function formatPx(v: any): string {
 function clean(v: any, fallback = '--'): string {
   return v || fallback
 }
+
+function horizonLabel(v: unknown): string {
+  return v === 'scalp' ? 'SCALP' : v === 'swing' ? 'SWING' : 'UNKNOWN'
+}
 </script>
 
 <template>
@@ -201,6 +205,7 @@ function clean(v: any, fallback = '--'): string {
             >
               <th class="py-3 px-4 font-bold">标的 / 方向</th>
               <th class="py-3 px-3 font-bold">策略来源</th>
+              <th class="py-3 px-3 font-bold">HORIZON</th>
               <th class="py-3 px-3 font-bold">保证金</th>
               <th class="py-3 px-3 font-bold">开仓价 / 时间</th>
               <th class="py-3 px-3 font-bold">平仓价 / 时间</th>
@@ -243,6 +248,9 @@ function clean(v: any, fallback = '--'): string {
                 >
                   {{ clean(t.strategy, '观望') }}
                 </span>
+              </td>
+              <td class="py-3 px-3 text-xs" style="color: var(--text-muted)">
+                <span class="px-2 py-0.5 rounded border" style="border-color: var(--border-subtle); background: var(--bg-badge)">{{ horizonLabel(t.horizon) }}</span>
               </td>
               <td class="py-3 px-3 font-bold num-tabular" style="color: var(--text-main)">
                 {{ marginText(t.margin) }}

@@ -9,7 +9,14 @@ import hashlib
 import json
 import math
 
-VERSION = 'closed-candle-plans-v3'
+VERSION = 'closed-candle-plans-v4'
+# Entry-quality guardrails: do not sell the exhausted tail of a move or buy the
+# panic low. These are deterministic filters, not probability claims.
+MIN_PULLBACK_ATR = 0.35
+MIN_BREAKOUT_ATR = 1.0
+EXTENDED_RSI_SHORT = 30.0
+EXTENDED_RSI_LONG = 70.0
+EXTENDED_VWAP = 0.65
 WIDTHS = {'15M': 900_000, '1H': 3_600_000}
 
 
@@ -74,6 +81,22 @@ def hourly_trend(package):
     return {'1H_SWING_BULL':'long','1H_SWING_BEAR':'short'}.get(package.get('structure_1h'),'unknown')
 
 
+def classify_horizon(package, setup):
+    """Classify holding horizon from setup, volatility and regime evidence."""
+    if setup == 'closed_range_breakout':
+        return 'scalp'
+    regime = str(package.get('market_regime') or '')
+    atr15 = number(package.get('atr_15m', 0.0) or 0.0)
+    atr1h = number(package.get('atr_1h', 0.0) or 0.0)
+    price = number(package.get('price', 0.0) or 0.0)
+    # Very high short-term volatility is managed as a short-horizon trade even
+    # when the trigger is a pullback; quiet aligned trend is a swing trade.
+    if price > 0 and atr15 / price >= 0.012:
+        return 'scalp'
+    if regime in {'BULL_TREND', 'BEAR_TREND'}:
+        return 'swing'
+    return 'scalp' if atr1h and atr15 / atr1h >= 0.55 else 'swing'
+
 def validate_independent_direction(package, action):
     side='long' if action=='BUY_LONG' else 'short'
     trend=hourly_trend(package)
@@ -99,11 +122,23 @@ def catalog(package, policy=None):
         if atr<=0: raise ValueError('zero_entry_volatility')
         macro=str(package.get('macro_4h') or '')
         if not any(k in macro for k in ('4H_MACRO_BULL','4H_MACRO_BEAR','4H_MACRO_RANGE')): raise ValueError('macro_environment_missing')
+        rsi_15m=number(package.get('rsi_15m', package.get('rsi', 50.0)))
+        rsi_1h=number(package.get('rsi_1h', package.get('rsi', 50.0)))
+        vwap_bias=number(package.get('vwap_bias', 0.0))
+        # A trend regime is a directional permission, not an unconditional order.
+        # The old implementation allowed a short after RSI 19-29 readings and used
+        # a tiny retest stop, systematically selling the exhausted tail.
+        extended_short = rsi_1h <= EXTENDED_RSI_SHORT or (rsi_15m <= 32.0 and vwap_bias <= -EXTENDED_VWAP)
+        extended_long = rsi_1h >= EXTENDED_RSI_LONG or (rsi_15m >= 68.0 and vwap_bias >= EXTENDED_VWAP)
         # A partial rebound/rejection is a measurable event; slow 1H momentum need not already agree.
         for side in ('long','short'):
             action='BUY_LONG' if side=='long' else 'SELL_SHORT'
             if (side=='long' and '4H_MACRO_BEAR' in macro) or (side=='short' and '4H_MACRO_BULL' in macro):
                 rejected('all',side,'existing_macro_direction_veto');continue
+            if side=='short' and extended_short:
+                rejected('all',side,'trend_tail_overextended',rsi_1h=rsi_1h,rsi_15m=rsi_15m,vwap_bias=vwap_bias);continue
+            if side=='long' and extended_long:
+                rejected('all',side,'trend_tail_overextended',rsi_1h=rsi_1h,rsi_15m=rsi_15m,vwap_bias=vwap_bias);continue
             entry=ask if side=='long' else bid
             if (entry-bar['close'])*(1 if side=='long' else -1)>atr*.25:
                 rejected('all',side,'quote_moved_beyond_closed_trigger');continue
@@ -123,24 +158,21 @@ def catalog(package, policy=None):
                 hold_level=prev['close'] if setup=='pullback_reclaim' else level
                 if (entry-hold_level)*(1 if side=='long' else -1)<=0:
                     rejected(setup,side,'closed_trigger_invalidated_by_quote');continue
-                # Stop basis is differentiated by setup type. A pullback-reclaim entry
-                # sits near a defined support/resistance level (the reclaimed close),
-                # so its stop anchors to that retest structure (tight) — risk is small,
-                # so net RR can clear 2 against the same observed channel target without
-                # manufacturing space. A breakout-chase entry anchors to the 1.5xATR
-                # volatility floor (wide), since post-breakout dispersion is larger.
+                # A retest stop must survive ordinary 15M noise. The previous
+                # 0.1 ATR pad manufactured high R:R and caused repeated tail stops.
+                # Use the wider of structure invalidation and a volatility buffer.
                 if setup=='pullback_reclaim':
-                    # Anchor to the level being tested (prev extreme), not the 3-bar
-                    # extreme which may include an unrelated earlier swing. This is the
-                    # true retest invalidation point.
-                    stop=(prev['low']-atr*.1) if side=='long' else (prev['high']+atr*.1)
-                    stop_basis='retest_structure_prev_extreme_plus_0.1_atr'
+                    atr_1h=number(package.get('atr_1h', atr))
+                    buffer=max(atr*MIN_PULLBACK_ATR, atr_1h*0.20)
+                    stop=(prev['low']-buffer) if side=='long' else (prev['high']+buffer)
+                    stop_basis='retest_structure_plus_volatility_buffer'
                 else:
                     structural_stop=(min(b['low'] for b in f[-3:])-atr*.1) if side=='long' else (max(b['high'] for b in f[-3:])+atr*.1)
                     volatility_stop=(entry-atr*1.5) if side=='long' else (entry+atr*1.5)
                     stop=min(structural_stop,volatility_stop) if side=='long' else max(structural_stop,volatility_stop)
                     stop_basis='max_structural_3bar_extreme_and_1.5x_atr'
                 target=channel_target
+                horizon=classify_horizon(package, setup)
                 if not (0<stop<entry<target if side=='long' else 0<target<entry<stop):
                     rejected(setup,side,'invalid_geometry');continue
                 # Realistic cost: limit entry pays maker fee, OCO stop pays taker fee once, slippage on stop.
@@ -152,7 +184,7 @@ def catalog(package, policy=None):
                 reference='/askPx' if side=='long' else '/bidPx'
                 plan={'version':VERSION,'instrument':package['instId'],'setup':setup,'action':action,**geometry,
                       'created_at':at,'trigger_close_ms':bar['close_ms'],'valid_for_seconds':300,'net_rr':rr,
-                      'target_basis':'prior_12_closed_hour_channel_boundary','stop_basis':stop_basis,
+                      'target_basis':'prior_12_closed_hour_channel_boundary','stop_basis':stop_basis,'horizon':horizon,
                       'target_observation':{'timeframe':'1H','field':'high' if side=='long' else 'low',
                           'window_start_close_ms':h[-13]['close_ms'],'window_end_close_ms':h[-2]['close_ms'],
                           'price':target,'extrapolated':False},

@@ -229,6 +229,8 @@ def build_lifecycle_ledger(*, notify=True):
             "strategy": strat_tag,
             "strategy_evidence": origin["strategy_evidence"],
             "strategy_decision_id": origin.get("decision_id"),
+            "strategy_type": origin.get("strategy_type") or origin.get("setup") or "unknown",
+            "horizon": origin.get("horizon", "unknown"),
             "margin": margin_usdt,
             "sz": 0,
             "open_time": open_time,
@@ -279,6 +281,12 @@ def build_lifecycle_ledger(*, notify=True):
     finally:
         if os.path.exists(tmp_path):
             os.unlink(tmp_path)
+
+    try:
+        from scripts.horizon_stats import write as write_horizon_stats
+        write_horizon_stats(trades_lifecycle)
+    except Exception:
+        pass
 
     # The monitoring worker never emits trade notifications.
     if not notify:

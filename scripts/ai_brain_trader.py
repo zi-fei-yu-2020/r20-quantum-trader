@@ -973,12 +973,15 @@ def execute_batch_ai_brain_cycle(pos_summary: str = "当前总持仓 0/6", activ
                 d_item = {}
             from scripts.entry_candidates import catalog as entry_catalog
             plan_catalog = entry_catalog(p, prompt_bundle.risk_contract)
+            selected_plan = next((x for x in plan_catalog.get('plans', []) if x.get('id') == d_item.get('candidate_id')), None)
+            if selected_plan:
+                d_item = {**d_item, 'horizon': selected_plan.get('horizon', 'swing')}
             # Smooth field alias normalization (support both standard contract and council desk outputs)
             entry = safe_float(d_item.get("entry_price") or d_item.get("limit_price"))
             take_profit = safe_float(d_item.get("take_profit_price") or d_item.get("take_profit"))
             stop_loss = safe_float(d_item.get("stop_loss_price") or d_item.get("stop_loss"))
             confidence = max(0.0, min(100.0, safe_float(d_item.get("confidence"))))
-            ai_leverage = int(max(2, min(5, round(safe_float(d_item.get("leverage", 3))))))
+            ai_leverage = int(max(1, min(8, round(safe_float(d_item.get("leverage", 3))))))
             ai_margin = round(safe_float(d_item.get("margin_usdt") or d_item.get("margin_usd", 0.0)), 2)
 
             # Ensure normalized keys exist for downstream interceptors
