@@ -3,6 +3,7 @@ import { computed } from 'vue'
 import AppCard from './ui/AppCard.vue'
 import AppBadge from './ui/AppBadge.vue'
 import { useDashboardStore } from '../stores/dashboard'
+
 const store = useDashboardStore()
 const stats = computed(() => store.data?.horizon_stats || {})
 const profile = computed(() => store.data?.execution_profile)
@@ -12,33 +13,59 @@ const execution = computed(() => profile.value?.execution || {})
 const stat = (key: string) => stats.value[key] || {}
 const pct = (v: unknown) => v == null ? '--' : (Number(v) * 100).toFixed(1) + '%'
 const money = (v: unknown) => v == null ? '--' : Number(v).toFixed(2) + ' U'
-const localize = (value: unknown) => {
-  const text = String(value || '')
-  const map: Record<string, string> = {
-    reviewed: '已审计', pending: '处理中', running: '运行中',
-    'No executable setup in the latest closed-candle frame; this is normal WAIT, not an auto-trading lock': '本轮没有可执行候选，这是正常等待，不是自动交易锁定',
-    'Wait for a new closed-candle pullback, breakout, or reversal setup': '等待新的收盘 K 线回踩、突破或反转候选'
-  }
-  return map[text] || text
+const textMap: Record<string, string> = {
+  reviewed: '???', pending: '???', running: '???', WAIT: '??',
+  'No executable setup in the latest closed-candle frame; this is normal WAIT, not an auto-trading lock': '?????????????????????????',
+  'Wait for a new closed-candle pullback, breakout, or reversal setup': '?????? K ???????????'
 }
-const statusLabel = computed(() => localize(wait.value?.status || 'WAIT') || '等待')
-const profileLabel = computed(() => { const id = execution.value.id; return id === 'standard' ? '标准风控' : id === 'small300' ? '300U 小资金' : execution.value.label || id || '未设置' })
-const waitLabel = computed(() => localize(waitState.value?.detail || wait.value?.unavailable_reason) || '等待新的短线或波段候选')
+const localize = (value: unknown) => textMap[String(value || '')] || String(value || '')
+const statusLabel = computed(() => localize(wait.value?.status || 'WAIT') || '??')
+const profileLabel = computed(() => { const id = execution.value.id; return id === 'standard' ? '????' : id === 'small300' ? '300U ???' : execution.value.label || id || '???' })
+const waitLabel = computed(() => localize(waitState.value?.detail || wait.value?.unavailable_reason) || '???????????')
 </script>
+
 <template>
-  <div class="grid gap-3" data-strategy-telemetry>
-    <AppCard class="p-4 min-w-0 md:flex md:items-center md:gap-6">
-      <div class="flex items-center justify-between gap-3 mb-2 md:mb-0 md:min-w-[170px]"><div><p class="text-xs uppercase tracking-wider" style="color:var(--text-faint)">&#x6267;&#x884C;&#x6A21;&#x5F0F;</p><h3 class="font-semibold mt-1">{{ profileLabel }}</h3></div><AppBadge tone="brand">{{ execution.id || '--' }}</AppBadge></div>
-      <div class="flex flex-wrap gap-x-6 gap-y-2 text-xs" style="color:var(--text-muted)"><span>&#x5355;&#x7B14;&#x98CE;&#x9669; {{ pct(execution.per_trade_equity_pct) }}</span><span>&#x6700;&#x5927;&#x6760;&#x6746; {{ execution.max_leverage ?? '--' }}x</span><span>&#x6301;&#x4ED3;&#x4E0A;&#x9650; {{ execution.max_active_instruments ?? '--' }}</span><span>&#x4FDD;&#x8BC1;&#x91D1;&#x4E0A;&#x9650; {{ execution.total_margin_usdt ?? '--' }}U</span></div>
+  <div class="strategy-telemetry" data-strategy-telemetry>
+    <AppCard class="telemetry-card telemetry-card--profile">
+      <div class="telemetry-card__heading"><div><p class="telemetry-card__eyebrow">????</p><h3>{{ profileLabel }}</h3></div><AppBadge tone="brand">{{ execution.id || '??' }}</AppBadge></div>
+      <div class="telemetry-card__body telemetry-card__params"><div><span>????</span><strong>{{ pct(execution.per_trade_equity_pct) }}</strong></div><div><span>????</span><strong>{{ execution.max_leverage ?? '--' }}x</strong></div><div><span>????</span><strong>{{ execution.max_active_instruments ?? '--' }} ?</strong></div><div><span>?????</span><strong>{{ execution.total_margin_usdt ?? '--' }}U</strong></div></div>
     </AppCard>
-    <AppCard class="p-4 min-w-0 md:flex md:items-center md:gap-6">
-      <div class="flex items-center justify-between gap-3 mb-2 md:mb-0 md:min-w-[170px]"><div><p class="text-xs uppercase tracking-wider" style="color:var(--text-faint)">&#x7B56;&#x7565;&#x7EDF;&#x8BA1;</p><h3 class="font-semibold mt-1">&#x77ED;&#x7EBF; / &#x6CE2;&#x6BB5;</h3></div><AppBadge tone="neutral">&#x5B9E;&#x65F6;&#x66F4;&#x65B0;</AppBadge></div>
-      <div class="flex flex-wrap gap-3 flex-1"><div class="rounded-lg flex-1 min-w-[150px] p-3" style="background:var(--bg-card-subtle)"><p class="text-xs" style="color:var(--text-muted)">&#x77ED;&#x7EBF;&#x51C0;&#x76C8;&#x4E8F;</p><p class="text-lg font-bold num-tabular" :style="{color:Number(stat('scalp').net_pnl || 0)>=0?'var(--color-up)':'var(--color-down)'}">{{ money(stat('scalp').net_pnl) }}</p><p class="text-xs" style="color:var(--text-faint)">{{ stat('scalp').closed || 0 }} &#x7B14; · {{ stat('scalp').wins || 0 }} &#x80DC;</p></div><div class="rounded-lg p-3" style="background:var(--bg-card-subtle)"><p class="text-xs" style="color:var(--text-muted)">&#x6CE2;&#x6BB5;&#x51C0;&#x76C8;&#x4E8F;</p><p class="text-lg font-bold num-tabular" :style="{color:Number(stat('swing').net_pnl || 0)>=0?'var(--color-up)':'var(--color-down)'}">{{ money(stat('swing').net_pnl) }}</p><p class="text-xs" style="color:var(--text-faint)">{{ stat('swing').closed || 0 }} &#x7B14; · {{ stat('swing').wins || 0 }} &#x80DC;</p></div></div>
+
+    <AppCard class="telemetry-card telemetry-card--stats">
+      <div class="telemetry-card__heading"><div><p class="telemetry-card__eyebrow">????</p><h3>?? / ??</h3></div><AppBadge tone="neutral">????</AppBadge></div>
+      <div class="telemetry-card__body telemetry-card__stats"><div class="telemetry-stat"><span>?????</span><strong :style="{color:Number(stat('scalp').net_pnl || 0)>=0?'var(--color-up)':'var(--color-down)'}">{{ money(stat('scalp').net_pnl) }}</strong><small>{{ stat('scalp').closed || 0 }} ? ? {{ stat('scalp').wins || 0 }} ?</small></div><div class="telemetry-stat"><span>?????</span><strong :style="{color:Number(stat('swing').net_pnl || 0)>=0?'var(--color-up)':'var(--color-down)'}">{{ money(stat('swing').net_pnl) }}</strong><small>{{ stat('swing').closed || 0 }} ? ? {{ stat('swing').wins || 0 }} ?</small></div></div>
     </AppCard>
-    <AppCard class="p-4 min-w-0 md:flex md:items-center md:gap-6">
-      <div class="flex items-center justify-between gap-3 mb-2 md:mb-0 md:min-w-[170px]"><div><p class="text-xs uppercase tracking-wider" style="color:var(--text-faint)">&#x51B3;&#x7B56;&#x72B6;&#x6001;</p><h3 class="font-semibold mt-1">WAIT &#x662F;&#x5F53;&#x524D;&#x72B6;&#x6001;</h3></div><AppBadge :tone="waitState?.code === 'AI_UNAVAILABLE' || waitState?.code === 'DATA_UNAVAILABLE' ? 'warning' : 'neutral'">{{ statusLabel }}</AppBadge></div>
-      <p class="text-sm leading-6" style="color:var(--text-muted)">{{ waitLabel }}</p><p class="text-xs mt-2" style="color:var(--text-faint)">&#x4E0B;&#x4E00;&#x6B65;&#xFF1A;{{ localize(waitState?.next_trigger) || '&#x7B49;&#x5F85;&#x65B0;&#x7684;&#x5019;&#x9009;' }}</p>
-      <div class="mt-3 text-xs flex flex-wrap gap-x-5 gap-y-2 flex-1" style="color:var(--text-faint)"><span>&#x5DF2;&#x5BA1;&#x67E5; {{ wait?.evaluated_count ?? '--' }}</span><span>&#x5019;&#x9009; {{ wait?.counts?.entry_candidate ?? 0 }}</span><span>&#x5355;&#x7B14;&#x98CE;&#x9669; {{ pct(execution.per_trade_equity_pct) }}</span><span>&#x65E5;&#x5185;&#x7194;&#x65AD; {{ pct(execution.daily_drawdown_pct) }}</span></div>
+
+    <AppCard class="telemetry-card telemetry-card--decision">
+      <div class="telemetry-card__heading"><div><p class="telemetry-card__eyebrow">????</p><h3>WAIT ????</h3></div><AppBadge :tone="waitState?.code === 'AI_UNAVAILABLE' || waitState?.code === 'DATA_UNAVAILABLE' ? 'warning' : 'neutral'">{{ statusLabel }}</AppBadge></div>
+      <div class="telemetry-card__body telemetry-card__decision"><div class="telemetry-decision__copy"><p>{{ waitLabel }}</p><small>????{{ localize(waitState?.next_trigger) || '??????' }}</small></div><div class="telemetry-decision__meta"><span>??? <strong>{{ wait?.evaluated_count ?? '--' }}</strong></span><span>?? <strong>{{ wait?.counts?.entry_candidate ?? 0 }}</strong></span><span>???? <strong>{{ pct(execution.daily_drawdown_pct) }}</strong></span></div></div>
     </AppCard>
   </div>
 </template>
+
+<style scoped>
+.strategy-telemetry { display: grid; gap: .75rem; }
+.telemetry-card { min-width: 0; padding: 1rem 1.15rem; display: grid; grid-template-columns: minmax(145px, 190px) minmax(0, 1fr); align-items: center; gap: 1rem 1.5rem; }
+.telemetry-card__heading { min-width: 0; display: flex; align-items: center; justify-content: space-between; gap: .75rem; }
+.telemetry-card__eyebrow { margin: 0 0 .2rem; color: var(--text-faint); font-size: .7rem; letter-spacing: .08em; }
+.telemetry-card h3 { margin: 0; color: var(--text-main); font-size: .95rem; font-weight: 650; }
+.telemetry-card__body { min-width: 0; }
+.telemetry-card__params, .telemetry-card__stats, .telemetry-card__decision { display: flex; align-items: center; min-width: 0; }
+.telemetry-card__params { justify-content: space-between; gap: 1.25rem; }
+.telemetry-card__params div { display: grid; gap: .2rem; min-width: 0; }
+.telemetry-card__params span, .telemetry-stat span, .telemetry-decision__meta span { color: var(--text-muted); font-size: .72rem; white-space: nowrap; }
+.telemetry-card__params strong { color: var(--text-main); font-size: .88rem; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.telemetry-card__stats { gap: .75rem; }
+.telemetry-stat { flex: 1 1 0; min-width: 0; padding: .65rem .85rem; border-radius: .6rem; background: var(--bg-card-subtle); display: grid; gap: .18rem; }
+.telemetry-stat strong { font-size: 1.1rem; font-variant-numeric: tabular-nums; }
+.telemetry-stat small, .telemetry-decision__copy small { color: var(--text-faint); font-size: .7rem; }
+.telemetry-card__decision { gap: 1.5rem; }
+.telemetry-decision__copy { flex: 1 1 auto; min-width: 0; }
+.telemetry-decision__copy p { margin: 0; color: var(--text-muted); font-size: .82rem; line-height: 1.55; overflow-wrap: anywhere; }
+.telemetry-decision__copy small { display: block; margin-top: .35rem; line-height: 1.45; overflow-wrap: anywhere; }
+.telemetry-decision__meta { flex: 0 0 auto; display: flex; flex-wrap: wrap; justify-content: flex-end; gap: .55rem 1rem; }
+.telemetry-decision__meta span { display: grid; gap: .15rem; }
+.telemetry-decision__meta strong { color: var(--text-main); font-size: .85rem; font-variant-numeric: tabular-nums; }
+@media (max-width: 900px) { .telemetry-card { grid-template-columns: 1fr; gap: .75rem; } .telemetry-card__params, .telemetry-card__decision { align-items: flex-start; } }
+@media (max-width: 560px) { .telemetry-card { padding: .9rem; } .telemetry-card__params { display: grid; grid-template-columns: repeat(2, minmax(0,1fr)); gap: .7rem; } .telemetry-card__stats { display: grid; grid-template-columns: 1fr; } .telemetry-card__decision { display: grid; gap: .8rem; } .telemetry-decision__meta { justify-content: flex-start; } }
+</style>
